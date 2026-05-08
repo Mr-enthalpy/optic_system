@@ -248,7 +248,7 @@ class CameraServiceClient:
         index: int = 0,
         context_type: str = "IIDC",
         *,
-        disable_trigger: bool = True,
+        disable_trigger: bool | None = None,
         grab_timeout_ms: int | None = None,
         pixel_format: str | None = None,
         roi: dict[str, object] | None = None,
@@ -257,8 +257,9 @@ class CameraServiceClient:
         payload: dict[str, object] = {
             "index": index,
             "context_type": context_type,
-            "disable_trigger": disable_trigger,
         }
+        if disable_trigger is not None:
+            payload["disable_trigger"] = bool(disable_trigger)
         if grab_timeout_ms is not None:
             payload["grab_timeout_ms"] = int(grab_timeout_ms)
         if pixel_format is not None:

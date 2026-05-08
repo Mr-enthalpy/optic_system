@@ -142,7 +142,7 @@ Current intended startup behavior:
 
 1. connect to or launch the camera sidecar;
 2. open the camera through `OpenCamera`;
-3. sidecar disables trigger by default;
+3. sidecar disables trigger only when `disable_trigger=true` is explicitly requested;
 4. sidecar applies explicit scriptable configuration if supplied;
 5. sidecar starts capture and reads a first frame to determine layout;
 6. main process starts the stream;
@@ -192,7 +192,7 @@ $env:CAMERA_SERVICE_DEBUG = "1"
 
 ### `CAM_BAYER_PATTERN`
 
-Override raw Bayer preview conversion. Supported values:
+Explicitly enable raw Bayer preview conversion. Supported values:
 
 - `BG`
 - `GB`
@@ -204,6 +204,10 @@ Example:
 ```powershell
 $env:CAM_BAYER_PATTERN = "GR"
 ```
+
+If this variable is unset and frame metadata does not include `bayer_pattern`,
+raw8/raw16 preview uses a mono fallback instead of assuming a universal Bayer
+layout.
 
 ## LCD Representation
 

@@ -89,15 +89,17 @@ Owns composition:
 
 The current camera architecture is process-isolated:
 
-1. camera SDK access runs in `devices/camera_service_impl.py`;
+1. camera SDK access runs inside the sidecar process through
+   `devices/camera_backend_flycapture2.py`;
 2. the main process controls the sidecar through ZMQ REQ/REP;
 3. the sidecar writes frame bytes to a shared-memory ring buffer;
 4. the sidecar publishes frame metadata through ZMQ PUB;
 5. downstream consumers read shared memory using the metadata;
 6. large image payloads must not be sent through ZMQ.
 
-Do not import the camera SDK directly into GUI, control, capture, or main
-process code.
+`devices/camera_service_impl.py` should stay focused on RPC handling, state, and
+shared-memory write scheduling. Do not import the camera SDK directly into GUI,
+control, capture, or main process code.
 
 ## Camera Backend
 
@@ -127,7 +129,7 @@ Useful environment variables:
 - `FLYCAPTURE2_DLL_DIR`: directory containing the FlyCapture2 C runtime DLL.
 - `CAMERA_SERVICE_LOG`: file path for sidecar stdout/stderr capture.
 - `CAMERA_SERVICE_DEBUG=1`: inherit sidecar stdout/stderr in the console.
-- `CAM_BAYER_PATTERN`: Bayer preview conversion override, such as `GR`.
+- `CAM_BAYER_PATTERN`: optional Bayer preview conversion override, such as `GR`.
 
 Local development may use the sibling checkout:
 
@@ -146,7 +148,7 @@ The current headless startup path is:
 2. `OpenCamera`;
 3. sidecar calls `Camera.open(index)`;
 4. sidecar reads camera info/capabilities;
-5. sidecar disables trigger by default unless explicitly requested otherwise;
+5. sidecar disables trigger only when `disable_trigger=true` is explicitly requested;
 6. sidecar applies explicit scriptable configuration;
 7. sidecar starts capture;
 8. sidecar reads a first frame to determine frame layout;
@@ -327,7 +329,8 @@ Success criteria:
 - `PreConfigGUI` is deprecated and does not open GUI;
 - trigger, properties, pixel format, ROI, camera info, and stream status are
   available through RPC;
-- default `OpenCamera` disables trigger before starting capture;
+- `OpenCamera` reports whether trigger configuration was requested/applied and
+  does not change trigger state implicitly;
 - no-hardware tests cover protocol behavior;
 - hardware tests are opt-in only.
 

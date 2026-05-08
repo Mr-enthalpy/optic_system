@@ -68,6 +68,16 @@ def test_open_camera_sends_explicit_configuration_payload() -> None:
     assert payload["properties"][0]["name"] == "SHUTTER"
 
 
+def test_open_camera_omits_disable_trigger_unless_explicit() -> None:
+    client = RecordingCameraServiceClient()
+
+    client.open_camera(index=0)
+
+    op, _, payload = client.calls[-1]
+    assert op == "OpenCamera"
+    assert "disable_trigger" not in payload
+
+
 def test_open_camera_gui_is_deprecated_and_uses_finite_timeout() -> None:
     client = RecordingCameraServiceClient()
 

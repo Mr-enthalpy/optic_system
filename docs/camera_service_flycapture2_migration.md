@@ -4,7 +4,8 @@ This migration replaces the old `pyflycap2 + GUI` sidecar backend with the
 headless `flycapture2_c` package while keeping the existing process and frame
 transport architecture:
 
-- camera SDK calls stay inside `devices/camera_service_impl.py`;
+- camera SDK calls stay inside the sidecar process, primarily through
+  `devices/camera_backend_flycapture2.py`;
 - the main process still controls the sidecar through ZMQ REQ/REP;
 - frames are still written by the sidecar into a shared-memory ring buffer;
 - PUB messages still carry frame metadata, not image payloads.
@@ -91,7 +92,7 @@ The new `OpenCamera` flow is:
 
 1. `Camera.open(index)`
 2. read camera info and basic capabilities
-3. `disable_trigger()` by default
+3. disable trigger only when `disable_trigger` is explicitly `true`
 4. apply optional configuration
 5. `start()`
 6. read the first frame to determine shared-memory layout
@@ -120,7 +121,18 @@ Supported request fields:
 ```
 
 `context_type` remains accepted for compatibility but is not required by
-`flycapture2_c`.
+`flycapture2_c`. If `disable_trigger` is omitted or false, `OpenCamera` does not
+modify trigger state. The reply includes `configuration_applied`, including a
+trigger summary such as:
+
+```json
+{
+  "disable_trigger": {
+    "requested": false,
+    "applied": false
+  }
+}
+```
 
 ## Protocol Ops
 
@@ -161,7 +173,15 @@ running. `Shutdown` closes the camera and exits the sidecar.
 
 ## Trigger Control
 
-Trigger is disabled by default during `OpenCamera`.
+Trigger is not changed implicitly during `OpenCamera`. To replace the old GUI
+pre-configuration workflow, set `"disable_trigger": true` in `OpenCamera` or
+send `DisableTrigger` explicitly after opening the camera.
+
+Open with trigger disable:
+
+```json
+{"op": "OpenCamera", "index": 0, "disable_trigger": true}
+```
 
 Explicit disable:
 
@@ -284,9 +304,38 @@ Set ROI through Format7:
 ```
 
 `ReconfigureCamera` can apply `disable_trigger`, `grab_timeout_ms`,
-`pixel_format`, `roi`, and `properties` while running. It stops streaming,
-stops capture, applies configuration, restarts capture, reads a fresh frame
-layout, and recreates shared memory when the layout changed.
+`pixel_format`, `roi`, and `properties` while running. Pixel format and ROI are
+validated before configuration changes are applied. Unsupported or
+known-but-undecoded pixel formats return a structured error and leave the camera
+configuration unchanged.
+
+Successful replies include:
+
+```json
+{
+  "ok": true,
+  "old_layout": {"format": "raw8"},
+  "new_layout": {"format": "raw16"},
+  "layout_changed": true,
+  "shm_recreated": true
+}
+```
+
+When the layout changes, the sidecar recreates shared memory and publishes a
+status event. Subscribers can also recover from the new frame metadata because
+every frame includes the shared-memory name, ring size, shape, dtype, row bytes,
+and total frame byte count.
+
+## Bayer Preview Policy
+
+Raw frame metadata may include `bayer_pattern` when the camera configuration or
+backend can state it explicitly. Valid values are `BG`, `GB`, `RG`, and `GR`.
+
+The preview consumer no longer assumes `GR` as a universal default. If a
+`raw8` or `raw16` frame has no valid `bayer_pattern`, preview uses a mono
+fallback and records a `preview_warning` in packet metadata. Debayering is used
+only when metadata or `CAM_BAYER_PATTERN` explicitly provides a supported Bayer
+pattern.
 
 ## Frame Metadata
 
@@ -340,10 +389,13 @@ to inherit stdout/stderr in the launching console.
 ## Testing Status
 
 This round adds no-hardware tests for protocol payloads, JSON serialization,
-property snapshots, frame metadata, import-error handling, stream idempotency,
-and `CloseCamera` versus `Shutdown` semantics.
+property snapshots, frame metadata, import-error handling, OpenCamera trigger
+semantics, ReconfigureCamera layout-change replies, unsupported pixel-format
+validation, safe raw Bayer preview fallback, stream idempotency, shared-memory
+release on `CloseCamera`, and `CloseCamera` versus `Shutdown` semantics.
 
-No real camera hardware was exercised in this round.
+Hardware smoke was run with `OPTIC_SYSTEM_HARDWARE_TEST=1`; see
+`Hardware Smoke Summary` below for the local result.
 
 Next hardware validation command:
 
@@ -351,5 +403,48 @@ Next hardware validation command:
 $env:OPTIC_SYSTEM_HARDWARE_TEST = "1"
 $env:OPTIC_SYSTEM_CAMERA_INDEX = "0"
 $env:OPTIC_SYSTEM_FRAME_COUNT = "30"
-python -m pytest tests/hardware/test_camera_service_flycapture2_backend.py -q
+py -3.12 -m pytest tests/hardware/test_camera_service_flycapture2_backend.py -q
 ```
+
+## Hardware Smoke Summary
+
+Local hardware smoke was run on 2026-05-08.
+
+First run:
+
+```powershell
+$env:OPTIC_SYSTEM_HARDWARE_TEST = "1"
+$env:OPTIC_SYSTEM_CAMERA_INDEX = "0"
+$env:OPTIC_SYSTEM_FRAME_COUNT = "30"
+py -3.12 -m pytest tests/hardware/test_camera_service_flycapture2_backend.py -q
+```
+
+Result: failed before hardware access because the launched sidecar environment
+could not import package `flycapture2_c`.
+
+Second run used the sibling checkout, forced the sidecar Python, and pointed the
+sidecar at the installed FlyCapture2 SDK/runtime under
+`D:\Program Files\Point Grey Research`:
+
+```powershell
+$env:PYTHONPATH = "C:\Users\teacher H\PycharmProjects\flycapture2_c"
+$env:PY38_BIN = "py -3.12"
+$env:FLYCAPTURE2_SDK_DIR = "D:\Program Files\Point Grey Research\FlyCapture2"
+$env:FLYCAPTURE2_DLL_DIR = "D:\Program Files\Point Grey Research\FlyCapture2\bin64"
+$env:OPTIC_SYSTEM_HARDWARE_TEST = "1"
+$env:OPTIC_SYSTEM_CAMERA_INDEX = "0"
+$env:OPTIC_SYSTEM_FRAME_COUNT = "30"
+py -3.12 -m pytest tests/hardware/test_camera_service_flycapture2_backend.py -q
+```
+
+Result:
+
+```text
+.                                                                        [100%]
+1 passed in 3.31s
+```
+
+This validates the sidecar can import `flycapture2_c`, open camera index 0 with
+explicit `disable_trigger=true`, start the shared-memory stream, receive 30
+frame metadata events, read frame bytes through shared memory, stop streaming,
+close the camera, and shut down the sidecar on this hardware machine.
