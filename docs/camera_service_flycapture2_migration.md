@@ -41,6 +41,20 @@ from flycapture2_c import Camera
 }
 ```
 
+`PreConfigGUI` is not part of the normal startup path. The main GUI constructs
+`SessionController` with `preconfigure=False` and opens the camera through
+explicit protocol fields instead of launching the vendor GUI first.
+
+The old two-step workflow:
+
+1. open FlyCapture GUI;
+2. manually configure camera;
+3. return to `optic_system` and open the camera;
+
+has been removed from default GUI startup. Headless startup now uses
+scriptable commands such as `OpenCamera` with `disable_trigger=true`,
+`SetPixelFormat`, `SetROI`, `SetProperty`, and `SetPropertyAuto`.
+
 ## Dependency Notes
 
 `flycapture2_c` is an external camera SDK wrapper, not part of this repository.

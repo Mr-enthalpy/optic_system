@@ -141,8 +141,8 @@ python -m app.main_gui
 Current intended startup behavior:
 
 1. connect to or launch the camera sidecar;
-2. open the camera through `OpenCamera`;
-3. sidecar disables trigger only when `disable_trigger=true` is explicitly requested;
+2. open the camera through `OpenCamera` with explicit startup configuration;
+3. main GUI startup requests `disable_trigger=true` through `OpenCamera`;
 4. sidecar applies explicit scriptable configuration if supplied;
 5. sidecar starts capture and reads a first frame to determine layout;
 6. main process starts the stream;
