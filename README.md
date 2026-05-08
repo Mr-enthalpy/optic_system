@@ -1,294 +1,253 @@
 # optic_system
 
-当前仓库是一个正在进行中的光学实验控制系统重构版本。现阶段重点不是完整实验自动化，而是先把底层设备链路、控制层语义和最小 GUI 原型整理正确。
+`optic_system` is an in-progress refactor of an optical experiment control
+system. The current work focuses on stable device boundaries, explicit control
+semantics, camera preview, and minimal LCD control. It is not yet a complete
+experiment automation system.
 
-## 约束入口
+## Canonical Instructions
 
-项目的统一约束文档在 [AGENTS/AGENTS.md](AGENTS/AGENTS.md)。
+Project instructions live in [AGENTS.md](AGENTS.md).
 
-如果要继续开发、重构或扩展功能，请优先遵守这份文档。  
-根目录的 [AGENTS.md](AGENTS.md) 只是一个简短入口，不再单独维护另一套规则。
+That file is now the single source of truth for architecture boundaries, staged
+goals, camera sidecar rules, `flycapture2_c` dependency notes, LCD conventions,
+and success criteria.
 
-## 当前阶段
+The previous staged documents under `AGENTS/` have been retired to avoid
+conflicting instructions.
 
-当前已覆盖的主线是：
+## Current Scope
 
-- 相机 sidecar 连接或自动拉起
-- 相机预配置 GUI -> 打开相机 -> 启动视频流
-- GUI 实时预览
-- 相机参数显示与调整
-- 控制层命令 / 事件 / 状态语义
-- 最小 LCD 控制集成
-- LCD 默认全透显示
-- LCD 调试图案显示
+Implemented or active work:
 
-当前还不是完整实验系统。以下内容仍然不在当前主线范围内：
+- camera sidecar connection and launch;
+- headless camera backend using `flycapture2_c`;
+- ZMQ REQ/REP camera control protocol;
+- shared-memory ring buffer frame transport;
+- ZMQ PUB frame metadata;
+- GUI live preview;
+- camera parameter display and update through the control layer;
+- minimal LCD service and debug-pattern control;
+- LCD default all-transmissive startup behavior;
+- no-hardware tests and opt-in hardware test skeletons.
 
-- 完整口径搜索
-- 完整标定流程
-- 波长扫描工作流
-- 同步 LCD-相机采集调度
-- 数据导出流水线
-- GenerMask / 优化工作流
+Out of scope for now:
 
-## 目录结构
+- full aperture search;
+- full calibration workflow;
+- wavelength sweep workflow;
+- synchronized LCD-camera acquisition scheduling;
+- dataset export pipeline;
+- GenerMask optimization;
+- large workflow/scheduler framework.
+
+## Directory Layout
 
 ```text
-AGENTS/     统一工程约束与阶段文档
-app/        应用入口与系统装配
-capture/    帧消费辅助层
-control/    命令 / 事件 / 状态 / 控制器
-devices/    相机 sidecar 客户端、帧流、LCD 服务
-gui/        预览、参数面板、状态面板、LCD 调试面板
-old/        旧实现，仅供参考，禁止修改
-patterns/   图案与模式生成相关代码
-tasks/      未来任务层预留与阶段性脚本
+app/        application assembly and entry points
+capture/    frame consumption helpers and preview worker
+control/    commands, events, state, and controller semantics
+devices/    camera sidecar client/implementation, frame stream, LCD service
+docs/       migration notes and operational documentation
+gui/        preview, camera panel, status panel, LCD debug panel
+old/        legacy reference code; do not modify
+patterns/   pattern generation helpers
+tasks/      future task-layer placeholders
+tests/      no-hardware tests and opt-in hardware tests
 ```
 
-各层依赖方向应保持为：
+Dependency direction must remain:
 
 ```text
 gui -> control -> devices / capture
 ```
 
-`old/` 不是目标代码结构，不要在里面做修改。
+`devices` and `capture` must not depend on `gui`.
 
-## 当前关键模块
+## Camera Architecture
 
-### 相机链路
+The camera SDK stays inside the sidecar process:
 
-- `devices/camera_service.py`
-  - sidecar RPC 客户端
-  - 自动检测或启动 `devices/camera_service_impl.py`
-- `devices/frame_stream.py`
-  - SUB + shared memory 帧读取
-  - raw8/raw16 Bayer 解码
-- `capture/preview_worker.py`
-  - 后台持续消费帧并回调 controller
-- `control/session_controller.py`
-  - 统一处理启动、关机、参数更新、LCD 命令
+- `devices/camera_service.py` is the main-process client.
+- `devices/camera_service_impl.py` is the hardware-facing sidecar.
+- Main process control uses ZMQ REQ/REP.
+- Frame bytes are written by the sidecar into a shared-memory ring buffer.
+- Frame metadata is published with ZMQ PUB.
+- Main process consumers read frame bytes from shared memory using metadata.
 
-### LCD 链路
+Do not move the camera SDK into the main process, and do not send full image
+payloads through ZMQ.
 
-- `devices/lcd_backend.py`
-  - pygame / SDL 显示后端
-- `devices/lcd_service.py`
-  - LCD 服务边界
-  - 负责把物理单色掩码 `[H, 3W]` 打包为显示 RGB `[H, W, 3]`
-- `devices/lcd_debug_patterns.py`
-  - 最小调试图案生成
+## Camera Backend Dependency
 
-### GUI
+The active backend is `flycapture2_c`, replacing the old `pyflycap2 + GUI`
+path.
 
-- `gui/main_window.py`
-  - 主窗口装配
-- `gui/camera_panel.py`
-  - 相机参数显示与修改
-- `gui/preview_panel.py`
-  - 实时预览与帧元数据
-- `gui/status_panel.py`
-  - 相机 / LCD / sidecar 状态
-- `gui/lcd_panel.py`
-  - LCD 调试按钮
+Important details:
 
-## 环境要求
+- target repository: `Mr-enthalpy/flycapture2_c`;
+- Python import package: `flycapture2_c`;
+- package/distribution name may appear as `flycapture2-c`;
+- do not use `flycapture_c`;
+- the FlyCapture2 vendor SDK and runtime DLLs are not bundled;
+- hardware machines must install the FlyCapture2 SDK/runtime separately;
+- default tests must not require the SDK, DLLs, or a real camera.
 
-### 主 GUI 环境
-
-主 GUI 需要安装：
-
-- `numpy`
-- `opencv-python`
-- `pyzmq`
-- `Pillow`
-- `pygame`
-
-仓库里已有 `requirements.txt`：
+Local development can use the sibling checkout if present:
 
 ```powershell
-.\.venv\Scripts\pip.exe install -r requirements.txt
+$env:PYTHONPATH = "C:\Users\teacher H\PycharmProjects\flycapture2_c"
 ```
 
-### 相机 sidecar 环境
+For installed environments, install the wrapper into the sidecar Python
+environment instead:
 
-`devices/camera_service_impl.py` 是硬件侧 sidecar，当前按旧系统约束，默认优先使用 Python 3.8 环境。
+```powershell
+python -m pip install C:\Users\teacher H\PycharmProjects\flycapture2_c
+```
 
-如果你的 `pyflycap2` 只装在单独的 Python 3.8 环境里，建议显式设置：
+When the FlyCapture2 SDK is not in the default location, set one or both:
+
+```powershell
+$env:FLYCAPTURE2_SDK_DIR = "C:\Program Files\Point Grey Research\FlyCapture2"
+$env:FLYCAPTURE2_DLL_DIR = "C:\Program Files\Point Grey Research\FlyCapture2\bin64"
+```
+
+## Python Environment
+
+Main GUI/runtime dependencies are listed in [requirements.txt](requirements.txt):
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+The sidecar launcher still supports selecting a specific Python command:
 
 ```powershell
 $env:PY38_BIN = "C:\Path\To\Python38\python.exe"
 ```
 
-## 启动方式
+Use this only when the camera SDK wrapper is installed in a dedicated sidecar
+environment.
 
-### 默认启动
+## Startup
 
-推荐直接运行：
-
-```powershell
-.\.venv\Scripts\python.exe -m app.main_gui
-```
-
-默认行为：
-
-1. 检查或自动拉起相机 sidecar
-2. 先打开 FlyCapture 预配置 GUI
-3. 等待你关闭该预配置 GUI
-4. 再执行 `OpenCamera`
-5. 启动视频流
-6. 初始化 LCD，并默认显示全透图案
-7. 打开主 GUI
-
-### 关于预配置 GUI
-
-这是当前项目的明确规则，不是可有可无的兼容分支。
-
-原因是：
-
-- 有些相机必须先在 FlyCapture GUI 中完成配置，后续连接才稳定
-- `pyflycap2` 的程序接口少于 GUI 能配置的内容
-
-因此默认启动会先执行 `PreConfigGUI`。  
-`show_selection()` 会阻塞，直到你手动关闭该窗口后才继续后续流程。  
-这里不应该设置自动关闭，也不应该设置很短的 RPC 超时。
-
-如果你非常确定当前相机不需要这一步，才可以显式跳过：
+Default GUI startup:
 
 ```powershell
-.\.venv\Scripts\python.exe -m app.main_gui --skip-preconfigure
+python -m app.main_gui
 ```
 
-### 常用启动参数
+Current intended startup behavior:
 
-仅相机，不初始化 LCD：
+1. connect to or launch the camera sidecar;
+2. open the camera through `OpenCamera`;
+3. sidecar disables trigger by default;
+4. sidecar applies explicit scriptable configuration if supplied;
+5. sidecar starts capture and reads a first frame to determine layout;
+6. main process starts the stream;
+7. preview worker consumes PUB metadata plus shared memory frames;
+8. LCD initializes and defaults to all-transmissive when configured;
+9. GUI opens as the frontend.
+
+`PreConfigGUI` is deprecated. It no longer opens FlyCapture GUI and should only
+be treated as a compatibility RPC that returns a structured error pointing to
+explicit replacement operations such as `DisableTrigger`, `SetPixelFormat`,
+`SetROI`, `SetProperty`, `SetPropertyAuto`, and `SnapshotProperties`.
+
+Common options:
 
 ```powershell
-.\.venv\Scripts\python.exe -m app.main_gui --disable-lcd
+python -m app.main_gui --disable-lcd
+python -m app.main_gui --no-auto-sidecar
+python -m app.main_gui --lcd-display-index 1
+python -m app.main_gui --lcd-transmissive-code 255 --lcd-opaque-code 0
 ```
 
-连接已在运行的 sidecar，而不是自动拉起：
-
-```powershell
-.\.venv\Scripts\python.exe -m app.main_gui --no-auto-sidecar
-```
-
-指定 LCD 显示器索引：
-
-```powershell
-.\.venv\Scripts\python.exe -m app.main_gui --lcd-display-index 1
-```
-
-指定 LCD 全透 / 全黑码值：
-
-```powershell
-.\.venv\Scripts\python.exe -m app.main_gui --lcd-transmissive-code 255 --lcd-opaque-code 0
-```
-
-## 关键环境变量
-
-### `PY38_BIN`
-
-指定相机 sidecar 使用的 Python 3.8 解释器。
+## Useful Environment Variables
 
 ### `SIDECAR`
 
-覆盖 sidecar 脚本路径。默认是：
+Override the sidecar script path. Default:
 
 ```text
 devices/camera_service_impl.py
 ```
 
+### `CAMERA_SERVICE_LOG`
+
+Capture sidecar stdout/stderr to a log file:
+
+```powershell
+$env:CAMERA_SERVICE_LOG = "camera_service.log"
+```
+
+### `CAMERA_SERVICE_DEBUG`
+
+Inherit sidecar stdout/stderr in the launching console:
+
+```powershell
+$env:CAMERA_SERVICE_DEBUG = "1"
+```
+
 ### `CAM_BAYER_PATTERN`
 
-指定 raw8/raw16 Bayer pattern。
-
-当前支持：
+Override raw Bayer preview conversion. Supported values:
 
 - `BG`
 - `GB`
 - `RG`
 - `GR`
 
-例如：
+Example:
 
 ```powershell
 $env:CAM_BAYER_PATTERN = "GR"
 ```
 
-如果你发现 raw 预览颜色中 `R/B` 颠倒，这个变量就是优先检查项。
+## LCD Representation
 
-## LCD 表示约定
+The LCD physical mask is mono subpixel data:
 
-LCD 的物理表示不是普通彩色图像。
+```text
+[H, 3W]
+```
 
-项目中的规范是：
+The display buffer may be RGB-shaped:
 
-- 物理单色掩码：`[H, 3W]`
-- 显示 RGB buffer：`[H, W, 3]`
+```text
+[H, W, 3]
+```
 
-映射关系：
+Mapping:
 
 ```text
 rgb[y, x, c] = mono[y, 3*x + c]
 ```
 
-因此：
+All physical mask reasoning should use `[H, 3W]`. Only `LCDService` should pack
+physical mono masks into RGB display buffers.
 
-- 所有物理 mask 推理应基于 `[H, 3W]`
-- 只有 `LCDService` 才负责把 `[H, 3W]` 打包成 `[H, W, 3]`
+## Tests
 
-## 当前 GUI 能做什么
+Default no-hardware tests:
 
-主 GUI 当前主要保留三类职责：
+```powershell
+py -3.12 -m pytest -q
+```
 
-- 相机实时预览
-- 相机参数显示与调整
-- 最小 LCD 调试控制
+Hardware tests are opt-in:
 
-目前 LCD 调试按钮包括：
+```powershell
+$env:OPTIC_SYSTEM_HARDWARE_TEST = "1"
+$env:OPTIC_SYSTEM_CAMERA_INDEX = "0"
+$env:OPTIC_SYSTEM_FRAME_COUNT = "30"
+py -3.12 -m pytest tests/hardware/test_camera_service_flycapture2_backend.py -q
+```
 
-- Full Transparent
-- Full Opaque
-- Center Cross
-- Vertical Bars
+No default test should require a real camera, FlyCapture2 DLLs, or installed
+vendor SDK.
 
-所有按钮都经过 controller 命令层，不直接操作底层设备对象。
+## More Documentation
 
-## 调试建议
-
-### 相机
-
-看以下几类可观测信息是否正常：
-
-- 预览是否持续更新
-- `seq` / `timestamp` 是否递增
-- `max pixel` 是否变化
-- 修改曝光 / 增益后画面是否有物理变化
-- raw 颜色是否正常，是否存在 `R/B` 交换
-
-### LCD
-
-看以下现象是否正常：
-
-- 启动后是否默认全透
-- 全黑是否正确
-- Center Cross 是否居中
-- Vertical Bars 方向是否正确
-- 图案是否拉伸、裁切或子像素映射错误
-
-## 开发说明
-
-- 任何重构优先保持 `gui -> control -> devices/capture` 的方向
-- 不要把控制逻辑重新塞回 GUI
-- 不要修改 `old/`
-- 新开发默认参考 [AGENTS/AGENTS.md](AGENTS/AGENTS.md)
-
-## 当前仓库状态
-
-这个仓库现在更接近“可继续扩展的硬件原型基础”，而不是最终实验软件。
-
-如果后续继续推进，比较自然的方向是：
-
-1. 稳定相机预览和参数行为
-2. 稳定 LCD 调试与物理映射
-3. 再往上叠加 aperture / calibration / wavelength 等流程
+- [Camera service FlyCapture2 C migration](docs/camera_service_flycapture2_migration.md)

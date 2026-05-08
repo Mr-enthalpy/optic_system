@@ -113,7 +113,7 @@ class FrameStreamClient:
         width = int(meta["width"])
         height = int(meta["height"])
         stride = int(meta["stride"])
-        pix_fmt = str(meta["format"])
+        pix_fmt = str(meta["format"]).strip().lower()
         bayer_pattern = FrameStreamClient._normalize_bayer_pattern(
             meta.get("bayer_pattern", default_bayer_pattern)
         )
@@ -128,13 +128,26 @@ class FrameStreamClient:
                 img = np.ndarray((height, width, 3), dtype=np.uint8, buffer=mv).copy()
                 raw = img
                 preview_bgr = img
+            elif pix_fmt == "rgb8":
+                raw = np.ndarray((height, width, 3), dtype=np.uint8, buffer=mv).copy()
+                preview_bgr = cv2.cvtColor(raw, cv2.COLOR_RGB2BGR)
+            elif pix_fmt == "bgr8":
+                raw = np.ndarray((height, width, 3), dtype=np.uint8, buffer=mv).copy()
+                preview_bgr = raw
             elif pix_fmt == "raw8":
                 raw = np.ndarray((height, width), dtype=np.uint8, buffer=mv).copy()
                 preview_bgr = cv2.cvtColor(raw, bayer_code)
+            elif pix_fmt == "mono8":
+                raw = np.ndarray((height, width), dtype=np.uint8, buffer=mv).copy()
+                preview_bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
             elif pix_fmt == "raw16":
                 raw = np.ndarray((height, width), dtype=np.uint16, buffer=mv).copy()
                 preview16 = cv2.cvtColor(raw, bayer_code)
                 preview_bgr = np.clip(preview16 / 256, 0, 255).astype(np.uint8)
+            elif pix_fmt == "mono16":
+                raw = np.ndarray((height, width), dtype=np.uint16, buffer=mv).copy()
+                mono8 = np.clip(raw / 256, 0, 255).astype(np.uint8)
+                preview_bgr = cv2.cvtColor(mono8, cv2.COLOR_GRAY2BGR)
             else:
                 raise RuntimeError(f"Unsupported pixel format: {pix_fmt}")
         finally:

@@ -371,8 +371,8 @@ class SessionController:
 
             if state.camera_open:
                 run_step(self.camera_service.close_camera)
-            else:
-                run_step(self.camera_service.close)
+
+            run_step(self.camera_service.close)
 
             if self.lcd_service is not None:
                 run_step(self.lcd_service.close)
