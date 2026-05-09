@@ -150,7 +150,7 @@ Goals:
 Expected outputs:
 
 * updated `README.md`
-* updated `AGENTS/AGENTS.md`
+* updated `AGENTS.md`
 * optional `docs/architecture.md`
 * optional `docs/roadmap.md`
 * optional `tasks/README.md`
