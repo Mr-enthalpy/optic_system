@@ -136,7 +136,7 @@ masks:   [N, T, 1, Hm, Wm]
 
 ### Phase 0  --  Documentation and boundary reset
 
-Current phase.
+**Complete.**  (See `docs/architecture.md`, `docs/roadmap.md`, `tasks/README.md`, `AGENTS.md`.)
 
 Goals:
 
@@ -157,27 +157,15 @@ Expected outputs:
 
 ### Phase 1  --  TLS SDK integration closure
 
-Goal:
-
-Make the `tls_c1` backend usable through the normal application/control path.
-
-Required work:
-
-* construct `TLSService` in the app assembly path when explicitly enabled
-* expose TLS state in GUI
-* add TLS GUI or command bindings
-* support connect / disconnect / set grating / set wavelength / move / refresh status
-* keep hardware tests opt-in
-* keep default import and default tests hardware-free
-
-Non-goals:
-
-* no wavelength sweep workflow yet
-* no full calibration workflow yet
-* no training integration
-* no pywinauto fallback path
+**Complete.**  `tls_c1` is the sole active TLS backend.  Use `--enable-tls` to
+assemble `TLSService` and inject it into `SessionController`.  An optional
+`TLSPanel` provides GUI control (connect / disconnect / set grating / set
+wavelength / move / refresh).  Pywinauto TLS automation is fully removed from
+active code paths.  All default tests are hardware-free.
 
 ### Phase 2  --  Minimal capture task layer
+
+**Current phase.**
 
 Goal:
 

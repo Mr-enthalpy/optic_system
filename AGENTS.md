@@ -32,17 +32,19 @@ Those belong to `LCD_forward` or later experiment-specific layers.
 
 ## Current phase
 
-Current phase: Phase 0 / Phase 1 boundary.
+Current phase: Phase 1 complete / Phase 2 ready.
 
 Meaning:
 
-- Camera base path exists.
-- LCD base path exists.
-- TLS service / command / event / state support may partially exist.
-- TLS application / GUI integration may still be incomplete.
-- Minimal capture task layer is not yet stable.
-- Raw capture HDF5 export is not yet stable.
-- Conversion into `LCD_forward` format is not yet stable.
+- Camera base path exists and is stable.
+- LCD base path exists and is stable.
+- TLS SDK integration is complete — ``tls_c1`` is the sole active TLS backend,
+  ``TLSService`` wraps it, ``SessionController`` dispatches TLS commands/events,
+  and an optional ``TLSPanel`` provides GUI access.  Pywinauto TLS automation is
+  fully removed from active code paths.
+- Minimal capture task layer is next (Phase 2).
+- Raw capture HDF5 export is next (Phase 2).
+- Conversion into ``LCD_forward`` format is planned (Phase 3).
 
 Do not assume the repository is already a full calibration system.
 
