@@ -11,7 +11,7 @@ Project instructions live in [AGENTS.md](AGENTS.md).
 
 That file is now the single source of truth for architecture boundaries, staged
 goals, camera sidecar rules, `flycapture2_c` dependency notes, LCD conventions,
-and success criteria.
+TLS architecture rules, and success criteria.
 
 The previous staged documents under `AGENTS/` have been retired to avoid
 conflicting instructions.
@@ -29,6 +29,7 @@ Implemented or active work:
 - camera parameter display and update through the control layer;
 - minimal LCD service and debug-pattern control;
 - LCD default all-transmissive startup behavior;
+- TLS service wrapper via `tls_c1` / `TLSC1` SDK facade;
 - no-hardware tests and opt-in hardware test skeletons.
 
 Out of scope for now:
@@ -47,7 +48,7 @@ Out of scope for now:
 app/        application assembly and entry points
 capture/    frame consumption helpers and preview worker
 control/    commands, events, state, and controller semantics
-devices/    camera sidecar client/implementation, frame stream, LCD service
+devices/    camera sidecar client/implementation, frame stream, LCD service, TLS service
 docs/       migration notes and operational documentation
 gui/        preview, camera panel, status panel, LCD debug panel
 old/        legacy reference code; do not modify
@@ -111,6 +112,60 @@ When the FlyCapture2 SDK is not in the default location, set one or both:
 $env:FLYCAPTURE2_SDK_DIR = "C:\Program Files\Point Grey Research\FlyCapture2"
 $env:FLYCAPTURE2_DLL_DIR = "C:\Program Files\Point Grey Research\FlyCapture2\bin64"
 ```
+
+## TLS Architecture
+
+TLS control has been migrated from `pywinauto` GUI automation to an SDK-based
+wrapper architecture. The new path replaces the legacy GUI automation approach
+with explicit device boundaries.
+
+### TLS Dependency
+
+`optic_system` treats [Mr-enthalpy/tls_c1](https://github.com/Mr-enthalpy/tls_c1)
+as an optional dependency. It is not required for basic GUI startup.
+
+Rules:
+
+- Without TLS hardware, vendor DLLs, or `tls_c1` installed, the project base
+  imports and no-hardware tests must still run.
+- `tls_c1` is only needed when you enable a TLS backend or run future TLS
+  hardware smoke tests.
+- Only `devices/tls_service.py` may import `tls_c1`, and only through a lazy
+  import using the high-level `tls_c1` / `TLSC1` facade.
+- Do not copy `tls_c1` source into `optic_system`, and do not commit vendor DLLs
+  into this repository.
+
+### TLS Modules
+
+- `devices/tls_service.py`
+  - Thin wrapper around `tls_c1` / `TLSC1` SDK facade
+  - Lazy import: does not break base imports when `tls_c1` is not installed
+  - Unified boundary for TLS connect, target wavelength, grating, move, and
+    status queries
+- `control/session_controller.py`
+  - Handles TLS commands
+  - Publishes TLS events and updates shared state
+
+Do not call `TLSService` directly from GUI widgets. GUI sends intent through
+`control`, which owns TLS semantics.
+
+### Installing tls_c1
+
+Option A: install directly from GitHub
+
+```powershell
+python -m pip install git+https://github.com/Mr-enthalpy/tls_c1.git
+```
+
+Option B: clone locally, then install editable
+
+```powershell
+git clone https://github.com/Mr-enthalpy/tls_c1.git .\third_party\tls_c1
+python -m pip install -e .\third_party\tls_c1
+```
+
+If the upstream `tls_c1` requires a local SDK/DLL path, set `TLS_C1_SDK_DIR` on
+your machine as documented by `tls_c1`. Do not commit DLLs into this repository.
 
 ## Python Environment
 
@@ -216,6 +271,32 @@ If this variable is unset and frame metadata does not include `bayer_pattern`,
 raw8/raw16 preview uses a mono fallback instead of assuming a universal Bayer
 layout.
 
+### `TLS_C1_SERIAL`
+
+Device serial number for TLS hardware smoke and future integration smoke tests.
+Default unit tests do not read or require this variable.
+
+### `TLS_C1_SDK_DIR`
+
+TLS vendor SDK / DLL directory, per `tls_c1` upstream convention. This is a
+local-machine environment variable. Do not substitute it by committing DLLs
+into `optic_system`.
+
+### `TLS_C1_SAFE_GRATING`
+
+Safe grating number used by future hardware smoke tests. Should be provided
+explicitly via environment variable.
+
+### `TLS_C1_SAFE_WAVELENGTH_NM`
+
+Safe target wavelength (nm) used by future hardware smoke tests. Should be
+provided explicitly via environment variable.
+
+### `TLS_C1_RUN_HARDWARE_TESTS`
+
+Only when set to `1` will `tests/test_tls_hardware_smoke.py` run. Default tests
+are always no-hardware.
+
 ## LCD Representation
 
 The LCD physical mask is mono subpixel data:
@@ -247,7 +328,21 @@ Default no-hardware tests:
 py -3.12 -m pytest -q
 ```
 
-Hardware tests are opt-in:
+TLS no-hardware tests (require no hardware, no vendor DLLs):
+
+```powershell
+python -m pytest tests/test_tls_service.py tests/test_tls_controller.py
+```
+
+If you are developing the TLS control layer without real hardware, you typically
+only need:
+
+1. install the base project dependencies;
+2. do not install `tls_c1`, or install `tls_c1` without setting
+   `TLS_C1_SDK_DIR`;
+3. run no-hardware tests to validate wrapper and controller semantics.
+
+Camera hardware tests are opt-in:
 
 ```powershell
 $env:OPTIC_SYSTEM_HARDWARE_TEST = "1"
@@ -256,8 +351,28 @@ $env:OPTIC_SYSTEM_FRAME_COUNT = "30"
 py -3.12 -m pytest tests/hardware/test_camera_service_flycapture2_backend.py -q
 ```
 
-No default test should require a real camera, FlyCapture2 DLLs, or installed
-vendor SDK.
+TLS hardware smoke test entry point (future):
+
+```powershell
+$env:TLS_C1_SDK_DIR = "C:\Path\To\VendorSDK"
+$env:TLS_C1_RUN_HARDWARE_TESTS = "1"
+$env:TLS_C1_SERIAL = "YOUR_SERIAL"
+$env:TLS_C1_SAFE_GRATING = "1"
+$env:TLS_C1_SAFE_WAVELENGTH_NM = "550.0"
+python -m pytest tests/test_tls_hardware_smoke.py
+```
+
+No default test should require a real camera, TLS hardware, FlyCapture2 DLLs,
+or installed vendor SDKs.
+
+## Development Notes
+
+- Preserve the `gui -> control -> devices / capture` dependency direction.
+- Do not push control logic back into GUI.
+- TLS must only access `tls_c1` through `devices/tls_service.py`.
+- GUI must not call `TLSService` directly.
+- Do not modify `old/`.
+- Reference [AGENTS.md](AGENTS.md) for the authoritative constraint set.
 
 ## More Documentation
 

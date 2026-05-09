@@ -28,6 +28,12 @@ class LCDError(Event):
 
 
 @dataclass(frozen=True)
+class TLSError(Event):
+    source: str
+    message: str
+
+
+@dataclass(frozen=True)
 class PreviewFrameUpdated(Event):
     preview_bgr: np.ndarray
 
@@ -87,3 +93,40 @@ class LCDDebugPatternShown(Event):
     pattern_name: str
     physical_shape: tuple[int, int]
     packed_shape: tuple[int, int, int]
+
+
+@dataclass(frozen=True)
+class TLSConnected(Event):
+    device_id: int | None
+
+
+@dataclass(frozen=True)
+class TLSDisconnected(Event):
+    device_id: int | None
+
+
+@dataclass(frozen=True)
+class TLSStatusUpdated(Event):
+    connected: bool
+    device_id: int | None
+    current_wavelength_nm: float | None
+    target_wavelength_nm: float | None
+    grating: int | None
+    moving: bool
+    last_error: str | None
+
+
+@dataclass(frozen=True)
+class TLSWavelengthTargetSet(Event):
+    target_wavelength_nm: float
+
+
+@dataclass(frozen=True)
+class TLSMoveStarted(Event):
+    target_wavelength_nm: float | None
+
+
+@dataclass(frozen=True)
+class TLSMoveFinished(Event):
+    current_wavelength_nm: float | None
+    target_wavelength_nm: float | None

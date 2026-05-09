@@ -14,6 +14,7 @@ from control.events import (
     PreviewFrameUpdated,
     PreviewStatsUpdated,
     StatusMessage,
+    TLSError,
 )
 
 from .bindings import (
@@ -119,6 +120,8 @@ class MainWindow:
         elif isinstance(event, CameraError):
             self.status_panel.show_message("error", f"{event.source}: {event.message}")
         elif isinstance(event, LCDError):
+            self.status_panel.show_message("error", f"{event.source}: {event.message}")
+        elif isinstance(event, TLSError):
             self.status_panel.show_message("error", f"{event.source}: {event.message}")
         elif isinstance(event, PreviewFrameUpdated):
             self.preview_panel.update_preview(event.preview_bgr)
