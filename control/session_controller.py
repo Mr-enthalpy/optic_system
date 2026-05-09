@@ -1,19 +1,27 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 import numpy as np
 
 from capture.preview_worker import PreviewWorker
 from devices.camera_service import CameraServiceClient
 from devices.frame_stream import FramePacket
 from devices.lcd_service import LCDService
+from devices.tls_service import TLSService, TLSServiceError, TLSStatus
 
 from .bus import EventBus
 from .commands import (
     ApplyCameraSettings,
     Command,
+    ConnectTLS,
+    DisconnectTLS,
+    MoveTLS,
     RefreshCameraSettings,
+    RefreshTLSStatus,
     SetLCDAllOpaque,
     SetLCDAllTransmissive,
+    SetTLSGrating,
+    SetTLSWavelength,
     ShowLCDDebugPattern,
     ShowLCDMonoMask,
     Shutdown,
@@ -31,6 +39,13 @@ from .events import (
     PreviewFrameUpdated,
     PreviewStatsUpdated,
     StatusMessage,
+    TLSConnected,
+    TLSDisconnected,
+    TLSError,
+    TLSMoveFinished,
+    TLSMoveStarted,
+    TLSStatusUpdated,
+    TLSWavelengthTargetSet,
 )
 from .state import CameraSettingSnapshot, StateStore
 
@@ -48,6 +63,7 @@ class SessionController:
         camera_service: CameraServiceClient,
         preview_worker: PreviewWorker,
         lcd_service: LCDService | None = None,
+        tls_service: TLSService | None = None,
         camera_index: int = 0,
         context_type: str = "IIDC",
         preconfigure: bool = True,
@@ -55,6 +71,7 @@ class SessionController:
         self.camera_service = camera_service
         self.preview_worker = preview_worker
         self.lcd_service = lcd_service
+        self.tls_service = tls_service
         self.camera_index = camera_index
         self.context_type = context_type
         self.preconfigure = preconfigure
@@ -66,6 +83,11 @@ class SessionController:
         self.preview_worker.on_error = self._handle_preview_error
         self._started = False
         self._shutting_down = False
+        self._tls_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="TLSController",
+        )
+        self._tls_futures: set[Future[None]] = set()
 
     def start(self) -> None:
         if self._started:
@@ -120,6 +142,18 @@ class SessionController:
                 self._apply_camera_settings(command.settings)
             elif isinstance(command, RefreshCameraSettings):
                 self._refresh_camera_settings(publish_event=True)
+            elif isinstance(command, ConnectTLS):
+                self._connect_tls(command)
+            elif isinstance(command, DisconnectTLS):
+                self._disconnect_tls()
+            elif isinstance(command, SetTLSGrating):
+                self._set_tls_grating(command.grating)
+            elif isinstance(command, SetTLSWavelength):
+                self._set_tls_wavelength(command.wavelength_nm)
+            elif isinstance(command, MoveTLS):
+                self._move_tls(command.timeout_s)
+            elif isinstance(command, RefreshTLSStatus):
+                self._refresh_tls_status()
             elif isinstance(command, SetLCDAllTransmissive):
                 self.show_lcd_all_transmissive()
             elif isinstance(command, SetLCDAllOpaque):
@@ -133,11 +167,15 @@ class SessionController:
             else:
                 raise RuntimeError(f"Unknown command: {type(command).__name__}")
         except Exception as exc:
+            source = self._classify_command_source(command)
             self.state.update(last_error=str(exc))
-            source = "lcd_command" if type(command).__name__.startswith(("SetLCD", "ShowLCD")) else "command"
             if source == "lcd_command":
                 self.state.update(lcd_last_error=str(exc))
                 self.bus.publish(LCDError(source=source, message=str(exc)))
+            elif source == "tls_command":
+                self.state.update(tls_last_error=str(exc), tls_moving=False)
+                self.bus.publish(TLSError(source=source, message=str(exc)))
+                self._publish_tls_status_updated()
             else:
                 self.bus.publish(CameraError(source=source, message=str(exc)))
             self.bus.publish(StatusMessage("error", str(exc)))
@@ -159,6 +197,77 @@ class SessionController:
                 )
             )
         return snapshots
+
+    def _connect_tls(self, command: ConnectTLS) -> None:
+        service = self._require_tls_service()
+        status = service.connect(
+            mono=command.mono,
+            port_type=command.port_type,
+            serial_number=command.serial_number,
+        )
+        self._apply_tls_status(status)
+        self.bus.publish(TLSConnected(device_id=status.device_id))
+        self._publish_tls_status_updated()
+        self.bus.publish(StatusMessage("success", self._build_tls_connected_message(status)))
+
+    def _disconnect_tls(self) -> None:
+        service = self._require_tls_service()
+        previous_device_id = self.state.get().tls_device_id
+        status = service.disconnect()
+        self._apply_tls_status(status)
+        self.bus.publish(TLSDisconnected(device_id=previous_device_id))
+        self._publish_tls_status_updated()
+        self.bus.publish(StatusMessage("info", "TLS disconnected"))
+
+    def _set_tls_grating(self, grating: int) -> None:
+        service = self._require_tls_service()
+        status = service.set_grating(grating)
+        self._apply_tls_status(status)
+        self._publish_tls_status_updated()
+        self.bus.publish(StatusMessage("info", f"TLS grating set to {int(grating)}"))
+
+    def _set_tls_wavelength(self, wavelength_nm: float) -> None:
+        service = self._require_tls_service()
+        status = service.set_wavelength_nm(wavelength_nm)
+        self._apply_tls_status(status)
+        self.bus.publish(TLSWavelengthTargetSet(target_wavelength_nm=float(wavelength_nm)))
+        self._publish_tls_status_updated()
+        self.bus.publish(StatusMessage("info", f"TLS target wavelength set to {float(wavelength_nm):.3f} nm"))
+
+    def _move_tls(self, timeout_s: float) -> None:
+        service = self._require_tls_service()
+        target = self.state.get().tls_target_wavelength_nm
+        self.state.update(
+            tls_moving=True,
+            tls_last_error=None,
+            last_error=None,
+        )
+        self.bus.publish(TLSMoveStarted(target_wavelength_nm=target))
+        self._publish_tls_status_updated()
+        self.bus.publish(StatusMessage("info", "TLS move started"))
+
+        def run_move() -> None:
+            try:
+                status = service.move(timeout_s=timeout_s)
+                self._apply_tls_status(status)
+                self.bus.publish(
+                    TLSMoveFinished(
+                        current_wavelength_nm=status.current_wavelength_nm,
+                        target_wavelength_nm=status.target_wavelength_nm,
+                    )
+                )
+                self._publish_tls_status_updated()
+                self.bus.publish(StatusMessage("success", self._build_tls_move_message(status)))
+            except Exception as exc:
+                self._handle_tls_error("move", exc)
+
+        self._submit_tls_task(run_move)
+
+    def _refresh_tls_status(self) -> None:
+        service = self._require_tls_service()
+        status = service.get_status()
+        self._apply_tls_status(status)
+        self._publish_tls_status_updated()
 
     def show_lcd_all_transmissive(self, publish_status: bool = True) -> None:
         service = self._require_lcd_service()
@@ -377,8 +486,12 @@ class SessionController:
             if self.lcd_service is not None:
                 run_step(self.lcd_service.close)
 
+            if self.tls_service is not None:
+                run_step(self.tls_service.close)
+
             closed_cleanly = first_error is None
         finally:
+            self._cancel_tls_tasks()
             connection = self.camera_service.get_connection_status()
             self.state.update(
                 camera_open=False,
@@ -389,6 +502,13 @@ class SessionController:
                 lcd_connected=False,
                 lcd_current_mode=None,
                 lcd_current_mask_id=None,
+                tls_connected=False,
+                tls_device_id=None,
+                tls_current_wavelength_nm=None,
+                tls_target_wavelength_nm=None,
+                tls_grating=None,
+                tls_moving=False,
+                tls_last_error=None,
             )
             self._started = False
             self._shutting_down = False
@@ -398,6 +518,7 @@ class SessionController:
 
         if closed_cleanly:
             self._publish_lcd_status_changed()
+            self._publish_tls_status_updated()
             self.bus.publish(StatusMessage("info", "Camera session shut down"))
 
     def _initialize_lcd(self) -> None:
@@ -454,10 +575,77 @@ class SessionController:
             )
         )
 
+    def _apply_tls_status(self, status: TLSStatus) -> None:
+        self.state.update(
+            tls_connected=status.connected,
+            tls_device_id=status.device_id,
+            tls_current_wavelength_nm=status.current_wavelength_nm,
+            tls_target_wavelength_nm=status.target_wavelength_nm,
+            tls_grating=status.grating,
+            tls_moving=status.moving,
+            tls_last_error=status.last_error,
+            last_error=status.last_error,
+        )
+
+    def _publish_tls_status_updated(self) -> None:
+        state = self.state.get()
+        self.bus.publish(
+            TLSStatusUpdated(
+                connected=state.tls_connected,
+                device_id=state.tls_device_id,
+                current_wavelength_nm=state.tls_current_wavelength_nm,
+                target_wavelength_nm=state.tls_target_wavelength_nm,
+                grating=state.tls_grating,
+                moving=state.tls_moving,
+                last_error=state.tls_last_error,
+            )
+        )
+
+    def _require_tls_service(self) -> TLSService:
+        if self.tls_service is None:
+            raise RuntimeError("TLS service is not configured")
+        return self.tls_service
+
+    def _submit_tls_task(self, fn) -> None:
+        if self._tls_executor is None:
+            self._tls_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="TLSController")
+        future = self._tls_executor.submit(fn)
+        self._tls_futures.add(future)
+        future.add_done_callback(self._tls_futures.discard)
+
+    def _cancel_tls_tasks(self) -> None:
+        for future in list(self._tls_futures):
+            future.cancel()
+        self._tls_futures.clear()
+        if self._tls_executor is not None:
+            self._tls_executor.shutdown(wait=False, cancel_futures=True)
+            self._tls_executor = None
+
+    def _handle_tls_error(self, source: str, exc: Exception) -> None:
+        if self._shutting_down:
+            return
+        self.state.update(
+            tls_moving=False,
+            tls_last_error=str(exc),
+            last_error=str(exc),
+        )
+        self.bus.publish(TLSError(source=source, message=str(exc)))
+        self._publish_tls_status_updated()
+        self.bus.publish(StatusMessage("error", str(exc)))
+
     def _require_lcd_service(self) -> LCDService:
         if self.lcd_service is None:
             raise RuntimeError("LCD service is not configured")
         return self.lcd_service
+
+    @staticmethod
+    def _classify_command_source(command: Command) -> str:
+        name = type(command).__name__
+        if name.startswith(("SetLCD", "ShowLCD")):
+            return "lcd_command"
+        if name.endswith("TLS") or name.startswith(("ConnectTLS", "DisconnectTLS", "SetTLS", "MoveTLS", "RefreshTLS")):
+            return "tls_command"
+        return "command"
 
     def _connection_state_updates(self) -> dict[str, object]:
         info = self.camera_service.get_connection_status()
@@ -480,6 +668,23 @@ class SessionController:
         sidecar_mode = "owned sidecar" if state.sidecar_owned else "external sidecar"
         lcd_status = "lcd ready" if state.lcd_connected else "lcd unavailable"
         return f"Camera {serial} open, stream running, {dims}, {pixel_format}, {sidecar_mode}, {lcd_status}"
+
+    @staticmethod
+    def _build_tls_connected_message(status: TLSStatus) -> str:
+        details: list[str] = []
+        if status.device_id is not None:
+            details.append(f"device {status.device_id}")
+        if status.grating is not None:
+            details.append(f"grating {status.grating}")
+        if status.current_wavelength_nm is not None:
+            details.append(f"{status.current_wavelength_nm:.3f} nm")
+        return f"TLS connected ({', '.join(details)})" if details else "TLS connected"
+
+    @staticmethod
+    def _build_tls_move_message(status: TLSStatus) -> str:
+        if status.current_wavelength_nm is None:
+            return "TLS move finished"
+        return f"TLS move finished at {status.current_wavelength_nm:.3f} nm"
 
     @staticmethod
     def _build_settings_message(

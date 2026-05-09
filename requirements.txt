@@ -4,3 +4,4 @@ pyzmq
 Pillow
 
 pygame
+pytest

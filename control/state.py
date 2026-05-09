@@ -49,6 +49,14 @@ class SessionState:
     lcd_opaque_code: Optional[int] = None
     lcd_last_error: Optional[str] = None
 
+    tls_connected: bool = False
+    tls_device_id: Optional[int] = None
+    tls_current_wavelength_nm: Optional[float] = None
+    tls_target_wavelength_nm: Optional[float] = None
+    tls_grating: Optional[int] = None
+    tls_moving: bool = False
+    tls_last_error: Optional[str] = None
+
     last_error: Optional[str] = None
 
 

@@ -91,6 +91,19 @@ gui -> control -> devices / capture
 - `gui/lcd_panel.py`
   - LCD 调试按钮
 
+### TLS 链路
+
+- `devices/tls_service.py`
+  - `tls_c1` / `TLSC1` 高层 SDK wrapper
+  - lazy import，未安装 `tls_c1` 时不破坏基础 import
+  - 统一收口 TLS 连接、目标波长、grating、move 和状态查询
+- `control/session_controller.py`
+  - 处理 TLS 命令
+  - 发布 TLS 事件并更新共享状态
+
+当前 TLS 路径已经替换旧的 `pywinauto` GUI 自动化思路。  
+新代码中不要再通过 GUI 自动化控制 TLS，也不要把 `SpectrometerAPI` 直接散落到各处。
+
 ## 环境要求
 
 ### 主 GUI 环境
@@ -108,6 +121,33 @@ gui -> control -> devices / capture
 ```powershell
 .\.venv\Scripts\pip.exe install -r requirements.txt
 ```
+
+### TLS SDK 依赖
+
+`optic_system` 对 [Mr-enthalpy/tls_c1](https://github.com/Mr-enthalpy/tls_c1) 的依赖是可选依赖，不属于基础 GUI 启动必需项。
+
+约定如下：
+
+- 没有 TLS 硬件、没有 vendor DLL、没有安装 `tls_c1` 时，项目基础 import 和无硬件测试仍应可运行。
+- 只有在启用 TLS backend 或运行未来 TLS 硬件 smoke 时，才需要安装 `tls_c1`。
+- `optic_system` 内部只允许 `devices/tls_service.py` 依赖 `tls_c1`，并且必须通过 lazy import 和高层 `tls_c1` / `TLSC1` facade 访问。
+
+推荐依赖方式一：直接从 GitHub 安装
+
+```powershell
+.\.venv\Scripts\pip.exe install git+https://github.com/Mr-enthalpy/tls_c1.git
+```
+
+推荐依赖方式二：先 checkout，再以本地 editable 方式安装
+
+```powershell
+git clone https://github.com/Mr-enthalpy/tls_c1.git .\third_party\tls_c1
+.\.venv\Scripts\pip.exe install -e .\third_party\tls_c1
+```
+
+不推荐把 `tls_c1` 源码直接复制进 `optic_system`，也不要把 vendor DLL 提交进本仓库。
+
+如果上游 `tls_c1` 运行时需要本机 SDK/DLL 路径，按其约定在本机设置 `TLS_C1_SDK_DIR`，不要把 DLL 放入本仓库版本控制。
 
 ### 相机 sidecar 环境
 
@@ -217,6 +257,27 @@ $env:CAM_BAYER_PATTERN = "GR"
 
 如果你发现 raw 预览颜色中 `R/B` 颠倒，这个变量就是优先检查项。
 
+### `TLS_C1_SERIAL`
+
+TLS 硬件 smoke 和后续集成 smoke 使用的设备序列号。默认单元测试不会读取或要求它。
+
+### `TLS_C1_SDK_DIR`
+
+按 `tls_c1` 上游约定提供 TLS vendor SDK / DLL 所在目录。  
+这是 TLS 硬件路径的本机环境变量，不应通过提交 DLL 到 `optic_system` 来替代。
+
+### `TLS_C1_SAFE_GRATING`
+
+未来硬件 smoke 使用的安全 grating 编号。默认建议通过环境变量显式提供。
+
+### `TLS_C1_SAFE_WAVELENGTH_NM`
+
+未来硬件 smoke 使用的安全目标波长。默认建议通过环境变量显式提供。
+
+### `TLS_C1_RUN_HARDWARE_TESTS`
+
+只有当这个变量设置为 `1` 时，`tests/test_tls_hardware_smoke.py` 才会运行。
+
 ## LCD 表示约定
 
 LCD 的物理表示不是普通彩色图像。
@@ -280,8 +341,37 @@ rgb[y, x, c] = mono[y, 3*x + c]
 
 - 任何重构优先保持 `gui -> control -> devices/capture` 的方向
 - 不要把控制逻辑重新塞回 GUI
+- TLS 只能通过 `devices/tls_service.py` 访问 `tls_c1`
+- GUI 不要直接调用 `TLSService`
 - 不要修改 `old/`
 - 新开发默认参考 [AGENTS/AGENTS.md](AGENTS/AGENTS.md)
+
+## TLS 测试
+
+无硬件测试：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_tls_service.py tests/test_tls_controller.py
+```
+
+默认这些测试不需要 TLS 硬件，也不需要 vendor DLL。
+
+如果你只是开发 `optic_system` 的 TLS 控制层，而不接真实硬件，通常只需要：
+
+1. 安装本仓库基础依赖；
+2. 不安装 `tls_c1` 或者只安装 `tls_c1` 而不配置 `TLS_C1_SDK_DIR`；
+3. 运行无硬件测试验证 wrapper 和 controller 语义。
+
+未来硬件 smoke 入口：
+
+```powershell
+$env:TLS_C1_SDK_DIR = "C:\Path\To\VendorSDK"
+$env:TLS_C1_RUN_HARDWARE_TESTS = "1"
+$env:TLS_C1_SERIAL = "YOUR_SERIAL"
+$env:TLS_C1_SAFE_GRATING = "1"
+$env:TLS_C1_SAFE_WAVELENGTH_NM = "550.0"
+.\.venv\Scripts\python.exe -m pytest tests/test_tls_hardware_smoke.py
+```
 
 ## 当前仓库状态
 
