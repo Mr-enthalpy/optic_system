@@ -16,7 +16,6 @@ class CameraControlGUI:
                  video_init_fun: Callable[[], Video],
                  lcd_init_fun: Callable[[], LCDDisplay],
                  switch_sets: ndarray):
-        # self.TLS = TLS_
         lcd: LCDDisplay = lcd_init_fun()
         img = np.ones((H, W, 3), dtype=np.uint8) * 255
         lcd.show(img)
@@ -30,10 +29,11 @@ class CameraControlGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
         self.switch_img_sets = switch_sets
         self.show_id = 0
-        # self.__tls = tls_c1()
-        # self.__tls.connect()
-        # self.__length = 455
-        # self.__tls.set_wavelength(wavelength=self.__length)
+        # Legacy: old pywinauto TLS was instantiated and wavelength was set here.
+        # Superseded by control path:
+        #   controller.dispatch(ConnectTLS(...))
+        #   controller.dispatch(SetTLSWavelength(...))
+        #   controller.dispatch(MoveTLS(...))
 
         # 设置定时检查队列
         self.root.after(100, self.check_queue)
@@ -172,9 +172,10 @@ class CameraControlGUI:
             self.update_queue.put(('status', ('error', f"捕捉失败: {str(e)}")))
 
     def on_turn_clicked(self) -> None:
+        # Legacy: old wavelength sweep loop using pywinauto TLS.
+        # Superseded by Phase 2 capture tasks via control.commands.
         for w in range(455, 655, 10):
-            # self.__length = w
-            # self.__tls.set_wavelength(wavelength=self.__length)
+            # Legacy: tls.set_wavelength(w) was called here.
             for i in range(0, self.switch_img_sets.shape[0]):
                 self.lcd.show(self.switch_img_sets[i])
                 self.show_id =  i
@@ -241,8 +242,8 @@ class CameraControlGUI:
 
     def __del__(self):
         self.video.stop()
-        # self.__tls.disconnect()
-        # self.__tls.__del__()
+        # Legacy: pywinauto TLS disconnect/del was called here.
+        # Superseded by control.commands.DisconnectTLS.
         pygame.quit()
         print("程序已安全退出")
 

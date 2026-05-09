@@ -8,11 +8,13 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from capture.preview_worker import PreviewWorker
+from control.commands import ConnectTLS, SetTLSGrating
 from control.events import StatusMessage
 from control.session_controller import SessionController
 from devices.camera_service import CameraServiceClient
 from devices.frame_stream import FrameStreamClient
 from devices.lcd_service import LCDService
+from devices.tls_service import TLSService, TLSServiceUnavailableError
 from gui.main_window import MainWindow
 
 
@@ -31,10 +33,27 @@ def build_controller(args: argparse.Namespace) -> SessionController:
             opaque_code=args.lcd_opaque_code,
         )
 
+    tls_service = None
+    if getattr(args, "enable_tls", False):
+        try:
+            tls_service = TLSService(
+                default_serial_number=args.tls_serial_number,
+            )
+        except TLSServiceUnavailableError as exc:
+            print(
+                f"Error: --enable-tls was requested but the tls_c1 SDK "
+                f"is not installed or could not be imported.\n"
+                f"  {exc}\n"
+                f"Install tls_c1 and try again, or omit --enable-tls to "
+                f"start without TLS support."
+            )
+            raise SystemExit(1) from exc
+
     return SessionController(
         camera_service=camera_service,
         preview_worker=preview_worker,
         lcd_service=lcd_service,
+        tls_service=tls_service,
         camera_index=args.camera_index,
         context_type=args.context_type,
         preconfigure=False,
@@ -77,6 +96,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=0,
         help="mono code used for the all-opaque LCD state",
     )
+    parser.add_argument(
+        "--enable-tls",
+        action="store_true",
+        default=False,
+        help="enable TLS wavelength control via tls_c1 SDK",
+    )
+    parser.add_argument(
+        "--tls-serial-number",
+        default=None,
+        help="TLS device serial number (overrides TLS_C1_SERIAL env var)",
+    )
+    parser.add_argument(
+        "--tls-safe-grating",
+        type=int,
+        default=1,
+        help="default TLS grating to set after connect",
+    )
     return parser.parse_args(argv)
 
 
@@ -89,6 +125,17 @@ def main(argv: list[str] | None = None) -> int:
         controller.start()
     except Exception as exc:
         start_error = exc
+
+    if getattr(args, "enable_tls", False) and controller.tls_service is not None:
+        try:
+            controller.dispatch(
+                ConnectTLS(serial_number=args.tls_serial_number)
+            )
+            controller.dispatch(SetTLSGrating(args.tls_safe_grating))
+        except Exception as exc:
+            controller.bus.publish(
+                StatusMessage("warning", f"TLS auto-connect failed: {exc}")
+            )
 
     window = MainWindow(controller)
     if start_error is not None:
