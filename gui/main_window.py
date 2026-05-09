@@ -24,11 +24,18 @@ from .bindings import (
     bind_lcd_debug_pattern,
     bind_refresh_settings,
     bind_shutdown,
+    bind_tls_connect,
+    bind_tls_disconnect,
+    bind_tls_move,
+    bind_tls_refresh_status,
+    bind_tls_set_grating,
+    bind_tls_set_wavelength,
 )
 from .camera_panel import CameraPanel, CameraSettingSpec
 from .lcd_panel import LCDPanel
 from .preview_panel import PreviewPanel
 from .status_panel import StatusPanel
+from .tls_panel import TLSPanel
 
 
 class MainWindow:
@@ -73,6 +80,28 @@ class MainWindow:
             ),
         )
         self.lcd_panel.pack(fill="x", pady=4)
+
+        if self.controller.tls_service is not None:
+            self.tls_panel = TLSPanel(
+                left_frame,
+                on_connect=lambda serial=None: self._safe_call(
+                    lambda w: bind_tls_connect(w, serial_number=serial)
+                ),
+                on_disconnect=lambda: self._safe_call(bind_tls_disconnect),
+                on_set_grating=lambda grating: self._safe_call(
+                    lambda w: bind_tls_set_grating(w, grating)
+                ),
+                on_set_wavelength=lambda wl: self._safe_call(
+                    lambda w: bind_tls_set_wavelength(w, wl)
+                ),
+                on_move=lambda timeout: self._safe_call(
+                    lambda w: bind_tls_move(w, timeout_s=timeout)
+                ),
+                on_refresh_status=lambda: self._safe_call(bind_tls_refresh_status),
+            )
+            self.tls_panel.pack(fill="x", pady=4)
+        else:
+            self.tls_panel = None
 
         right_frame = ttk.Frame(self.root)
         right_frame.pack(side="right", fill="both", expand=True, padx=8, pady=8)
@@ -144,6 +173,9 @@ class MainWindow:
         state = self.controller.state.get()
         self.status_panel.update_from_state(state)
         self.lcd_panel.update_from_state(state)
+
+        if self.tls_panel is not None:
+            self.tls_panel.update_from_state(state)
 
         self.preview_panel.update_preview(state.latest_preview_bgr)
         self.preview_panel.update_stats(

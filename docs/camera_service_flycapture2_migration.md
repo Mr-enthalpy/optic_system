@@ -444,7 +444,7 @@ Both the sidecar and the main process must be able to see them.
 ### PyCharm Run Configuration
 
 PyCharm run configurations have their own environment variable section.
-Configuring the system or shell environment is **not enough** — you must also:
+Configuring the system or shell environment is **not enough** -- you must also:
 
 1. Open **Run → Edit Configurations**.
 2. Select the run configuration (e.g. the hardware test, `app.main_gui`, or
@@ -602,14 +602,14 @@ open/close/reconfigure paths.
   `cleanup_errors`, not raised.
 - **`_close_camera_locked()` must never raise** during pre-open cleanup. If
   cleanup produces errors, they are returned as a list of strings and appear in
-  the OpenCamera response as `cleanup_warnings` or `cleanup_errors` — never as
+  the OpenCamera response as `cleanup_warnings` or `cleanup_errors` -- never as
   `primary_error`.
 
 ### Explicit stop
 
 - **`Camera.stop()` is an explicit business operation** and may propagate real
   SDK errors (including `INVALID_GENERATION`).
-- **`stop_capture()` is guarded by `is_capturing`** — it is a no-op when the
+- **`stop_capture()` is guarded by `is_capturing`** -- it is a no-op when the
   camera is not capturing.
 - Explicit stop is used only by `StopStream`, `StopCapture` (implicit in
   `ReconfigureCamera`), and the stream loop error path.
@@ -641,6 +641,6 @@ context:
 | Location | Classification |
 |---|---|
 | `primary_error` of an explicit `StopStream` / `StopCapture` | Real business stop failure |
-| `cleanup_errors` of `CloseCamera` / `Shutdown` / `OpenCamera` | Cleanup warning — acceptable |
-| `primary_error` of `OpenCamera` with `stage == "close_existing_camera"` | Regression — cleanup is leaking into primary |
+| `cleanup_errors` of `CloseCamera` / `Shutdown` / `OpenCamera` | Cleanup warning -- acceptable |
+| `primary_error` of `OpenCamera` with `stage == "close_existing_camera"` | Regression -- cleanup is leaking into primary |
 | `primary_error` of any op, `backend != "flycapture2_c"` | Old sidecar / old `pyflycap2` path |
