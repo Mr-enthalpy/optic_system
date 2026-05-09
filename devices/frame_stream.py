@@ -14,10 +14,8 @@ import zmq
 from .camera_service import DEFAULT_PORT_PUB, DEFAULT_SHM_NAME
 
 
-# The connected hardware currently needs `GR` to avoid a global R/B swap in the
-# raw8/raw16 preview path. Override with `CAM_BAYER_PATTERN` if another camera
-# exposes a different Bayer layout.
-DEFAULT_BAYER_PATTERN = os.environ.get("CAM_BAYER_PATTERN", "GR").strip().upper() or "GR"
+_RAW_DEFAULT_BAYER_PATTERN = os.environ.get("CAM_BAYER_PATTERN", "").strip().upper()
+DEFAULT_BAYER_PATTERN: str | None = _RAW_DEFAULT_BAYER_PATTERN or None
 _BAYER_TO_CV_CODE = {
     "BG": cv2.COLOR_BayerBG2BGR,
     "GB": cv2.COLOR_BayerGB2BGR,
@@ -48,13 +46,13 @@ class FrameStreamClient:
         shm_name: str = DEFAULT_SHM_NAME,
         topic: bytes = b"frame",
         recv_timeout_ms: Optional[int] = None,
-        bayer_pattern: str = DEFAULT_BAYER_PATTERN,
+        bayer_pattern: str | None = DEFAULT_BAYER_PATTERN,
     ):
         self.pub_addr = pub_addr
         self.default_shm_name = shm_name
         self.topic = topic
         self.recv_timeout_ms = recv_timeout_ms
-        self.bayer_pattern = self._normalize_bayer_pattern(bayer_pattern)
+        self.bayer_pattern = self._normalize_bayer_pattern(bayer_pattern) if bayer_pattern else None
 
         self._ctx = zmq.Context.instance()
         self._sub: Optional[zmq.Socket] = None
@@ -71,6 +69,16 @@ class FrameStreamClient:
             supported = ", ".join(sorted(_BAYER_TO_CV_CODE))
             raise ValueError(f"Unsupported Bayer pattern {pattern!r}; expected one of {supported}")
         return normalized
+
+    @staticmethod
+    def _resolve_bayer_pattern(meta: dict, default_bayer_pattern: str | None) -> tuple[str | None, str | None]:
+        candidate = meta.get("bayer_pattern", default_bayer_pattern)
+        if candidate is None or str(candidate).strip() == "":
+            return None, "No Bayer pattern provided; raw preview uses mono fallback."
+        try:
+            return FrameStreamClient._normalize_bayer_pattern(str(candidate)), None
+        except ValueError:
+            return None, f"Unsupported Bayer pattern {candidate!r}; raw preview uses mono fallback."
 
     def _ensure_sub(self) -> None:
         current_thread_id = get_ident()
@@ -107,17 +115,17 @@ class FrameStreamClient:
     def _decode_from_meta(
         shm: shared_memory.SharedMemory,
         meta: dict,
-        default_bayer_pattern: str,
+        default_bayer_pattern: str | None,
     ) -> tuple[np.ndarray, np.ndarray]:
         idx = int(meta["index"])
         width = int(meta["width"])
         height = int(meta["height"])
         stride = int(meta["stride"])
-        pix_fmt = str(meta["format"])
-        bayer_pattern = FrameStreamClient._normalize_bayer_pattern(
-            meta.get("bayer_pattern", default_bayer_pattern)
-        )
-        bayer_code = _BAYER_TO_CV_CODE[bayer_pattern]
+        pix_fmt = str(meta["format"]).strip().lower()
+        bayer_pattern, bayer_warning = FrameStreamClient._resolve_bayer_pattern(meta, default_bayer_pattern)
+        if bayer_warning:
+            meta["preview_warning"] = bayer_warning
+        bayer_code = _BAYER_TO_CV_CODE[bayer_pattern] if bayer_pattern else None
 
         start = idx * stride * height
         end = start + stride * height
@@ -128,13 +136,30 @@ class FrameStreamClient:
                 img = np.ndarray((height, width, 3), dtype=np.uint8, buffer=mv).copy()
                 raw = img
                 preview_bgr = img
+            elif pix_fmt == "rgb8":
+                raw = np.ndarray((height, width, 3), dtype=np.uint8, buffer=mv).copy()
+                preview_bgr = cv2.cvtColor(raw, cv2.COLOR_RGB2BGR)
+            elif pix_fmt == "bgr8":
+                raw = np.ndarray((height, width, 3), dtype=np.uint8, buffer=mv).copy()
+                preview_bgr = raw
             elif pix_fmt == "raw8":
                 raw = np.ndarray((height, width), dtype=np.uint8, buffer=mv).copy()
-                preview_bgr = cv2.cvtColor(raw, bayer_code)
+                preview_bgr = cv2.cvtColor(raw, bayer_code) if bayer_code is not None else cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
+            elif pix_fmt == "mono8":
+                raw = np.ndarray((height, width), dtype=np.uint8, buffer=mv).copy()
+                preview_bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
             elif pix_fmt == "raw16":
                 raw = np.ndarray((height, width), dtype=np.uint16, buffer=mv).copy()
-                preview16 = cv2.cvtColor(raw, bayer_code)
-                preview_bgr = np.clip(preview16 / 256, 0, 255).astype(np.uint8)
+                if bayer_code is not None:
+                    preview16 = cv2.cvtColor(raw, bayer_code)
+                    preview_bgr = np.clip(preview16 / 256, 0, 255).astype(np.uint8)
+                else:
+                    mono8 = np.clip(raw / 256, 0, 255).astype(np.uint8)
+                    preview_bgr = cv2.cvtColor(mono8, cv2.COLOR_GRAY2BGR)
+            elif pix_fmt == "mono16":
+                raw = np.ndarray((height, width), dtype=np.uint16, buffer=mv).copy()
+                mono8 = np.clip(raw / 256, 0, 255).astype(np.uint8)
+                preview_bgr = cv2.cvtColor(mono8, cv2.COLOR_GRAY2BGR)
             else:
                 raise RuntimeError(f"Unsupported pixel format: {pix_fmt}")
         finally:

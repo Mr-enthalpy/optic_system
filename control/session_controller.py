@@ -50,7 +50,7 @@ class SessionController:
         lcd_service: LCDService | None = None,
         camera_index: int = 0,
         context_type: str = "IIDC",
-        preconfigure: bool = True,
+        preconfigure: bool = False,
     ):
         self.camera_service = camera_service
         self.preview_worker = preview_worker
@@ -82,6 +82,7 @@ class SessionController:
             open_reply = self.camera_service.open_camera(
                 index=self.camera_index,
                 context_type=self.context_type,
+                disable_trigger=True,
             )
             self.state.update(
                 camera_open=True,
@@ -371,8 +372,8 @@ class SessionController:
 
             if state.camera_open:
                 run_step(self.camera_service.close_camera)
-            else:
-                run_step(self.camera_service.close)
+
+            run_step(self.camera_service.close)
 
             if self.lcd_service is not None:
                 run_step(self.lcd_service.close)

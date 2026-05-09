@@ -37,7 +37,7 @@ def build_controller(args: argparse.Namespace) -> SessionController:
         lcd_service=lcd_service,
         camera_index=args.camera_index,
         context_type=args.context_type,
-        preconfigure=not args.skip_preconfigure,
+        preconfigure=False,
     )
 
 
@@ -45,20 +45,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Launch the hardware-backed camera preview GUI with minimal LCD control"
     )
-    parser.set_defaults(skip_preconfigure=False)
     parser.add_argument("--camera-index", type=int, default=0)
     parser.add_argument("--context-type", default="IIDC")
-    parser.add_argument(
-        "--preconfigure",
-        dest="skip_preconfigure",
-        action="store_false",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--skip-preconfigure",
-        action="store_true",
-        help="skip the FlyCapture pre-configuration GUI before opening the camera",
-    )
     parser.add_argument(
         "--no-auto-sidecar",
         action="store_true",
