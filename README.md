@@ -2,7 +2,7 @@
 
 `optic_system` is the hardware-control and synchronized-capture frontend for the mono-LCD programmable diffractive imaging project.
 
-It is not the neural-network training repository.  
+It is not the neural-network training repository.
 Its downstream learning / reconstruction repository is `LCD_forward`.
 
 The intended system boundary is:
@@ -134,7 +134,7 @@ masks:   [N, T, 1, Hm, Wm]
 
 ## Development roadmap
 
-### Phase 0 — Documentation and boundary reset
+### Phase 0  --  Documentation and boundary reset
 
 Current phase.
 
@@ -155,7 +155,7 @@ Expected outputs:
 * optional `docs/roadmap.md`
 * optional `tasks/README.md`
 
-### Phase 1 — TLS SDK integration closure
+### Phase 1  --  TLS SDK integration closure
 
 Goal:
 
@@ -177,7 +177,7 @@ Non-goals:
 * no training integration
 * no pywinauto fallback path
 
-### Phase 2 — Minimal capture task layer
+### Phase 2  --  Minimal capture task layer
 
 Goal:
 
@@ -218,7 +218,7 @@ Non-goals:
 * no automatic full calibration system
 * no hidden dependency on legacy task scripts
 
-### Phase 3 — Raw capture to LCD_forward conversion
+### Phase 3  --  Raw capture to LCD_forward conversion
 
 Goal:
 
@@ -245,7 +245,7 @@ The conversion layer should handle:
 
 The raw capture format should preserve enough metadata to allow future reprocessing.
 
-### Phase 4 — Family-aware GenerMask calibration and closed-loop experiments
+### Phase 4  --  Family-aware GenerMask calibration and closed-loop experiments
 
 Goal:
 
@@ -260,7 +260,7 @@ This phase may include:
 * repeated forward-surrogate retraining
 * controlled mask design experiments
 
-This phase should only begin after Phase 1–3 are stable.
+This phase should only begin after Phase 1-3 are stable.
 
 ## Active scope
 

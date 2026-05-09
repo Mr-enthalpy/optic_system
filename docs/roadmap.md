@@ -2,13 +2,13 @@
 
 ## Current phase
 
-Phase 0 — Documentation and boundary reset **is the current active phase.**
+Phase 0  --  Documentation and boundary reset **is the current active phase.**
 
 The repository is at the **Phase 0 / Phase 1 boundary.** Camera and LCD base paths exist. TLS service / command / event / state support is partially present. The task layer and HDF5 export are not yet stable.
 
 ---
 
-## Phase 0 — Documentation and boundary reset
+## Phase 0  --  Documentation and boundary reset
 
 ### Goal
 
@@ -38,7 +38,7 @@ Re-anchor the repository as a hardware-control and synchronized-capture frontend
 ### Completion criteria
 
 - `docs/architecture.md` exists and clearly describes current architecture boundaries
-- `docs/roadmap.md` exists and clearly describes Phase 0–4
+- `docs/roadmap.md` exists and clearly describes Phase 0-4
 - `tasks/README.md` exists and classifies old task status
 - Documentation no longer excludes all hardware automation / synchronization / wavelength control as blanket out-of-scope items
 - Documentation clearly states that full scheduler, neural training, and mask optimization are not in current scope
@@ -48,7 +48,7 @@ Re-anchor the repository as a hardware-control and synchronized-capture frontend
 
 ---
 
-## Phase 1 — TLS SDK integration closure
+## Phase 1  --  TLS SDK integration closure
 
 ### Goal
 
@@ -86,7 +86,7 @@ Make the `tls_c1` backend usable through the normal application/control path. Re
 
 ---
 
-## Phase 2 — Minimal capture task layer
+## Phase 2  --  Minimal capture task layer
 
 ### Goal
 
@@ -94,9 +94,9 @@ Create a clean minimal capture path instead of reviving historical task scripts.
 
 ### Allowed work
 
-- `tasks/capture_plan.py` — capture plan data structures
-- `tasks/raw_capture_h5.py` — raw capture HDF5 writer
-- `tasks/capture_forward_dataset.py` — minimal capture orchestration
+- `tasks/capture_plan.py`  --  capture plan data structures
+- `tasks/raw_capture_h5.py`  --  raw capture HDF5 writer
+- `tasks/capture_forward_dataset.py`  --  minimal capture orchestration
 - Load capture plan
 - Initialize camera / LCD / optional TLS
 - Set TLS wavelength if enabled
@@ -126,7 +126,7 @@ Create a clean minimal capture path instead of reviving historical task scripts.
 
 ---
 
-## Phase 3 — Raw capture to `LCD_forward` conversion
+## Phase 3  --  Raw capture to `LCD_forward` conversion
 
 ### Goal
 
@@ -160,7 +160,7 @@ Convert raw experimental captures into training-ready HDF5 for `LCD_forward`.
 
 ---
 
-## Phase 4 — Family-aware GenerMask calibration and closed-loop experiments
+## Phase 4  --  Family-aware GenerMask calibration and closed-loop experiments
 
 ### Goal
 
@@ -179,7 +179,7 @@ Support structured mask-family calibration and controlled optimization loops.
 
 - Do not implement GenerMask training logic inside `optic_system`
 - Do not collapse mask reasoning into network latent variables inside `optic_system`
-- Do not begin Phase 4 before Phase 1–3 are stable
+- Do not begin Phase 4 before Phase 1-3 are stable
 
 ### Completion criteria
 

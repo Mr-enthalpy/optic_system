@@ -48,7 +48,7 @@ Do not assume the repository is already a full calibration system.
 
 ## Roadmap
 
-### Phase 0 — Documentation and boundary reset
+### Phase 0  --  Documentation and boundary reset
 
 Primary goal:
 
@@ -70,7 +70,7 @@ Allowed work:
 
 Do not implement large functionality in Phase 0 unless explicitly requested.
 
-### Phase 1 — TLS SDK integration closure
+### Phase 1  --  TLS SDK integration closure
 
 Primary goal:
 
@@ -98,7 +98,7 @@ Non-goals:
 - training integration
 - direct GUI-to-TLS calls
 
-### Phase 2 — Minimal capture task layer
+### Phase 2  --  Minimal capture task layer
 
 Primary goal:
 
@@ -130,7 +130,7 @@ Non-goals:
 - training
 - direct `LCD_forward` training invocation
 
-### Phase 3 — Raw capture to LCD_forward conversion
+### Phase 3  --  Raw capture to LCD_forward conversion
 
 Primary goal:
 
@@ -151,7 +151,7 @@ masks:   [N, T, 1, Hm, Wm]
 
 The raw capture format must preserve enough metadata to allow reprocessing.
 
-### Phase 4 — Family-aware GenerMask calibration and closed-loop experiments
+### Phase 4  --  Family-aware GenerMask calibration and closed-loop experiments
 
 Primary goal:
 
@@ -166,7 +166,7 @@ Possible work:
 * repeated forward-surrogate retraining through `LCD_forward`
 * controlled mask-design experiments
 
-Do not start Phase 4 before Phase 1–3 are stable unless explicitly requested.
+Do not start Phase 4 before Phase 1-3 are stable unless explicitly requested.
 
 ## Architecture rules
 
@@ -437,4 +437,3 @@ Do not:
 5. Add conversion to `LCD_forward` HDF5.
 6. Add family-aware GenerMask capture support.
 7. Consider larger closed-loop experiment automation only after the above are stable.
-

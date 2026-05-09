@@ -78,7 +78,7 @@ Each layer has a defined role:
 
 - Device-facing wrappers belong in `devices/`.
 - Each wrapper exposes a narrow, explicit interface.
-- Hardware SDK imports must be optional — the default import path must not require vendor DLLs.
+- Hardware SDK imports must be optional  --  the default import path must not require vendor DLLs.
 
 ### Capture rules
 
