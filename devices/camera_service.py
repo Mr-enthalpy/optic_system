@@ -55,16 +55,12 @@ def _resolve_sidecar_path() -> Path:
 
 def _candidate_python_commands() -> list[tuple[str, ...]]:
     candidates: list[tuple[str, ...]] = []
-    raw_py38 = os.environ.get("PY38_BIN")
-    if raw_py38:
-        candidates.append(tuple(shlex.split(raw_py38, posix=False)))
-
-    if os.name == "nt":
-        candidates.append(("py", "-3.8"))
+    raw_override = os.environ.get("OPTIC_SYSTEM_SIDECAR_PYTHON")
+    if raw_override:
+        candidates.append(tuple(shlex.split(raw_override)))
 
     candidates.extend(
         [
-            ("python3.8",),
             (sys.executable,),
             ("python",),
         ]
@@ -118,7 +114,8 @@ def _ensure_sidecar(
     Ensure the camera sidecar is reachable.
 
     If an external sidecar is already running, the current process only acts as a
-    client. Otherwise it tries to launch the service using a Python 3.8 command.
+    client. Otherwise it launches the service with the current Python interpreter
+    unless OPTIC_SYSTEM_SIDECAR_PYTHON provides an explicit override.
     """
 
     service_path = _resolve_sidecar_path()

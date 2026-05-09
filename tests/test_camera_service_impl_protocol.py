@@ -5,6 +5,7 @@ from enum import Enum
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from devices import camera_backend_flycapture2 as backend_mod
 from devices import camera_frame_layout as layout_mod
@@ -108,11 +109,15 @@ def test_close_camera_and_shutdown_have_distinct_service_semantics() -> None:
     close_reply = impl.handle_request(state, {"op": "CloseCamera"})
     assert close_reply["ok"] is True
     assert close_reply["service_running"] is True
+    assert close_reply["shm_released"] is True
+    assert close_reply["cleanup_errors"] == []
     assert not state.stop_event.is_set()
 
     shutdown_reply = impl.handle_request(state, {"op": "Shutdown"})
     assert shutdown_reply["ok"] is True
     assert shutdown_reply["service_running"] is False
+    assert shutdown_reply["shm_released"] is True
+    assert shutdown_reply["cleanup_errors"] == []
     assert state.stop_event.is_set()
 
 
@@ -135,6 +140,9 @@ def test_start_stop_stream_are_idempotent() -> None:
 
 
 def test_import_failure_open_camera_error_is_readable(monkeypatch) -> None:
+    monkeypatch.setenv("OPTIC_SYSTEM_SIDECAR_PYTHON", "custom-python")
+    monkeypatch.setenv("FLYCAPTURE2_SDK_DIR", "C:\\FlyCapture2")
+    monkeypatch.setenv("FLYCAPTURE2_DLL_DIR", "C:\\FlyCapture2\\bin64")
     monkeypatch.setattr(backend_mod, "FlyCapture2Camera", None)
     monkeypatch.setattr(backend_mod, "_FLYCAPTURE2_IMPORT_ERROR", ImportError("No module named flycapture2_c"))
     state = impl.CameraServiceState(camera_cls=None)
@@ -142,9 +150,117 @@ def test_import_failure_open_camera_error_is_readable(monkeypatch) -> None:
     reply = impl.handle_request(state, {"op": "OpenCamera", "index": 0})
 
     assert reply["ok"] is False
-    assert reply["error_type"] == "ImportError"
-    assert "flycapture2_c" in reply["err"]
-    assert "Mr-enthalpy/flycapture2_c" in reply["err"]
+    assert reply["primary_error_type"] == "ImportError"
+    assert "flycapture2_c" in reply["primary_error"]
+    assert "Mr-enthalpy/flycapture2_c" in reply["primary_error"]
+    assert "sys.executable" in reply["primary_error"]
+    assert "sys.version" in reply["primary_error"]
+    assert "sys.path" in reply["primary_error"]
+    assert "PYTHONPATH" in reply["primary_error"]
+    assert "OPTIC_SYSTEM_SIDECAR_PYTHON='custom-python'" in reply["primary_error"]
+    assert "FLYCAPTURE2_SDK_DIR='C:\\\\FlyCapture2'" in reply["primary_error"]
+    assert "FLYCAPTURE2_DLL_DIR='C:\\\\FlyCapture2\\\\bin64'" in reply["primary_error"]
+    assert "flycapture2_c import error" in reply["primary_error"]
+    assert "PY38_BIN" not in reply["primary_error"]
+
+
+def test_sdk_error_reply_includes_diagnostics_by_class_name(monkeypatch) -> None:
+    monkeypatch.setenv("FLYCAPTURE2_SDK_DIR", "D:\\FlyCapture2")
+    monkeypatch.setenv("FLYCAPTURE2_DLL_DIR", "D:\\FlyCapture2\\bin64\\vs2015")
+
+    class SDKNotFoundError(Exception):
+        pass
+
+    class FakeCamera:
+        calls = []
+
+        @classmethod
+        def open(cls, index: int = 0):
+            cls.calls.append(("open", index))
+            raise SDKNotFoundError("FlyCapture2 SDK headers were not found.")
+
+    state = impl.CameraServiceState(camera_cls=FakeCamera)
+    reply = impl.handle_request(state, {"op": "OpenCamera", "index": 0})
+
+    assert reply["ok"] is False
+    assert reply["primary_error_type"] == "SDKNotFoundError"
+    assert "sdk_diagnostics" in reply
+    diag = reply["sdk_diagnostics"]
+    assert diag["FLYCAPTURE2_SDK_DIR"] == "D:\\FlyCapture2"
+    assert diag["FLYCAPTURE2_DLL_DIR"] == "D:\\FlyCapture2\\bin64\\vs2015"
+    assert isinstance(diag["suggested_sdk_dir_examples"], list)
+    assert len(diag["suggested_sdk_dir_examples"]) >= 2
+    assert "D:" in str(diag["suggested_sdk_dir_examples"][0])
+    assert "FlyCapture2" in str(diag["suggested_sdk_dir_examples"][0])
+
+
+def test_sdk_error_detected_by_message_substring(monkeypatch) -> None:
+    monkeypatch.setenv("FLYCAPTURE2_SDK_DIR", "D:\\FlyCapture2")
+
+    class GenericError(Exception):
+        pass
+
+    class FakeCamera:
+        calls = []
+
+        @classmethod
+        def open(cls, index: int = 0):
+            cls.calls.append(("open", index))
+            raise GenericError("FLYCAPTURE2_SDK_DIR is not set correctly. FlyCapture2 SDK headers were not found.")
+
+    state = impl.CameraServiceState(camera_cls=FakeCamera)
+    reply = impl.handle_request(state, {"op": "OpenCamera", "index": 0})
+
+    assert reply["ok"] is False
+    assert "sdk_diagnostics" in reply
+    diag = reply["sdk_diagnostics"]
+    assert diag["FLYCAPTURE2_SDK_DIR"] == "D:\\FlyCapture2"
+
+
+def test_dll_load_error_reply_includes_diagnostics(monkeypatch) -> None:
+    monkeypatch.setenv("FLYCAPTURE2_DLL_DIR", "D:\\FlyCapture2\\bin64\\vs2015")
+
+    class DLLLoadError(Exception):
+        pass
+
+    class FakeCamera:
+        calls = []
+
+        @classmethod
+        def open(cls, index: int = 0):
+            cls.calls.append(("open", index))
+            raise DLLLoadError("FlyCapture2 DLL load failed.")
+
+    state = impl.CameraServiceState(camera_cls=FakeCamera)
+    reply = impl.handle_request(state, {"op": "OpenCamera", "index": 0})
+
+    assert reply["ok"] is False
+    assert reply["primary_error_type"] == "DLLLoadError"
+    assert "sdk_diagnostics" in reply
+    diag = reply["sdk_diagnostics"]
+    assert diag["FLYCAPTURE2_DLL_DIR"] == "D:\\FlyCapture2\\bin64\\vs2015"
+    assert isinstance(diag["suggested_dll_dir_examples"], list)
+
+
+def test_non_sdk_error_does_not_include_diagnostics(monkeypatch) -> None:
+    monkeypatch.setenv("FLYCAPTURE2_SDK_DIR", "D:\\FlyCapture2")
+
+    class UnrelatedError(Exception):
+        pass
+
+    class FakeCamera:
+        calls = []
+
+        @classmethod
+        def open(cls, index: int = 0):
+            cls.calls.append(("open", index))
+            raise UnrelatedError("Something else went wrong.")
+
+    state = impl.CameraServiceState(camera_cls=FakeCamera)
+    reply = impl.handle_request(state, {"op": "OpenCamera", "index": 0})
+
+    assert reply["ok"] is False
+    assert "sdk_diagnostics" not in reply
 
 
 def test_known_but_undecoded_pixel_format_is_rejected_before_configuration(monkeypatch) -> None:
@@ -313,7 +429,24 @@ class FakeCamera:
         self.is_open = False
 
 
-def test_open_camera_with_fake_backend_applies_scriptable_configuration() -> None:
+def test_open_camera_with_fake_backend_applies_scriptable_configuration(monkeypatch) -> None:
+    created: list[FakeSharedMemory] = []
+    released: list[FakeSharedMemory] = []
+
+    def fake_create(size: int):
+        shm = FakeSharedMemory(size)
+        created.append(shm)
+        return shm
+
+    def fake_release(shm):
+        if shm is not None:
+            released.append(shm)
+            shm.close()
+            shm.unlink()
+
+    monkeypatch.setattr(impl, "_create_shm", fake_create)
+    monkeypatch.setattr(impl, "_release_shm", fake_release)
+
     FakeCamera.calls = []
     state = impl.CameraServiceState(camera_cls=FakeCamera)
     try:
@@ -345,7 +478,10 @@ def test_open_camera_with_fake_backend_applies_scriptable_configuration() -> Non
         impl.handle_request(state, {"op": "CloseCamera"})
 
 
-def test_open_camera_without_explicit_disable_trigger_does_not_change_trigger() -> None:
+def test_open_camera_without_explicit_disable_trigger_does_not_change_trigger(monkeypatch) -> None:
+    monkeypatch.setattr(impl, "_create_shm", lambda size: FakeSharedMemory(size))
+    monkeypatch.setattr(impl, "_release_shm", lambda shm: None)
+
     FakeCamera.calls = []
     state = impl.CameraServiceState(camera_cls=FakeCamera)
     try:
@@ -447,6 +583,7 @@ def test_close_camera_releases_shared_memory_and_shutdown_sets_stop_event() -> N
     class Backend:
         is_capturing = True
         closed = False
+        cleanup_errors = ()
 
         def close(self):
             self.closed = True
@@ -464,6 +601,7 @@ def test_close_camera_releases_shared_memory_and_shutdown_sets_stop_event() -> N
     assert close_reply["ok"] is True
     assert close_reply["service_running"] is True
     assert close_reply["shm_released"] is True
+    assert close_reply["cleanup_errors"] == []
     assert shm.closed is True
     assert shm.unlinked is True
     assert state.shm is None
@@ -473,4 +611,441 @@ def test_close_camera_releases_shared_memory_and_shutdown_sets_stop_event() -> N
     shutdown_reply = impl.handle_request(state, {"op": "Shutdown"})
     assert shutdown_reply["ok"] is True
     assert shutdown_reply["service_running"] is False
+    assert shutdown_reply["shm_released"] is True
+    assert shutdown_reply["cleanup_errors"] == []
     assert state.stop_event.is_set()
+
+
+#  New tests for lifecycle hardening
+
+
+def test_mycam_lite_close_does_not_call_stop() -> None:
+    closed = False
+    stop_called = False
+
+    class FakeCam:
+        is_capturing = False
+        cleanup_errors = ()
+
+        def close(self):
+            nonlocal closed
+            closed = True
+
+        def stop(self):
+            nonlocal stop_called
+            stop_called = True
+
+    cam = backend_mod.MyCamLite(FakeCam(), index=0)
+    cam.close()
+
+    assert closed
+    assert not stop_called
+    assert cam.cleanup_errors == []
+
+
+def test_mycam_lite_close_collects_cleanup_errors() -> None:
+    class FakeCam:
+        is_capturing = False
+        cleanup_errors = (ValueError("stop failed"), RuntimeError("disconnect failed"))
+
+        def close(self):
+            pass
+
+    cam = backend_mod.MyCamLite(FakeCam(), index=0)
+    cam.close()
+
+    assert len(cam.cleanup_errors) == 2
+    assert "stop failed" in cam.cleanup_errors[0]
+    assert "disconnect failed" in cam.cleanup_errors[1]
+
+
+def test_mycam_lite_close_noops_when_cam_is_none() -> None:
+    cam = backend_mod.MyCamLite(None, index=0)
+    cam.close()
+    assert cam.cleanup_errors == []
+
+
+def test_stop_capture_noops_when_not_capturing() -> None:
+    stop_called = False
+
+    class FakeCam:
+        is_capturing = False
+
+        def stop(self):
+            nonlocal stop_called
+            stop_called = True
+
+    cam = backend_mod.MyCamLite(FakeCam(), index=0)
+    cam.stop_capture()
+
+    assert not stop_called
+
+
+def test_stop_capture_noops_when_cam_is_none() -> None:
+    cam = backend_mod.MyCamLite(None, index=0)
+    cam.stop_capture()
+
+
+def test_stop_capture_calls_stop_when_capturing() -> None:
+    stop_called = False
+
+    class FakeCam:
+        is_capturing = True
+
+        def stop(self):
+            nonlocal stop_called
+            stop_called = True
+
+    cam = backend_mod.MyCamLite(FakeCam(), index=0)
+    cam.stop_capture()
+
+    assert stop_called
+
+
+def test_close_camera_locked_suppresses_cleanup_exceptions() -> None:
+    class FakeCam:
+        cleanup_errors = ("cleanup warning from camera",)
+
+        def close(self):
+            raise RuntimeError("cleanup failure in close")
+
+    state = impl.CameraServiceState()
+    state.cam = FakeCam()
+    state.shm = FakeSharedMemory(16)
+    state.layout = layout_mod.frame_layout_from_array(np.zeros((2, 2), dtype=np.uint8), pixel_format="RAW8")
+    state.running = True
+
+    cleanup_errors = impl._close_camera_locked(state)
+
+    assert len(cleanup_errors) >= 2
+    assert any("cleanup failure in close" in e for e in cleanup_errors)
+    assert any("cleanup warning from camera" in e for e in cleanup_errors)
+    assert state.cam is None
+    assert state.shm is None
+    assert state.layout is None
+    assert not state.running
+
+
+def test_close_camera_locked_returns_camera_cleanup_errors() -> None:
+    class FakeCam:
+        is_capturing = False
+        cleanup_errors = ("fc2StopCapture failed: INVALID_GENERATION (20)",)
+
+        def close(self):
+            pass
+
+    state = impl.CameraServiceState()
+    state.cam = FakeCam()
+    state.shm = FakeSharedMemory(16)
+
+    cleanup_errors = impl._close_camera_locked(state)
+
+    assert "INVALID_GENERATION" in " ".join(cleanup_errors)
+    assert state.cam is None
+
+
+def test_close_camera_response_includes_cleanup_errors() -> None:
+    class FakeCam:
+        is_capturing = False
+        cleanup_errors = ("cleanup warning",)
+
+        def close(self):
+            pass
+
+    state = impl.CameraServiceState()
+    state.cam = FakeCam()
+    state.shm = FakeSharedMemory(16)
+
+    reply = impl.handle_request(state, {"op": "CloseCamera"})
+
+    assert reply["ok"] is True
+    assert reply["shm_released"] is True
+    assert "cleanup_errors" in reply
+    assert "cleanup warning" in " ".join(reply["cleanup_errors"])
+
+
+def test_shutdown_response_includes_cleanup_errors() -> None:
+    class FakeCam:
+        is_capturing = False
+        cleanup_errors = ("cleanup warning",)
+
+        def close(self):
+            pass
+
+    state = impl.CameraServiceState()
+    state.cam = FakeCam()
+    state.shm = FakeSharedMemory(16)
+
+    reply = impl.handle_request(state, {"op": "Shutdown"})
+
+    assert reply["ok"] is True
+    assert reply["shm_released"] is True
+    assert reply["service_running"] is False
+    assert "cleanup_errors" in reply
+    assert "cleanup warning" in " ".join(reply["cleanup_errors"])
+
+
+def test_open_camera_pre_cleanup_warning_not_primary_error(monkeypatch) -> None:
+    monkeypatch.setattr(backend_mod, "FlyCapture2Camera", None)
+
+    class FakeCleanupCam:
+        is_capturing = True
+        is_open = True
+        cleanup_errors = ("fc2StopCapture failed: INVALID_GENERATION (20) - Invalid generation error",)
+
+        def close(self):
+            pass
+
+    original_open = backend_mod.MyCamLite.open
+
+    @classmethod
+    def fake_open(cls, **kwargs):
+        raise RuntimeError("primary failure")
+
+    monkeypatch.setattr(backend_mod.MyCamLite, "open", fake_open)
+
+    state = impl.CameraServiceState()
+    state.cam = FakeCleanupCam()
+    state.shm = FakeSharedMemory(16)
+
+    reply = impl.handle_request(state, {"op": "OpenCamera", "index": 0})
+
+    assert reply["ok"] is False
+    assert reply["primary_error"] == "primary failure"
+    assert "INVALID_GENERATION" in " ".join(reply["cleanup_errors"])
+    assert "primary_error_type" in reply
+
+
+def test_open_camera_success_with_cleanup_warnings(monkeypatch) -> None:
+    monkeypatch.setattr(backend_mod, "FlyCapture2Camera", None)
+
+    class FakeCleanupCam:
+        is_capturing = False
+        is_open = False
+        cleanup_errors = ("previous cleanup warning",)
+
+        def close(self):
+            pass
+
+    class FakeCam:
+        is_capturing = True
+        is_open = True
+        cleanup_errors = ()
+
+        @classmethod
+        def open(cls, index: int = 0):
+            return cls()
+
+        def get_camera_info(self, refresh=False):
+            return SimpleNamespace(serial_number=999, model_name="TestCam")
+
+        def get_trigger_mode_info(self):
+            return SimpleNamespace(present=True)
+
+        def get_configuration(self):
+            return SimpleNamespace(grab_timeout=500)
+
+        def get_format7_info(self, mode=0):
+            return SimpleNamespace(supported=True, supported_pixel_formats=())
+
+        def get_format7_configuration(self):
+            return SimpleNamespace(
+                settings=SimpleNamespace(mode=0, offset_x=0, offset_y=0, width=4, height=3, pixel_format="RAW8")
+            )
+
+        def get_trigger_mode(self):
+            return SimpleNamespace(on_off=False, polarity=0, source=0, mode=0, parameter=0)
+
+        def disable_trigger(self):
+            return SimpleNamespace(on_off=False, polarity=0, source=0, mode=0, parameter=0)
+
+        def start(self):
+            self.is_capturing = True
+
+        def read_frame_with_info(self):
+            return layout_mod.CapturedFrame(
+                array=np.zeros((3, 4), dtype=np.uint8),
+                width=4,
+                height=3,
+                stride=4,
+                pixel_format="RAW8",
+            )
+
+        def snapshot_properties(self):
+            return ()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(impl, "_create_shm", lambda size: FakeSharedMemory(size))
+    monkeypatch.setattr(impl, "_release_shm", lambda shm: None)
+
+    state = impl.CameraServiceState(camera_cls=FakeCam)
+    state.cam = FakeCleanupCam()
+    state.shm = FakeSharedMemory(16)
+    state.layout = layout_mod.frame_layout_from_array(np.zeros((2, 2), dtype=np.uint8), pixel_format="RAW8")
+
+    reply = impl.handle_request(state, {"op": "OpenCamera", "index": 0})
+
+    assert reply["ok"] is True
+    assert "cleanup_warnings" in reply
+    assert "previous cleanup warning" in " ".join(reply["cleanup_warnings"])
+    assert reply["cleanup_errors"] == []
+    assert reply["width"] == 4
+    assert reply["height"] == 3
+
+
+def test_open_camera_structured_failure_response(monkeypatch) -> None:
+    monkeypatch.setattr(backend_mod, "FlyCapture2Camera", None)
+    monkeypatch.setattr(backend_mod, "_FLYCAPTURE2_IMPORT_ERROR", ImportError("No module named flycapture2_c"))
+
+    state = impl.CameraServiceState(camera_cls=None)
+    reply = impl.handle_request(state, {"op": "OpenCamera", "index": 0})
+
+    assert reply["ok"] is False
+    assert reply["stage"] == "open_device"
+    assert "primary_error" in reply
+    assert "primary_error_type" in reply
+    assert reply["primary_error_type"] == "ImportError"
+    assert "cleanup_errors" in reply
+    assert "camera_state" in reply
+    assert "flycapture2_c_file" in reply
+    assert "camera_class_file" in reply
+    assert "has_cleanup_errors" in reply
+
+
+def test_ping_includes_backend_diagnostics() -> None:
+    state = impl.CameraServiceState()
+    reply = impl.handle_request(state, {"op": "Ping"})
+
+    assert reply["ok"] is True
+    assert reply["backend"] == "flycapture2_c"
+    assert "service_file" in reply
+    assert "python_executable" in reply
+    assert "flycapture2_c_file" in reply
+    assert "camera_class_file" in reply
+    assert "has_cleanup_errors" in reply
+
+
+def test_reconfigure_locked_does_not_restart_after_failure() -> None:
+    start_calls = []
+
+    class Backend:
+        is_capturing = True
+        layout = layout_mod.frame_layout_from_array(np.zeros((2, 2), dtype=np.uint8), pixel_format="RAW8")
+
+        def validate_config(self, **kwargs):
+            return {}
+
+        def stop_capture(self):
+            pass
+
+        def start_capture(self):
+            start_calls.append(True)
+
+        def apply_config(self, **kwargs):
+            raise RuntimeError("config apply failed")
+
+        def _read_frame(self):
+            pass
+
+    state = impl.CameraServiceState()
+    state.cam = Backend()
+    state.layout = Backend.layout
+    state.shm = FakeSharedMemory(16)
+    state.running = True
+
+    with pytest.raises(RuntimeError, match="config apply failed"):
+        impl._reconfigure_locked(state, {"pixel_format": "RAW16"})
+
+    assert not state.running
+    assert len(start_calls) == 0
+
+
+def test_reconfigure_stop_only_when_capturing(monkeypatch) -> None:
+    monkeypatch.setattr(impl, "_create_shm", lambda size: FakeSharedMemory(size))
+    monkeypatch.setattr(impl, "_release_shm", lambda shm: None)
+
+    stop_calls = []
+
+    class Backend:
+        is_capturing = False
+        layout = layout_mod.frame_layout_from_array(np.zeros((2, 2), dtype=np.uint8), pixel_format="RAW8")
+
+        def validate_config(self, **kwargs):
+            return {}
+
+        def stop_capture(self):
+            stop_calls.append(True)
+
+        def apply_config(self, **kwargs):
+            pass
+
+        def start_capture(self):
+            pass
+
+        def _read_frame(self):
+            return layout_mod.CapturedFrame(
+                array=np.zeros((2, 2), dtype=np.uint8),
+                width=2,
+                height=2,
+                stride=2,
+                pixel_format="RAW8",
+            )
+
+        def _discover_setting_names(self):
+            return []
+
+    state = impl.CameraServiceState()
+    state.cam = Backend()
+    state.shm = FakeSharedMemory(16)
+    state.layout = Backend.layout
+
+    impl._reconfigure_locked(state, {"pixel_format": "RAW8"})
+
+    assert len(stop_calls) == 0
+
+
+def test_regression_invalid_generation_cleanup_not_primary(monkeypatch) -> None:
+    monkeypatch.setattr(backend_mod, "FlyCapture2Camera", None)
+
+    class FakeCleanupCam:
+        is_capturing = True
+        is_open = True
+        cleanup_errors = ("fc2StopCapture failed: INVALID_GENERATION (20) - Invalid generation error",)
+
+        def close(self):
+            pass
+
+    @classmethod
+    def fake_open(cls, **kwargs):
+        raise RuntimeError("primary failure at read_first_frame")
+
+    monkeypatch.setattr(backend_mod.MyCamLite, "open", fake_open)
+
+    state = impl.CameraServiceState()
+    state.cam = FakeCleanupCam()
+    state.shm = FakeSharedMemory(16)
+    state.layout = layout_mod.frame_layout_from_array(np.zeros((2, 2), dtype=np.uint8), pixel_format="RAW8")
+
+    reply = impl.handle_request(state, {"op": "OpenCamera", "index": 0})
+
+    assert reply["ok"] is False
+    assert reply["primary_error"] == "primary failure at read_first_frame"
+    assert "INVALID_GENERATION" in " ".join(reply["cleanup_errors"])
+
+
+def test_mycam_lite_init_has_cleanup_errors_field() -> None:
+    class FakeCam:
+        is_capturing = False
+        cleanup_errors = ()
+
+        def close(self):
+            pass
+
+        def stop(self):
+            pass
+
+    cam = backend_mod.MyCamLite(FakeCam(), index=0)
+    assert hasattr(cam, "cleanup_errors")
+    assert cam.cleanup_errors == []

@@ -78,18 +78,27 @@ $env:FLYCAPTURE2_SDK_DIR = "C:\Program Files\Point Grey Research\FlyCapture2"
 $env:FLYCAPTURE2_DLL_DIR = "C:\Program Files\Point Grey Research\FlyCapture2\bin64"
 ```
 
-The sidecar Python environment must be able to import `flycapture2_c`. In local
-development this may be done from the sibling checkout:
+The sidecar defaults to the same Python environment as the main process
+(`sys.executable`). `flycapture2_c` supports Python 3.12, so the sidecar no
+longer needs a dedicated Python 3.8 runtime.
+
+Install `flycapture2_c` into the same Python environment that runs
+`optic_system`:
 
 ```powershell
-$env:PYTHONPATH = "C:\Users\teacher H\PycharmProjects\flycapture2_c"
+python -m pip install -e "C:\Users\teacher H\PycharmProjects\flycapture2_c"
 ```
 
-For a real deployment, install the package into the sidecar environment:
+Verify the import from that same environment:
 
 ```powershell
-python -m pip install C:\Users\teacher H\PycharmProjects\flycapture2_c
+python -c "import flycapture2_c; print(flycapture2_c.__file__)"
 ```
+
+If a deployment needs a generic sidecar interpreter override, set
+`OPTIC_SYSTEM_SIDECAR_PYTHON`. The old `PY38_BIN` variable belonged only to the
+historical `pyflycap2` backend path and is ignored by the `flycapture2_c`
+launcher.
 
 Importing `flycapture2_c` is designed to be lightweight, but real camera
 operations still require the vendor SDK/runtime. Default tests in this
@@ -98,7 +107,10 @@ DLLs or hardware.
 
 If the sidecar cannot import `flycapture2_c`, it should report a structured,
 readable error that names package `flycapture2_c` and repository
-`Mr-enthalpy/flycapture2_c`.
+`Mr-enthalpy/flycapture2_c`, along with `sys.executable`, `sys.version`,
+`sys.path`, `PYTHONPATH`, `OPTIC_SYSTEM_SIDECAR_PYTHON`,
+`FLYCAPTURE2_SDK_DIR`, `FLYCAPTURE2_DLL_DIR`, and the original
+`flycapture2_c` import error.
 
 ## OpenCamera Flow
 
@@ -400,6 +412,114 @@ $env:CAMERA_SERVICE_DEBUG = "1"
 
 to inherit stdout/stderr in the launching console.
 
+## Windows / PyCharm SDK Configuration
+
+If the FlyCapture2 SDK is not placed under `flycapture2_c/third_party/FlyCapture2/`,
+you **must** set `FLYCAPTURE2_SDK_DIR` and `FLYCAPTURE2_DLL_DIR` explicitly before
+starting any Python process that will touch the SDK (including the sidecar).
+
+### Why explicit settings may be needed
+
+`flycapture2_c` searches for the SDK in this order:
+
+1. `FLYCAPTURE2_SDK_DIR` if set (env var);
+2. the project-local `<flycapture2_c repo>/third_party/` directory;
+3. `<FLYCAPTURE2_SDK_DIR>/FlyCapture2` (if the configured path is a parent container).
+
+If the SDK was installed by the vendor to a system location such as
+`D:\Program Files\Point Grey Research\FlyCapture2` and no copy exists under
+`third_party/`, the auto-discovery will fail and you will see
+`SDKNotFoundError`.
+
+### Required environment variables
+
+```powershell
+$env:FLYCAPTURE2_SDK_DIR = "D:\Program Files\Point Grey Research\FlyCapture2"
+$env:FLYCAPTURE2_DLL_DIR = "D:\Program Files\Point Grey Research\FlyCapture2\bin64\vs2015"
+```
+
+Set these in the same shell before running `optic_system` or the hardware tests.
+Both the sidecar and the main process must be able to see them.
+
+### PyCharm Run Configuration
+
+PyCharm run configurations have their own environment variable section.
+Configuring the system or shell environment is **not enough** — you must also:
+
+1. Open **Run → Edit Configurations**.
+2. Select the run configuration (e.g. the hardware test, `app.main_gui`, or
+   the camera service impl).
+3. In **Environment variables**, add (one per line):
+
+   ```text
+   FLYCAPTURE2_SDK_DIR=D:\Program Files\Point Grey Research\FlyCapture2
+   FLYCAPTURE2_DLL_DIR=D:\Program Files\Point Grey Research\FlyCapture2\bin64\vs2015
+   ```
+
+4. Click **Apply** and re-run.
+
+If you use a **Python** or **Python tests** run configuration template, set the
+variables in the template so every new configuration inherits them.
+
+### Verifying SDK visibility
+
+From the **same Python environment** that runs `optic_system`:
+
+```powershell
+python -c "from flycapture2_c.api import get_api; v = get_api().get_library_version(); print(f'Library {v[0]}.{v[1]}.{v[2]}.{v[3]}')"
+```
+
+If this prints a version number, the SDK is discoverable. If it fails with
+`SDKNotFoundError` or `DLLLoadError`, check:
+
+- the current values of `FLYCAPTURE2_SDK_DIR` and `FLYCAPTURE2_DLL_DIR` in the
+  shell;
+- that the SDK directory contains `include/C/FlyCapture2_C.h` (and the other
+  required headers);
+- that the DLL directory contains `FlyCapture2_C_v140.dll` (or a similar match);
+- that the PyCharm run configuration has the same variables set.
+
+### Sidecar environment inheritance
+
+The sidecar is launched as a subprocess by `camera_service.py` using the **same
+Python interpreter** (`sys.executable`). The sidecar inherits the **current
+process environment**, so environment variables set before `optic_system` starts
+are visible to both processes.
+
+If you set environment variables inside a PyCharm run configuration, the sidecar
+inherits them automatically. If you use a **terminal** outside PyCharm, set
+them in that terminal's session before launching.
+
+### Error diagnostics
+
+When the sidecar fails to find the SDK, the error reply now includes a
+structured `sdk_diagnostics` field:
+
+```json
+{
+  "ok": false,
+  "err": "FlyCapture2 SDK headers were not found. Current FLYCAPTURE2_SDK_DIR=...",
+  "error_type": "SDKNotFoundError",
+  "op": "OpenCamera",
+  "recoverable": true,
+  "sdk_diagnostics": {
+    "FLYCAPTURE2_SDK_DIR": null,
+    "FLYCAPTURE2_DLL_DIR": null,
+    "suggested_sdk_dir_examples": [
+      "D:\\Program Files\\Point Grey Research\\FlyCapture2",
+      "C:\\Program Files\\Point Grey Research\\FlyCapture2"
+    ],
+    "suggested_dll_dir_examples": [
+      "D:\\Program Files\\Point Grey Research\\FlyCapture2\\bin64\\vs2015",
+      "C:\\Program Files\\Point Grey Research\\FlyCapture2\\bin64\\vs2015"
+    ]
+  }
+}
+```
+
+Use `sdk_diagnostics` to quickly see which environment variables (if any) are
+currently set and what examples are appropriate for your machine.
+
 ## Testing Status
 
 This round adds no-hardware tests for protocol payloads, JSON serialization,
@@ -436,15 +556,15 @@ py -3.12 -m pytest tests/hardware/test_camera_service_flycapture2_backend.py -q
 Result: failed before hardware access because the launched sidecar environment
 could not import package `flycapture2_c`.
 
-Second run used the sibling checkout, forced the sidecar Python, and pointed the
-sidecar at the installed FlyCapture2 SDK/runtime under
-`D:\Program Files\Point Grey Research`:
+Second run installed the sibling `flycapture2_c` checkout into the same Python
+3.12 environment used by `optic_system` and pointed the sidecar at the installed
+FlyCapture2 SDK/runtime under `D:\Program Files\Point Grey Research`:
 
 ```powershell
-$env:PYTHONPATH = "C:\Users\teacher H\PycharmProjects\flycapture2_c"
-$env:PY38_BIN = "py -3.12"
+python -m pip install -e "C:\Users\teacher H\PycharmProjects\flycapture2_c"
+python -c "import flycapture2_c; print(flycapture2_c.__file__)"
 $env:FLYCAPTURE2_SDK_DIR = "D:\Program Files\Point Grey Research\FlyCapture2"
-$env:FLYCAPTURE2_DLL_DIR = "D:\Program Files\Point Grey Research\FlyCapture2\bin64"
+$env:FLYCAPTURE2_DLL_DIR = "D:\Program Files\Point Grey Research\FlyCapture2\bin64\vs2015"
 $env:OPTIC_SYSTEM_HARDWARE_TEST = "1"
 $env:OPTIC_SYSTEM_CAMERA_INDEX = "0"
 $env:OPTIC_SYSTEM_FRAME_COUNT = "30"
@@ -462,3 +582,65 @@ This validates the sidecar can import `flycapture2_c`, open camera index 0 with
 explicit `disable_trigger=true`, start the shared-memory stream, receive 30
 frame metadata events, read frame bytes through shared memory, stop streaming,
 close the camera, and shut down the sidecar on this hardware machine.
+
+The older `PY38_BIN` override was only for the retired `pyflycap2` backend. The
+`flycapture2_c` backend works with Python 3.12 and the sidecar should normally
+share the main process environment.
+
+## Lifecycle Invariants
+
+These invariants were established during the `INVALID_GENERATION` cleanup
+hardening (May 2026) and must be preserved by any future changes to the camera
+open/close/reconfigure paths.
+
+### Cleanup path
+
+- **`MyCamLite.close()` must call only `Camera.close()`.** It must not call
+  `stop_capture()` or `Camera.stop()`.
+- **`Camera.close()` is the sole cleanup API.** It performs best-effort stop,
+  disconnect, and resource teardown. Failures are collected in
+  `cleanup_errors`, not raised.
+- **`_close_camera_locked()` must never raise** during pre-open cleanup. If
+  cleanup produces errors, they are returned as a list of strings and appear in
+  the OpenCamera response as `cleanup_warnings` or `cleanup_errors` — never as
+  `primary_error`.
+
+### Explicit stop
+
+- **`Camera.stop()` is an explicit business operation** and may propagate real
+  SDK errors (including `INVALID_GENERATION`).
+- **`stop_capture()` is guarded by `is_capturing`** — it is a no-op when the
+  camera is not capturing.
+- Explicit stop is used only by `StopStream`, `StopCapture` (implicit in
+  `ReconfigureCamera`), and the stream loop error path.
+
+### Error reporting
+
+- **OpenCamera failures report `stage` and `primary_error` separately.**
+  `cleanup_errors` (from pre-open cleanup or post-failure close) are a distinct
+  field.
+- **`cleanup_errors` are diagnostic warnings**, not primary failures. They must
+  not cause `ok: false` on `CloseCamera`/`Shutdown` if the close workflow
+  completed.
+- **Ping returns backend diagnostic fields** (`flycapture2_c_file`,
+  `camera_class_file`, `has_cleanup_errors`, `python_executable`,
+  `service_file`). These fields must remain available to distinguish the
+  actually-running sidecar from stale processes or stale package installs.
+
+### Reconfigure
+
+- **`_reconfigure_locked()` must not restart capture after a failed
+  configuration.** The camera is left stopped (`state.running = False`); the
+  caller must explicitly `StartStream` or retry.
+
+### INVALID_GENERATION classification
+
+If `fc2StopCapture failed: INVALID_GENERATION (20)` appears again, classify by
+context:
+
+| Location | Classification |
+|---|---|
+| `primary_error` of an explicit `StopStream` / `StopCapture` | Real business stop failure |
+| `cleanup_errors` of `CloseCamera` / `Shutdown` / `OpenCamera` | Cleanup warning — acceptable |
+| `primary_error` of `OpenCamera` with `stage == "close_existing_camera"` | Regression — cleanup is leaking into primary |
+| `primary_error` of any op, `backend != "flycapture2_c"` | Old sidecar / old `pyflycap2` path |

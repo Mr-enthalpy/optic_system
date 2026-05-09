@@ -14,11 +14,13 @@ import zmq
 try:
     from .camera_backend_flycapture2 import (
         MyCamLite,
+        build_sdk_diagnostics,
         flycapture2_import_error_message,
         format7_info_to_dict,
         has_pixel_format_support_matrix,
         is_backend_package_available,
         read_frame_decodable_pixel_format_names,
+        resolve_flycapture2_c_info,
     )
     from .camera_frame_layout import BACKEND_NAME, PROTOCOL_VERSION, FrameLayout, build_frame_metadata, frame_layout_from_frame
     from .camera_protocol import (
@@ -38,11 +40,13 @@ try:
 except ImportError:  # pragma: no cover - direct script execution path
     from camera_backend_flycapture2 import (
         MyCamLite,
+        build_sdk_diagnostics,
         flycapture2_import_error_message,
         format7_info_to_dict,
         has_pixel_format_support_matrix,
         is_backend_package_available,
         read_frame_decodable_pixel_format_names,
+        resolve_flycapture2_c_info,
     )
     from camera_frame_layout import BACKEND_NAME, PROTOCOL_VERSION, FrameLayout, build_frame_metadata, frame_layout_from_frame
     from camera_protocol import (
@@ -78,6 +82,7 @@ class CameraServiceState:
     dropped_frames: int = 0
     last_frame_ts_ns: int | None = None
     last_error: str | None = None
+    cleanup_errors: list[str] = field(default_factory=list)
     lock: Any = field(default_factory=threading.RLock)
     stop_event: threading.Event = field(default_factory=threading.Event)
 
@@ -123,18 +128,42 @@ def _replace_shm_locked(state: CameraServiceState, layout: FrameLayout) -> bool:
     return True
 
 
-def _close_camera_locked(state: CameraServiceState) -> bool:
-    released_shm = state.shm is not None
+def _close_camera_locked(state: CameraServiceState) -> list[str]:
+    shm_was_present = state.shm is not None
+    cleanup_errors: list[str] = []
+    cam = state.cam
+    state.cam = None
     state.running = False
-    if state.cam is not None:
+
+    if cam is not None:
         try:
-            state.cam.close()
-        finally:
-            state.cam = None
-    _release_shm(state.shm)
-    state.shm = None
+            cam.close()
+        except Exception as exc:
+            cleanup_errors.append(str(exc))
+        cleanup_errors.extend(getattr(cam, "cleanup_errors", []) or [])
+
+    if state.shm is not None:
+        try:
+            state.shm.close()
+        except Exception:
+            pass
+        try:
+            state.shm.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+        state.shm = None
+
     state.layout = None
-    return released_shm
+    state.cleanup_errors = cleanup_errors
+    if cleanup_errors:
+        state.last_error = {
+            "type": "cleanup_warning",
+            "messages": cleanup_errors,
+        }
+
+    return cleanup_errors
 
 
 def _require_camera(state: CameraServiceState) -> MyCamLite:
@@ -234,7 +263,8 @@ def _reconfigure_locked(state: CameraServiceState, req: dict[str, Any]) -> dict[
     validation = cam.validate_config(pixel_format=req.get("pixel_format"), roi=req.get("roi"))
     was_running = bool(state.running)
     state.running = False
-    cam.stop_capture()
+    if cam.is_capturing:
+        cam.stop_capture()
     shm_recreated = False
     try:
         cam.apply_config(
@@ -258,6 +288,7 @@ def _reconfigure_locked(state: CameraServiceState, req: dict[str, Any]) -> dict[
             state.layout = new_layout
         state.running = was_running
         state.last_error = None
+        state.cleanup_errors = []
         status = _stream_status_locked(state)
         return {
             "ok": True,
@@ -279,16 +310,28 @@ def _reconfigure_locked(state: CameraServiceState, req: dict[str, Any]) -> dict[
         }
     except Exception:
         state.running = False
-        try:
-            cam.start_capture()
-        except Exception:
-            pass
         raise
 
 
 def _publish_status(pub: zmq.Socket, payload: dict[str, Any]) -> None:
     status = {"protocol_version": PROTOCOL_VERSION, "backend": BACKEND_NAME, "ts_ns": time.time_ns(), **payload}
     pub.send_multipart([b"status", json.dumps(json_safe(status)).encode("utf-8")])
+
+
+_SDK_ERROR_CLASS_NAMES = frozenset({"SDKNotFoundError", "DLLLoadError"})
+_SDK_ERROR_MESSAGE_SUBSTRINGS = (
+    "FlyCapture2 SDK headers were not found",
+    "FlyCapture2 DLL",
+    "FLYCAPTURE2_SDK_DIR",
+    "FLYCAPTURE2_DLL_DIR",
+)
+
+
+def _is_sdk_error(exc: BaseException) -> bool:
+    if exc.__class__.__name__ in _SDK_ERROR_CLASS_NAMES:
+        return True
+    message = str(exc)
+    return any(needle in message for needle in _SDK_ERROR_MESSAGE_SUBSTRINGS)
 
 
 def handle_request(
@@ -300,17 +343,26 @@ def handle_request(
     op = str(req.get("op") or "")
     try:
         if op == "Ping":
+            backend_info = resolve_flycapture2_c_info()
             return {
                 "ok": True,
                 "ts_ns": time.time_ns(),
                 "backend": BACKEND_NAME,
                 "protocol_version": PROTOCOL_VERSION,
                 "package_available": state.package_available(),
+                "service_file": __file__,
+                "python_executable": sys.executable,
+                "flycapture2_c_file": backend_info.get("flycapture2_c_file"),
+                "flycapture2_c_version": backend_info.get("flycapture2_c_version"),
+                "camera_class_file": backend_info.get("camera_class_file"),
+                "has_cleanup_errors": backend_info.get("has_cleanup_errors", False),
             }
 
         if op == "GetBackendInfo":
             with state.lock:
+                backend_info = resolve_flycapture2_c_info()
                 return {
+                    **backend_info,
                     "ok": True,
                     "backend": BACKEND_NAME,
                     "protocol_version": PROTOCOL_VERSION,
@@ -327,47 +379,102 @@ def handle_request(
             return deprecated_preconfig_gui_reply()
 
         if op == "OpenCamera":
-            with state.lock:
-                _close_camera_locked(state)
-                disable_trigger_requested = req.get("disable_trigger") is True
-                cam = MyCamLite.open(
-                    index=int(req.get("index", 0)),
-                    context_type=str(req.get("context_type", "IIDC")),
-                    disable_trigger=disable_trigger_requested,
-                    grab_timeout_ms=req.get("grab_timeout_ms"),
-                    pixel_format=req.get("pixel_format"),
-                    roi=req.get("roi"),
-                    properties=req.get("properties") or [],
-                    camera_cls=state.camera_cls,
-                )
-                if cam.layout is None:
-                    raise CameraStateError("camera opened but frame layout is unavailable")
-                state.cam = cam
-                state.seq = 0
-                state.widx = 0
-                state.dropped_frames = 0
-                state.last_frame_ts_ns = None
-                state.last_error = None
-                _replace_shm_locked(state, cam.layout)
-                info = _camera_info_payload(cam)
-                return {
-                    "ok": True,
-                    "backend": BACKEND_NAME,
-                    "protocol_version": PROTOCOL_VERSION,
-                    "serial": info.get("serial"),
-                    "width": cam.layout.width,
-                    "height": cam.layout.height,
-                    "stride": cam.layout.stride,
-                    "format": cam.layout.format,
-                    "pixel_format": cam.layout.pixel_format,
-                    "dtype": cam.layout.dtype,
-                    "shape": cam.layout.shape,
-                    "shm": SHM_NAME,
-                    "ring_size": RING,
-                    "setting_names": list(cam.setting_names),
-                    "configuration_applied": json_safe(cam.configuration_applied),
-                    "info": info,
+            stage = "entry"
+            pre_cleanup_errors: list[str] = []
+            cam: MyCamLite | None = None
+            try:
+                with state.lock:
+                    stage = "close_existing_camera"
+                    pre_cleanup_errors = _close_camera_locked(state)
+
+                    stage = "open_device"
+                    disable_trigger_requested = req.get("disable_trigger") is True
+                    cam = MyCamLite.open(
+                        index=int(req.get("index", 0)),
+                        context_type=str(req.get("context_type", "IIDC")),
+                        disable_trigger=disable_trigger_requested,
+                        grab_timeout_ms=req.get("grab_timeout_ms"),
+                        pixel_format=req.get("pixel_format"),
+                        roi=req.get("roi"),
+                        properties=req.get("properties") or [],
+                        camera_cls=state.camera_cls,
+                    )
+                    stage = "allocate_shared_memory"
+                    if cam.layout is None:
+                        raise CameraStateError("camera opened but frame layout is unavailable")
+                    state.cam = cam
+                    state.seq = 0
+                    state.widx = 0
+                    state.dropped_frames = 0
+                    state.last_frame_ts_ns = None
+                    state.last_error = None
+                    state.cleanup_errors = []
+                    _replace_shm_locked(state, cam.layout)
+                    info = _camera_info_payload(cam)
+
+                    stage = "ready"
+                    reply = {
+                        "ok": True,
+                        "backend": BACKEND_NAME,
+                        "protocol_version": PROTOCOL_VERSION,
+                        "serial": info.get("serial"),
+                        "width": cam.layout.width,
+                        "height": cam.layout.height,
+                        "stride": cam.layout.stride,
+                        "format": cam.layout.format,
+                        "pixel_format": cam.layout.pixel_format,
+                        "dtype": cam.layout.dtype,
+                        "shape": cam.layout.shape,
+                        "shm": SHM_NAME,
+                        "ring_size": RING,
+                        "frame_nbytes": cam.layout.frame_nbytes,
+                        "setting_names": list(cam.setting_names),
+                        "configuration_applied": json_safe(cam.configuration_applied),
+                        "info": info,
+                        "cleanup_errors": [],
+                    }
+                    if pre_cleanup_errors:
+                        reply["cleanup_warnings"] = pre_cleanup_errors
+                    return reply
+            except Exception as primary_exc:
+                with state.lock:
+                    state.last_error = str(primary_exc)
+                backend_info = resolve_flycapture2_c_info()
+                cleanup_errors: list[str] = list(pre_cleanup_errors)
+                camera_state: dict[str, Any] = {
+                    "camera_present": state.cam is not None,
                 }
+                if cam is not None:
+                    try:
+                        cam.close()
+                    except Exception:
+                        pass
+                    cleanup_errors.extend(getattr(cam, "cleanup_errors", []) or [])
+                    camera_state["is_open"] = cam.is_open
+                    camera_state["is_capturing"] = cam.is_capturing
+                error_reply_payload: dict[str, Any] = {
+                    "ok": False,
+                    "op": "OpenCamera",
+                    "backend": BACKEND_NAME,
+                    "stage": stage,
+                    "primary_error": str(primary_exc),
+                    "primary_error_type": type(primary_exc).__name__,
+                    "cleanup_errors": cleanup_errors,
+                    "camera_state": camera_state,
+                    "flycapture2_c_file": backend_info.get("flycapture2_c_file"),
+                    "camera_class_file": backend_info.get("camera_class_file"),
+                    "has_cleanup_errors": backend_info.get("has_cleanup_errors", False),
+                    "recoverable": bool(getattr(primary_exc, "recoverable", True)),
+                }
+                sdk_diagnostics = None
+                if _is_sdk_error(primary_exc):
+                    try:
+                        sdk_diagnostics = build_sdk_diagnostics()
+                    except Exception:
+                        pass
+                if sdk_diagnostics:
+                    error_reply_payload["sdk_diagnostics"] = sdk_diagnostics
+                return error_reply_payload
 
         if op == "GetCameraInfo":
             with state.lock:
@@ -499,21 +606,46 @@ def handle_request(
 
         if op == "CloseCamera":
             with state.lock:
-                shm_released = _close_camera_locked(state)
-                state.last_error = None
-                return {"ok": True, "service_running": True, "shm_released": shm_released}
+                cleanup_errors = _close_camera_locked(state)
+                reply: dict[str, Any] = {
+                    "ok": True,
+                    "service_running": True,
+                    "shm_released": True,
+                    "cleanup_errors": cleanup_errors,
+                    "backend": BACKEND_NAME,
+                }
+                if cleanup_errors:
+                    reply["warning"] = "camera cleanup completed with warnings"
+                else:
+                    state.last_error = None
+                return reply
 
         if op == "Shutdown":
             with state.lock:
-                shm_released = _close_camera_locked(state)
+                cleanup_errors = _close_camera_locked(state)
                 state.stop_event.set()
-                return {"ok": True, "service_running": False, "shm_released": shm_released}
+                reply = {
+                    "ok": True,
+                    "service_running": False,
+                    "shm_released": True,
+                    "cleanup_errors": cleanup_errors,
+                    "backend": BACKEND_NAME,
+                }
+                if cleanup_errors:
+                    reply["warning"] = "camera cleanup completed with warnings"
+                return reply
 
         return error_reply(op, "unknown op", error_type="UnknownOperation")
     except Exception as exc:
         with state.lock:
             state.last_error = str(exc)
-        return error_reply(op, exc)
+        extra: dict[str, Any] = {}
+        if _is_sdk_error(exc):
+            try:
+                extra["sdk_diagnostics"] = build_sdk_diagnostics()
+            except Exception:
+                pass
+        return error_reply(op, exc, **extra)
 
 
 def stream_loop(state: CameraServiceState, pub: zmq.Socket) -> None:

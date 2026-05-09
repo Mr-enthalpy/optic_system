@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
-from devices.camera_service import CameraServiceClient
+from devices.camera_service import CameraServiceClient, _candidate_python_commands
 
 
 class RecordingCameraServiceClient(CameraServiceClient):
@@ -66,6 +68,27 @@ def test_open_camera_sends_explicit_configuration_payload() -> None:
     assert payload["pixel_format"] == "RAW8"
     assert payload["roi"]["width"] == 320
     assert payload["properties"][0]["name"] == "SHUTTER"
+
+
+def test_default_sidecar_python_command_uses_current_interpreter(monkeypatch) -> None:
+    monkeypatch.delenv("OPTIC_SYSTEM_SIDECAR_PYTHON", raising=False)
+    monkeypatch.setenv("PY38_BIN", "legacy-python38")
+
+    candidates = _candidate_python_commands()
+
+    assert candidates[0] == (sys.executable,)
+    assert ("legacy-python38",) not in candidates
+
+
+def test_sidecar_python_override_uses_generic_environment_variable(monkeypatch) -> None:
+    monkeypatch.setenv("OPTIC_SYSTEM_SIDECAR_PYTHON", "py -3.12")
+    monkeypatch.setenv("PY38_BIN", "legacy-python38")
+
+    candidates = _candidate_python_commands()
+
+    assert candidates[0] == ("py", "-3.12")
+    assert (sys.executable,) in candidates
+    assert ("legacy-python38",) not in candidates
 
 
 def test_open_camera_omits_disable_trigger_unless_explicit() -> None:

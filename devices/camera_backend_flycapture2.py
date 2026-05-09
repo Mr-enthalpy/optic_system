@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -27,6 +29,27 @@ except ImportError:  # pragma: no cover - direct script execution path
         trigger_change_summary,
     )
 
+
+def _format_flycapture2_import_error(import_error: Exception | None) -> str:
+    if import_error is None:
+        return "flycapture2_c Camera backend is unavailable."
+    return (
+        "Unable to import flycapture2_c. Install Mr-enthalpy/flycapture2_c "
+        "as package 'flycapture2_c' in the same Python environment that runs "
+        "optic_system. For local development, run: python -m pip install -e "
+        '"C:\\Users\\teacher H\\PycharmProjects\\flycapture2_c". '
+        "Diagnostics: "
+        f"sys.executable={sys.executable!r}; "
+        f"sys.version={sys.version!r}; "
+        f"sys.path={sys.path!r}; "
+        f"PYTHONPATH={os.environ.get('PYTHONPATH')!r}; "
+        f"OPTIC_SYSTEM_SIDECAR_PYTHON={os.environ.get('OPTIC_SYSTEM_SIDECAR_PYTHON')!r}; "
+        f"FLYCAPTURE2_SDK_DIR={os.environ.get('FLYCAPTURE2_SDK_DIR')!r}; "
+        f"FLYCAPTURE2_DLL_DIR={os.environ.get('FLYCAPTURE2_DLL_DIR')!r}; "
+        f"flycapture2_c import error={import_error!r}"
+    )
+
+
 try:
     from flycapture2_c import Camera as FlyCapture2Camera
 except Exception as exc:  # pragma: no cover - exercised through monkeypatch tests
@@ -35,13 +58,7 @@ except Exception as exc:  # pragma: no cover - exercised through monkeypatch tes
     _fc2_pixel_format_support = None
     _fc2_support_for_pixel_format = None
     _FLYCAPTURE2_IMPORT_ERROR: Exception | None = exc
-    print(
-        "[camera-service] Failed to import flycapture2_c. Install "
-        "Mr-enthalpy/flycapture2_c as package 'flycapture2_c' in the sidecar "
-        f"environment. Import error: {exc}",
-        file=sys.stderr,
-        flush=True,
-    )
+    print(f"[camera-service] {_format_flycapture2_import_error(exc)}", file=sys.stderr, flush=True)
 else:
     _FLYCAPTURE2_IMPORT_ERROR = None
     try:
@@ -57,13 +74,80 @@ else:
 
 
 def flycapture2_import_error_message() -> str:
-    if _FLYCAPTURE2_IMPORT_ERROR is None:
-        return "flycapture2_c Camera backend is unavailable."
-    return (
-        "Unable to import flycapture2_c. Install Mr-enthalpy/flycapture2_c "
-        "as package 'flycapture2_c' in the sidecar environment. "
-        f"Original import error: {_FLYCAPTURE2_IMPORT_ERROR}"
-    )
+    return _format_flycapture2_import_error(_FLYCAPTURE2_IMPORT_ERROR)
+
+
+def _discover_flycapture2_repo_third_party() -> str | None:
+    try:
+        import flycapture2_c as _fc2
+    except Exception:
+        return None
+    try:
+        root = Path(__import__("flycapture2_c.dll", fromlist=["dll"]).__file__).resolve().parents[2]
+    except Exception:
+        try:
+            root = Path(_fc2.__file__).resolve().parents[2]
+        except Exception:
+            return None
+    candidate = root / "third_party" / "FlyCapture2"
+    return str(candidate.resolve()) if candidate.is_dir() else None
+
+
+def build_sdk_diagnostics() -> dict[str, Any]:
+    suggested_sdk_dir_examples: list[str] = []
+    suggested_dll_dir_examples: list[str] = []
+    for drive_prefix in ("D:", "C:"):
+        base = f"{drive_prefix}\\Program Files\\Point Grey Research\\FlyCapture2"
+        suggested_sdk_dir_examples.append(base)
+        suggested_dll_dir_examples.append(f"{base}\\bin64\\vs2015")
+    third_party = _discover_flycapture2_repo_third_party()
+    if third_party:
+        suggested_sdk_dir_examples.append(third_party)
+        tp_dll = f"{third_party}\\bin64\\vs2015"
+        if tp_dll not in suggested_dll_dir_examples:
+            suggested_dll_dir_examples.append(tp_dll)
+    return {
+        "FLYCAPTURE2_SDK_DIR": os.environ.get("FLYCAPTURE2_SDK_DIR"),
+        "FLYCAPTURE2_DLL_DIR": os.environ.get("FLYCAPTURE2_DLL_DIR"),
+        "suggested_sdk_dir_examples": suggested_sdk_dir_examples,
+        "suggested_dll_dir_examples": suggested_dll_dir_examples,
+    }
+
+
+_BACKEND_INFO_CACHE: dict[str, Any] | None = None
+
+
+def resolve_flycapture2_c_info() -> dict[str, Any]:
+    global _BACKEND_INFO_CACHE
+    if _BACKEND_INFO_CACHE is not None:
+        return _BACKEND_INFO_CACHE
+    info: dict[str, Any] = {
+        "backend": "flycapture2_c",
+        "flycapture2_c_available": False,
+        "flycapture2_c_file": None,
+        "flycapture2_c_version": None,
+        "camera_class_file": None,
+        "has_cleanup_errors": False,
+        "import_error": None,
+        "python_executable": sys.executable,
+        "service_file": __file__,
+    }
+    try:
+        import inspect
+        import flycapture2_c as _fc2_mod
+        from flycapture2_c import Camera
+
+        info.update({
+            "flycapture2_c_available": True,
+            "flycapture2_c_file": getattr(_fc2_mod, "__file__", None),
+            "flycapture2_c_version": getattr(_fc2_mod, "__version__", None),
+            "camera_class_file": inspect.getfile(Camera),
+            "has_cleanup_errors": hasattr(Camera, "cleanup_errors"),
+        })
+    except Exception as exc:
+        info["import_error"] = repr(exc)
+    _BACKEND_INFO_CACHE = info
+    return info
 
 
 def is_backend_package_available() -> bool:
@@ -149,6 +233,7 @@ class MyCamLite:
         self.layout: FrameLayout | None = None
         self.setting_names: list[str] = []
         self.configuration_applied: dict[str, Any] = {}
+        self.cleanup_errors: list[str] = []
 
     @classmethod
     def open(
@@ -448,11 +533,14 @@ class MyCamLite:
         self.cam.start()
 
     def stop_capture(self) -> None:
-        if hasattr(self.cam, "stop"):
-            self.cam.stop()
+        if self.cam is None:
+            return
+        if not getattr(self.cam, "is_capturing", False):
+            return
+        self.cam.stop()
 
     def close(self) -> None:
-        try:
-            self.stop_capture()
-        finally:
-            self.cam.close()
+        if self.cam is None:
+            return
+        self.cam.close()
+        self.cleanup_errors = [str(e) for e in getattr(self.cam, "cleanup_errors", ())]

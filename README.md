@@ -93,17 +93,16 @@ Important details:
 - hardware machines must install the FlyCapture2 SDK/runtime separately;
 - default tests must not require the SDK, DLLs, or a real camera.
 
-Local development can use the sibling checkout if present:
+Install the wrapper into the same Python environment that runs `optic_system`:
 
 ```powershell
-$env:PYTHONPATH = "C:\Users\teacher H\PycharmProjects\flycapture2_c"
+python -m pip install -e "C:\Users\teacher H\PycharmProjects\flycapture2_c"
 ```
 
-For installed environments, install the wrapper into the sidecar Python
-environment instead:
+Verify the import from that same environment:
 
 ```powershell
-python -m pip install C:\Users\teacher H\PycharmProjects\flycapture2_c
+python -c "import flycapture2_c; print(flycapture2_c.__file__)"
 ```
 
 When the FlyCapture2 SDK is not in the default location, set one or both:
@@ -121,14 +120,17 @@ Main GUI/runtime dependencies are listed in [requirements.txt](requirements.txt)
 python -m pip install -r requirements.txt
 ```
 
-The sidecar launcher still supports selecting a specific Python command:
+The camera sidecar defaults to the same Python interpreter running
+`optic_system` (`sys.executable`). If a deployment needs an explicit interpreter
+override, use:
 
 ```powershell
-$env:PY38_BIN = "C:\Path\To\Python38\python.exe"
+$env:OPTIC_SYSTEM_SIDECAR_PYTHON = "C:\Path\To\Python\python.exe"
 ```
 
-Use this only when the camera SDK wrapper is installed in a dedicated sidecar
-environment.
+This is a generic override and has no Python 3.8 meaning. The old `PY38_BIN`
+variable belonged to the retired `pyflycap2` backend path and is ignored by the
+`flycapture2_c` sidecar launcher.
 
 ## Startup
 
@@ -165,6 +167,11 @@ python -m app.main_gui --lcd-transmissive-code 255 --lcd-opaque-code 0
 ```
 
 ## Useful Environment Variables
+
+### `OPTIC_SYSTEM_SIDECAR_PYTHON`
+
+Optional generic Python command override for launching the sidecar. By default,
+the launcher uses `sys.executable`.
 
 ### `SIDECAR`
 

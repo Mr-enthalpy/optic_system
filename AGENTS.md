@@ -115,7 +115,8 @@ Important dependency facts:
 - `flycapture2_c` does not bundle the vendor FlyCapture2 SDK, DLLs, drivers,
   headers, or libraries.
 - The FlyCapture2 SDK/runtime must be installed separately on hardware machines.
-- The sidecar environment must be able to import `flycapture2_c` and load the
+- The sidecar defaults to the same Python interpreter as the main process and
+  that environment must be able to import `flycapture2_c` and load the
   FlyCapture2 C runtime when hardware operations begin.
 - Import failure must produce a readable error that mentions
   `Mr-enthalpy/flycapture2_c` and package `flycapture2_c`.
@@ -123,7 +124,8 @@ Important dependency facts:
 
 Useful environment variables:
 
-- `PY38_BIN`: optional Python command for launching the sidecar.
+- `OPTIC_SYSTEM_SIDECAR_PYTHON`: optional generic Python command override for
+  launching the sidecar.
 - `SIDECAR`: optional path override for the sidecar script.
 - `FLYCAPTURE2_SDK_DIR`: FlyCapture2 SDK install path for `flycapture2_c`.
 - `FLYCAPTURE2_DLL_DIR`: directory containing the FlyCapture2 C runtime DLL.
@@ -139,6 +141,17 @@ C:\Users\teacher H\PycharmProjects\flycapture2_c
 
 Do not assume that checkout exists on every machine. Document it as a local
 development convenience, not as a portable dependency.
+
+Install `flycapture2_c` into the same Python environment that runs
+`optic_system`, for example:
+
+```text
+python -m pip install -e "C:\Users\teacher H\PycharmProjects\flycapture2_c"
+python -c "import flycapture2_c; print(flycapture2_c.__file__)"
+```
+
+The old `PY38_BIN` variable belongs only to the historical `pyflycap2` backend
+path and must not affect the `flycapture2_c` sidecar launcher.
 
 ## Camera Startup
 
