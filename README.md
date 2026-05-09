@@ -1,379 +1,465 @@
 # optic_system
 
-`optic_system` is an in-progress refactor of an optical experiment control
-system. The current work focuses on stable device boundaries, explicit control
-semantics, camera preview, and minimal LCD control. It is not yet a complete
-experiment automation system.
+`optic_system` is the hardware-control and synchronized-capture frontend for the mono-LCD programmable diffractive imaging project.
 
-## Canonical Instructions
+It is not the neural-network training repository.  
+Its downstream learning / reconstruction repository is `LCD_forward`.
 
-Project instructions live in [AGENTS.md](AGENTS.md).
-
-That file is now the single source of truth for architecture boundaries, staged
-goals, camera sidecar rules, `flycapture2_c` dependency notes, LCD conventions,
-TLS architecture rules, and success criteria.
-
-The previous staged documents under `AGENTS/` have been retired to avoid
-conflicting instructions.
-
-## Current Scope
-
-Implemented or active work:
-
-- camera sidecar connection and launch;
-- headless camera backend using `flycapture2_c`;
-- ZMQ REQ/REP camera control protocol;
-- shared-memory ring buffer frame transport;
-- ZMQ PUB frame metadata;
-- GUI live preview;
-- camera parameter display and update through the control layer;
-- minimal LCD service and debug-pattern control;
-- LCD default all-transmissive startup behavior;
-- TLS service wrapper via `tls_c1` / `TLSC1` SDK facade;
-- no-hardware tests and opt-in hardware test skeletons.
-
-Out of scope for now:
-
-- full aperture search;
-- full calibration workflow;
-- wavelength sweep workflow;
-- synchronized LCD-camera acquisition scheduling;
-- dataset export pipeline;
-- GenerMask optimization;
-- large workflow/scheduler framework.
-
-## Directory Layout
+The intended system boundary is:
 
 ```text
-app/        application assembly and entry points
-capture/    frame consumption helpers and preview worker
-control/    commands, events, state, and controller semantics
-devices/    camera sidecar client/implementation, frame stream, LCD service, TLS service
-docs/       migration notes and operational documentation
-gui/        preview, camera panel, status panel, LCD debug panel
-old/        legacy reference code; do not modify
-patterns/   pattern generation helpers
-tasks/      future task-layer placeholders
-tests/      no-hardware tests and opt-in hardware tests
-```
+optic_system
+  -> controls camera / LCD / TLS
+  -> captures raw experimental observations
+  -> writes raw capture HDF5 with metadata
+  -> optionally converts raw capture data into LCD_forward-compatible HDF5
 
-Dependency direction must remain:
+LCD_forward
+  -> loads training HDF5
+  -> trains mask -> PSF forward surrogate
+  -> renders frames from object + PSF
+  -> trains reconstruction baseline
+  -> evaluates forward / reconstruction performance
+````
 
-```text
-gui -> control -> devices / capture
-```
+## Current project role
 
-`devices` and `capture` must not depend on `gui`.
+`optic_system` is being reorganized from an early camera/LCD GUI prototype into a hardware-facing experimental frontend.
 
-## Camera Architecture
+The active responsibilities are:
 
-The camera SDK stays inside the sidecar process:
+* camera service management
+* camera frame streaming through sidecar / shared memory
+* live preview
+* mono LCD physical mask display
+* TLS wavelength-control backend through `tls_c1`
+* control-layer command / event / state management
+* minimal synchronized acquisition tasks
+* raw capture HDF5 export
+* future conversion boundary toward `LCD_forward`
 
-- `devices/camera_service.py` is the main-process client.
-- `devices/camera_service_impl.py` is the hardware-facing sidecar.
-- Main process control uses ZMQ REQ/REP.
-- Frame bytes are written by the sidecar into a shared-memory ring buffer.
-- Frame metadata is published with ZMQ PUB.
-- Main process consumers read frame bytes from shared memory using metadata.
+The repository should stay focused on hardware control and data acquisition.
+Training, reconstruction, and differentiable mask optimization belong to `LCD_forward`.
 
-Do not move the camera SDK into the main process, and do not send full image
-payloads through ZMQ.
+## System components
 
-## Camera Backend Dependency
+### Camera
 
-The active backend is `flycapture2_c`, replacing the old `pyflycap2 + GUI`
-path.
+The camera path is based on a sidecar process wrapping the legacy camera SDK environment.
 
-Important details:
-
-- target repository: `Mr-enthalpy/flycapture2_c`;
-- Python import package: `flycapture2_c`;
-- package/distribution name may appear as `flycapture2-c`;
-- do not use `flycapture_c`;
-- the FlyCapture2 vendor SDK and runtime DLLs are not bundled;
-- hardware machines must install the FlyCapture2 SDK/runtime separately;
-- default tests must not require the SDK, DLLs, or a real camera.
-
-Install the wrapper into the same Python environment that runs `optic_system`:
-
-```powershell
-python -m pip install -e "C:\Users\teacher H\PycharmProjects\flycapture2_c"
-```
-
-Verify the import from that same environment:
-
-```powershell
-python -c "import flycapture2_c; print(flycapture2_c.__file__)"
-```
-
-When the FlyCapture2 SDK is not in the default location, set one or both:
-
-```powershell
-$env:FLYCAPTURE2_SDK_DIR = "C:\Program Files\Point Grey Research\FlyCapture2"
-$env:FLYCAPTURE2_DLL_DIR = "C:\Program Files\Point Grey Research\FlyCapture2\bin64"
-```
-
-## TLS Architecture
-
-TLS control has been migrated from `pywinauto` GUI automation to an SDK-based
-wrapper architecture. The new path replaces the legacy GUI automation approach
-with explicit device boundaries.
-
-### TLS Dependency
-
-`optic_system` treats [Mr-enthalpy/tls_c1](https://github.com/Mr-enthalpy/tls_c1)
-as an optional dependency. It is not required for basic GUI startup.
-
-Rules:
-
-- Without TLS hardware, vendor DLLs, or `tls_c1` installed, the project base
-  imports and no-hardware tests must still run.
-- `tls_c1` is only needed when you enable a TLS backend or run future TLS
-  hardware smoke tests.
-- Only `devices/tls_service.py` may import `tls_c1`, and only through a lazy
-  import using the high-level `tls_c1` / `TLSC1` facade.
-- Do not copy `tls_c1` source into `optic_system`, and do not commit vendor DLLs
-  into this repository.
-
-### TLS Modules
-
-- `devices/tls_service.py`
-  - Thin wrapper around `tls_c1` / `TLSC1` SDK facade
-  - Lazy import: does not break base imports when `tls_c1` is not installed
-  - Unified boundary for TLS connect, target wavelength, grating, move, and
-    status queries
-- `control/session_controller.py`
-  - Handles TLS commands
-  - Publishes TLS events and updates shared state
-
-Do not call `TLSService` directly from GUI widgets. GUI sends intent through
-`control`, which owns TLS semantics.
-
-### Installing tls_c1
-
-Option A: install directly from GitHub
-
-```powershell
-python -m pip install git+https://github.com/Mr-enthalpy/tls_c1.git
-```
-
-Option B: clone locally, then install editable
-
-```powershell
-git clone https://github.com/Mr-enthalpy/tls_c1.git .\third_party\tls_c1
-python -m pip install -e .\third_party\tls_c1
-```
-
-If the upstream `tls_c1` requires a local SDK/DLL path, set `TLS_C1_SDK_DIR` on
-your machine as documented by `tls_c1`. Do not commit DLLs into this repository.
-
-## Python Environment
-
-Main GUI/runtime dependencies are listed in [requirements.txt](requirements.txt):
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-The camera sidecar defaults to the same Python interpreter running
-`optic_system` (`sys.executable`). If a deployment needs an explicit interpreter
-override, use:
-
-```powershell
-$env:OPTIC_SYSTEM_SIDECAR_PYTHON = "C:\Path\To\Python\python.exe"
-```
-
-This is a generic override and has no Python 3.8 meaning. The old `PY38_BIN`
-variable belonged to the retired `pyflycap2` backend path and is ignored by the
-`flycapture2_c` sidecar launcher.
-
-## Startup
-
-Default GUI startup:
-
-```powershell
-python -m app.main_gui
-```
-
-Current intended startup behavior:
-
-1. connect to or launch the camera sidecar;
-2. open the camera through `OpenCamera` with explicit startup configuration;
-3. main GUI startup requests `disable_trigger=true` through `OpenCamera`;
-4. sidecar applies explicit scriptable configuration if supplied;
-5. sidecar starts capture and reads a first frame to determine layout;
-6. main process starts the stream;
-7. preview worker consumes PUB metadata plus shared memory frames;
-8. LCD initializes and defaults to all-transmissive when configured;
-9. GUI opens as the frontend.
-
-`PreConfigGUI` is deprecated. It no longer opens FlyCapture GUI and should only
-be treated as a compatibility RPC that returns a structured error pointing to
-explicit replacement operations such as `DisableTrigger`, `SetPixelFormat`,
-`SetROI`, `SetProperty`, `SetPropertyAuto`, and `SnapshotProperties`.
-
-Common options:
-
-```powershell
-python -m app.main_gui --disable-lcd
-python -m app.main_gui --no-auto-sidecar
-python -m app.main_gui --lcd-display-index 1
-python -m app.main_gui --lcd-transmissive-code 255 --lcd-opaque-code 0
-```
-
-## Useful Environment Variables
-
-### `OPTIC_SYSTEM_SIDECAR_PYTHON`
-
-Optional generic Python command override for launching the sidecar. By default,
-the launcher uses `sys.executable`.
-
-### `SIDECAR`
-
-Override the sidecar script path. Default:
+The intended camera path is:
 
 ```text
-devices/camera_service_impl.py
+CameraServiceClient
+  -> camera sidecar RPC
+  -> camera SDK / pyflycap runtime
+  -> shared memory frame stream
+  -> FrameStreamClient
+  -> PreviewWorker
+  -> GUI / capture task
 ```
 
-### `CAMERA_SERVICE_LOG`
+The sidecar boundary exists because the camera SDK stack may require a different Python/runtime environment than the main application.
 
-Capture sidecar stdout/stderr to a log file:
+### LCD
 
-```powershell
-$env:CAMERA_SERVICE_LOG = "camera_service.log"
-```
+The LCD is treated as a physical mono subpixel array, not as a semantic RGB display.
 
-### `CAMERA_SERVICE_DEBUG`
-
-Inherit sidecar stdout/stderr in the launching console:
-
-```powershell
-$env:CAMERA_SERVICE_DEBUG = "1"
-```
-
-### `CAM_BAYER_PATTERN`
-
-Explicitly enable raw Bayer preview conversion. Supported values:
-
-- `BG`
-- `GB`
-- `RG`
-- `GR`
-
-Example:
-
-```powershell
-$env:CAM_BAYER_PATTERN = "GR"
-```
-
-If this variable is unset and frame metadata does not include `bayer_pattern`,
-raw8/raw16 preview uses a mono fallback instead of assuming a universal Bayer
-layout.
-
-### `TLS_C1_SERIAL`
-
-Device serial number for TLS hardware smoke and future integration smoke tests.
-Default unit tests do not read or require this variable.
-
-### `TLS_C1_SDK_DIR`
-
-TLS vendor SDK / DLL directory, per `tls_c1` upstream convention. This is a
-local-machine environment variable. Do not substitute it by committing DLLs
-into `optic_system`.
-
-### `TLS_C1_SAFE_GRATING`
-
-Safe grating number used by future hardware smoke tests. Should be provided
-explicitly via environment variable.
-
-### `TLS_C1_SAFE_WAVELENGTH_NM`
-
-Safe target wavelength (nm) used by future hardware smoke tests. Should be
-provided explicitly via environment variable.
-
-### `TLS_C1_RUN_HARDWARE_TESTS`
-
-Only when set to `1` will `tests/test_tls_hardware_smoke.py` run. Default tests
-are always no-hardware.
-
-## LCD Representation
-
-The LCD physical mask is mono subpixel data:
+The physical mono mask convention is:
 
 ```text
-[H, 3W]
-```
+mono mask: [H, 3W]
+display RGB buffer: [H, W, 3]
 
-The display buffer may be RGB-shaped:
-
-```text
-[H, W, 3]
-```
-
-Mapping:
-
-```text
 rgb[y, x, c] = mono[y, 3*x + c]
 ```
 
-All physical mask reasoning should use `[H, 3W]`. Only `LCDService` should pack
-physical mono masks into RGB display buffers.
+All physical reasoning about LCD masks should use the mono representation `[H, 3W]`.
 
-## Tests
+Only the LCD device boundary should pack this representation into RGB display buffers.
 
-Default no-hardware tests:
+### TLS
 
-```powershell
-py -3.12 -m pytest -q
+TLS wavelength control uses the `tls_c1` SDK wrapper.
+
+The old pywinauto-based GUI automation path is deprecated and should not be used for new code.
+
+The intended TLS path is:
+
+```text
+GUI / task intent
+  -> control command
+  -> SessionController
+  -> TLSService
+  -> tls_c1 high-level API
+  -> vendor SDK
 ```
 
-TLS no-hardware tests (require no hardware, no vendor DLLs):
+`tls_c1` is the only active TLS backend.
 
-```powershell
-python -m pytest tests/test_tls_service.py tests/test_tls_controller.py
+Hardware tests for TLS must remain opt-in.
+The default test suite should run without TLS hardware and without vendor DLLs.
+
+## Relationship with LCD_forward
+
+`optic_system` should produce experimental data.
+
+`LCD_forward` should consume training-ready HDF5 data.
+
+The long-term connection is:
+
+```text
+optic_system raw capture HDF5
+  -> conversion script
+  -> LCD_forward train/val/test HDF5
+  -> forward surrogate training
+  -> reconstruction training
+  -> evaluation
 ```
 
-If you are developing the TLS control layer without real hardware, you typically
-only need:
+The `LCD_forward` training format is expected to include tensors such as:
 
-1. install the base project dependencies;
-2. do not install `tls_c1`, or install `tls_c1` without setting
-   `TLS_C1_SDK_DIR`;
-3. run no-hardware tests to validate wrapper and controller semantics.
+```text
+Forward calibration:
+masks: [N, T, 1, Hm, Wm]
+psfs:  [N, T, L, Hp, Wp]
 
-Camera hardware tests are opt-in:
-
-```powershell
-$env:OPTIC_SYSTEM_HARDWARE_TEST = "1"
-$env:OPTIC_SYSTEM_CAMERA_INDEX = "0"
-$env:OPTIC_SYSTEM_FRAME_COUNT = "30"
-py -3.12 -m pytest tests/hardware/test_camera_service_flycapture2_backend.py -q
+Reconstruction:
+objects: [N, L, H, W]
+frames:  [N, T, 1, H, W]
+masks:   [N, T, 1, Hm, Wm]
 ```
 
-TLS hardware smoke test entry point (future):
+`optic_system` should not directly train these models.
 
-```powershell
-$env:TLS_C1_SDK_DIR = "C:\Path\To\VendorSDK"
-$env:TLS_C1_RUN_HARDWARE_TESTS = "1"
-$env:TLS_C1_SERIAL = "YOUR_SERIAL"
-$env:TLS_C1_SAFE_GRATING = "1"
-$env:TLS_C1_SAFE_WAVELENGTH_NM = "550.0"
-python -m pytest tests/test_tls_hardware_smoke.py
+## Development roadmap
+
+### Phase 0 — Documentation and boundary reset
+
+Current phase.
+
+Goals:
+
+* redefine `optic_system` as the hardware-control and synchronized-capture frontend
+* replace old prototype-stage constraints
+* clarify that neural training belongs to `LCD_forward`
+* mark old experimental tasks as legacy unless audited
+* document TLS SDK backend replacement
+* prepare Codex / AGENT for staged implementation
+
+Expected outputs:
+
+* updated `README.md`
+* updated `AGENTS/AGENTS.md`
+* optional `docs/architecture.md`
+* optional `docs/roadmap.md`
+* optional `tasks/README.md`
+
+### Phase 1 — TLS SDK integration closure
+
+Goal:
+
+Make the `tls_c1` backend usable through the normal application/control path.
+
+Required work:
+
+* construct `TLSService` in the app assembly path when explicitly enabled
+* expose TLS state in GUI
+* add TLS GUI or command bindings
+* support connect / disconnect / set grating / set wavelength / move / refresh status
+* keep hardware tests opt-in
+* keep default import and default tests hardware-free
+
+Non-goals:
+
+* no wavelength sweep workflow yet
+* no full calibration workflow yet
+* no training integration
+* no pywinauto fallback path
+
+### Phase 2 — Minimal capture task layer
+
+Goal:
+
+Create a clean acquisition task path instead of reviving historical task scripts.
+
+The first capture task should support:
+
+```text
+load capture plan
+initialize camera / LCD / optional TLS
+for each wavelength:
+    set TLS wavelength
+    move and wait until idle
+    for each mask:
+        show LCD mono mask
+        wait settle_ms
+        acquire K frames
+        average or store burst
+        save frame data and metadata
+write raw capture HDF5
 ```
 
-No default test should require a real camera, TLS hardware, FlyCapture2 DLLs,
-or installed vendor SDKs.
+Expected new modules:
 
-## Development Notes
+```text
+tasks/capture_plan.py
+tasks/raw_capture_h5.py
+tasks/capture_forward_dataset.py
+```
 
-- Preserve the `gui -> control -> devices / capture` dependency direction.
-- Do not push control logic back into GUI.
-- TLS must only access `tls_c1` through `devices/tls_service.py`.
-- GUI must not call `TLSService` directly.
-- Do not modify `old/`.
-- Reference [AGENTS.md](AGENTS.md) for the authoritative constraint set.
+The first implementation should be minimal and explicit.
 
-## More Documentation
+Non-goals:
 
-- [Camera service FlyCapture2 C migration](docs/camera_service_flycapture2_migration.md)
+* no general experiment scheduler
+* no mask optimization loop
+* no neural training
+* no automatic full calibration system
+* no hidden dependency on legacy task scripts
+
+### Phase 3 — Raw capture to LCD_forward conversion
+
+Goal:
+
+Convert raw experimental captures into `LCD_forward` training data.
+
+Expected outputs:
+
+```text
+raw capture HDF5
+  -> converted forward training HDF5
+  -> train.h5 / val.h5 / test.h5
+```
+
+The conversion layer should handle:
+
+* mask downsampling or encoding into `[N, T, 1, Hm, Wm]`
+* PSF ROI extraction
+* frame averaging
+* dark / flat correction if available
+* wavelength metadata
+* camera metadata
+* TLS metadata
+* train / val / test split
+
+The raw capture format should preserve enough metadata to allow future reprocessing.
+
+### Phase 4 — Family-aware GenerMask calibration and closed-loop experiments
+
+Goal:
+
+Support structured mask-family calibration and controlled optimization loops.
+
+This phase may include:
+
+* GenerMask family registry
+* family-aware calibration plans
+* held-out family generalization checks
+* perturbation robustness audits
+* repeated forward-surrogate retraining
+* controlled mask design experiments
+
+This phase should only begin after Phase 1–3 are stable.
+
+## Active scope
+
+Allowed in core development:
+
+* camera hardware wrapper
+* frame stream client
+* preview worker
+* LCD physical mono mask display
+* TLS SDK service wrapper
+* control-layer command / event / state definitions
+* minimal synchronized capture task
+* raw HDF5 export
+* conversion boundary toward `LCD_forward`
+* hardware-free tests
+* opt-in hardware smoke tests
+
+## Out of scope
+
+Do not add to the core path:
+
+* neural-network training
+* forward surrogate implementation
+* reconstruction model implementation
+* differentiable mask optimization loop
+* large general experiment scheduler
+* notebook-only experiment logic
+* pywinauto TLS automation
+* direct GUI ownership of hardware lifecycle
+* hidden global hardware state
+* default hardware-dependent tests
+
+## Legacy task policy
+
+Some files under `tasks/` may come from earlier experimental directions.
+
+They should not be assumed to define the current architecture.
+
+Before reusing any old task:
+
+1. audit its dependency path
+2. confirm it uses `control -> devices` boundaries
+3. confirm it does not bypass `SessionController`
+4. confirm it does not depend on pywinauto TLS automation
+5. confirm it emits sufficient metadata
+6. document whether it is active, legacy, or deprecated
+
+New minimal capture tasks should be implemented cleanly and separately.
+
+## Control architecture
+
+The intended dependency direction is:
+
+```text
+GUI / CLI / task
+  -> control command
+  -> SessionController
+  -> devices / capture
+  -> hardware or data stream
+```
+
+GUI code should not directly control devices.
+
+Task code should not bypass the control layer unless the bypass is explicitly documented and justified.
+
+Hardware-facing wrappers belong in `devices/`.
+
+Capture-specific frame handling belongs in `capture/` or task-specific capture modules.
+
+System state should be represented through the control state object and updated through events.
+
+## TLS policy
+
+The active TLS backend is `tls_c1`.
+
+Rules:
+
+* do not use pywinauto for new TLS control
+* do not control vendor GUI windows
+* do not scatter low-level SDK calls across the repository
+* wrap TLS access through `devices/tls_service.py`
+* expose TLS behavior through control commands and events
+* keep hardware tests opt-in
+* allow no-hardware import and no-hardware tests
+* do not commit vendor DLLs into this repository
+
+Recommended command semantics:
+
+```text
+SetTLSWavelength:
+    set target wavelength only
+
+MoveTLS:
+    perform physical motion
+
+RefreshTLSStatus:
+    query current hardware state
+```
+
+This separation should be preserved because setting a target wavelength and moving the hardware are different operations.
+
+## Data export policy
+
+Raw acquisition data should be stored before conversion.
+
+A raw capture HDF5 file should preserve:
+
+```text
+masks_physical
+frames_raw or frames_avg
+camera metadata
+LCD metadata
+TLS metadata
+capture timing metadata
+ROI metadata
+processing flags
+```
+
+Training-ready files for `LCD_forward` should be generated by a separate conversion step.
+
+Do not discard raw metadata during first acquisition.
+
+## Testing policy
+
+Default tests must run without:
+
+* camera hardware
+* LCD hardware
+* TLS hardware
+* vendor DLLs
+
+Hardware tests must be explicit opt-in.
+
+Suggested environment-variable pattern:
+
+```text
+RUN_CAMERA_HARDWARE_TESTS=1
+RUN_LCD_HARDWARE_TESTS=1
+TLS_C1_RUN_HARDWARE_TESTS=1
+```
+
+Fake or mock backends should be used for default CI-style tests.
+
+## Installation
+
+Base installation:
+
+```bash
+pip install -r requirements.txt
+```
+
+If editable installation is configured:
+
+```bash
+pip install -e .
+```
+
+TLS support requires installing `tls_c1` separately.
+
+Example local editable installation:
+
+```bash
+pip install -e path/to/tls_c1
+```
+
+Do not assume TLS support is available unless the dependency is installed and explicitly enabled.
+
+## Running the GUI
+
+Basic GUI launch:
+
+```bash
+python -m app.main_gui
+```
+
+TLS support should be enabled explicitly once the application path supports it, for example:
+
+```bash
+python -m app.main_gui --enable-tls
+```
+
+Exact TLS CLI options should be documented after Phase 1 is completed.
+
+## Current status
+
+The repository currently has:
+
+* camera sidecar / frame stream infrastructure
+* GUI preview path
+* mono LCD display abstraction
+* control-layer architecture
+* partial TLS service / command / event / state integration
+* hardware-free TLS-style test direction
+
+The repository still needs:
+
+* completed TLS application/GUI integration
+* updated documentation and AGENT rules
+* minimal capture task layer
+* raw capture HDF5 writer
+* conversion path toward `LCD_forward`
+* audited task structure
