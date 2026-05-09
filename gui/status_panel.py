@@ -17,6 +17,8 @@ class StatusPanel(ttk.LabelFrame):
         self.lcd_var = tk.StringVar(value="LCD: --")
         self.lcd_mode_var = tk.StringVar(value="LCD mode: --")
         self.lcd_codes_var = tk.StringVar(value="LCD codes: --")
+        self.tls_var = tk.StringVar(value="TLS: --")
+        self.tls_wave_var = tk.StringVar(value="TLS wavelength: --")
         self.error_var = tk.StringVar(value="Last error: --")
         self.message_var = tk.StringVar(value="Ready")
 
@@ -27,6 +29,8 @@ class StatusPanel(ttk.LabelFrame):
         ttk.Label(self, textvariable=self.lcd_var, anchor="w").pack(fill="x", pady=2)
         ttk.Label(self, textvariable=self.lcd_mode_var, anchor="w").pack(fill="x", pady=2)
         ttk.Label(self, textvariable=self.lcd_codes_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(self, textvariable=self.tls_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(self, textvariable=self.tls_wave_var, anchor="w").pack(fill="x", pady=2)
         ttk.Label(self, textvariable=self.error_var, anchor="w").pack(fill="x", pady=2)
 
         ttk.Separator(self, orient="horizontal").pack(fill="x", pady=6)
@@ -76,7 +80,24 @@ class StatusPanel(ttk.LabelFrame):
         else:
             self.lcd_codes_var.set("LCD codes: --")
 
-        combined_error = state.last_error or state.lcd_last_error
+        tls_status = "connected" if state.tls_connected else "disconnected"
+        tls_parts: list[str] = [tls_status]
+        if state.tls_device_id is not None:
+            tls_parts.append(f"device {state.tls_device_id}")
+        if state.tls_grating is not None:
+            tls_parts.append(f"grating {state.tls_grating}")
+        if state.tls_moving:
+            tls_parts.append("moving")
+        self.tls_var.set(f"TLS: {' | '.join(tls_parts)}")
+
+        wave_parts: list[str] = []
+        if state.tls_current_wavelength_nm is not None:
+            wave_parts.append(f"current {state.tls_current_wavelength_nm:.3f} nm")
+        if state.tls_target_wavelength_nm is not None:
+            wave_parts.append(f"target {state.tls_target_wavelength_nm:.3f} nm")
+        self.tls_wave_var.set(f"TLS wavelength: {' | '.join(wave_parts) if wave_parts else '--'}")
+
+        combined_error = state.last_error or state.tls_last_error or state.lcd_last_error
         self.error_var.set(f"Last error: {combined_error or '--'}")
 
     def show_message(self, level: str, message: str) -> None:

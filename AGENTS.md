@@ -41,6 +41,7 @@ Owns hardware-facing boundaries and transport clients:
 - camera sidecar implementation;
 - frame-stream shared-memory consumer;
 - LCD service and LCD packing boundary;
+- TLS service wrapper (lazy-import `tls_c1`);
 - small backend adapters when needed.
 
 It must not contain GUI logic or experiment orchestration.
@@ -288,6 +289,77 @@ Rules:
 - only the LCD device boundary packs mono masks to RGB display buffers;
 - RGB channels are packed neighboring mono subpixels, not semantic colors;
 - LCD service initialization should default to an all-transmissive mask.
+
+## TLS Architecture
+
+TLS control replaces the legacy `pywinauto` GUI automation path with a device
+wrapper around the `tls_c1` SDK while preserving the same architecture rule:
+
+> GUI sends intent, `control/` owns semantics, and `devices/` owns SDK access.
+
+### Current TLS scope
+
+- connect and disconnect the TLS device through `devices/tls_service.py`;
+- set grating and target wavelength through controller commands;
+- trigger a move through the controller;
+- expose TLS status, errors, and movement state through `control/events.py` and
+  `control/state.py`;
+- keep future hardware smoke tests opt-in via environment variables.
+- treat `Mr-enthalpy/tls_c1` as an optional external dependency rather than a
+  vendored subtree.
+
+Do not:
+
+- reintroduce `pywinauto` GUI automation for TLS;
+- call `tls_c1` low-level `SpectrometerAPI` directly outside the wrapper;
+- let GUI widgets call `TLSService` directly;
+- make `tls_c1` a hard startup dependency for the base GUI path;
+- build the full wavelength sweep workflow here;
+- build the full calibration workflow here.
+
+### TLS service rules
+
+`devices/tls_service.py` is the only TLS SDK boundary.
+
+Responsibilities:
+
+- lazy-import `tls_c1` so the base project can import without the SDK installed;
+- use the high-level `tls_c1` / `TLSC1` facade only;
+- normalize SDK status into project-level state;
+- convert SDK exceptions into reportable project errors.
+- document installation as an external dependency from
+  `https://github.com/Mr-enthalpy/tls_c1`;
+- keep vendor DLL handling outside this repository and use `TLS_C1_SDK_DIR` on
+  the local machine when needed.
+
+### TLS controller rules
+
+`control/session_controller.py` should:
+
+- accept an optional TLS service;
+- translate GUI intent into explicit TLS commands;
+- publish TLS status changes through the event bus;
+- avoid blocking the GUI thread on potentially long TLS moves.
+
+### TLS test rules
+
+Default automated tests must not require:
+
+- TLS hardware;
+- vendor DLLs;
+- `TLS_C1_SDK_DIR`.
+
+Real hardware tests must be opt-in and explicitly gated by environment variables.
+
+Recommended documentation guidance:
+
+- base `requirements.txt` may stay independent from `tls_c1` when the project
+  must remain importable without the SDK;
+- README should explain both `pip install
+  git+https://github.com/Mr-enthalpy/tls_c1.git` and local editable install from
+  a checkout;
+- README should state that `TLS_C1_SDK_DIR` is local-machine configuration, not
+  a committed asset path.
 
 ## Stage History And Goals
 
