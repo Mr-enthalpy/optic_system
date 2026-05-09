@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import Callable
 
 
@@ -80,6 +80,7 @@ class TLSPanel(ttk.LabelFrame):
         try:
             grating = int(self.grating_entry.get().strip())
         except ValueError:
+            messagebox.showwarning("TLS", "Grating must be an integer")
             return
         self._on_set_grating(grating)
 
@@ -87,6 +88,7 @@ class TLSPanel(ttk.LabelFrame):
         try:
             wavelength = float(self.wavelength_entry.get().strip())
         except ValueError:
+            messagebox.showwarning("TLS", "Wavelength must be a number (nm)")
             return
         self._on_set_wavelength(wavelength)
 

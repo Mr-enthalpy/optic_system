@@ -113,6 +113,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=1,
         help="default TLS grating to set after connect",
     )
+    parser.add_argument(
+        "--tls-mono",
+        default=None,
+        help="TLS monochromator type (default: Omni)",
+    )
+    parser.add_argument(
+        "--tls-port-type",
+        default=None,
+        help="TLS port type (default: USB)",
+    )
     return parser.parse_args(argv)
 
 
@@ -129,7 +139,11 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "enable_tls", False) and controller.tls_service is not None:
         try:
             controller.dispatch(
-                ConnectTLS(serial_number=args.tls_serial_number)
+                ConnectTLS(
+                    serial_number=args.tls_serial_number,
+                    mono=args.tls_mono,
+                    port_type=args.tls_port_type,
+                )
             )
             controller.dispatch(SetTLSGrating(args.tls_safe_grating))
         except Exception as exc:

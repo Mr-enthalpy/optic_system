@@ -436,13 +436,25 @@ Basic GUI launch:
 python -m app.main_gui
 ```
 
-TLS support should be enabled explicitly once the application path supports it, for example:
+TLS support is enabled explicitly via:
 
 ```bash
-python -m app.main_gui --enable-tls
+python -m app.main_gui --enable-tls [--tls-serial-number SERIAL] [--tls-mono MONO] [--tls-port-type TYPE] [--tls-safe-grating N]
 ```
 
-Exact TLS CLI options should be documented after Phase 1 is completed.
+TLS CLI options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--enable-tls` | (off) | enable TLS wavelength control via tls_c1 SDK |
+| `--tls-serial-number` | `$TLS_C1_SERIAL` | device serial number |
+| `--tls-mono` | Omni | monochromator type |
+| `--tls-port-type` | USB | port type |
+| `--tls-safe-grating` | 1 | grating to set after auto-connect |
+
+When `tls_c1` is not installed, `--enable-tls` exits with a clear error
+describing the missing dependency.  Omitting `--enable-tls` starts the
+GUI without any TLS requirement.
 
 ## Current status
 
@@ -451,15 +463,13 @@ The repository currently has:
 * camera sidecar / frame stream infrastructure
 * GUI preview path
 * mono LCD display abstraction
-* control-layer architecture
-* partial TLS service / command / event / state integration
-* hardware-free TLS-style test direction
+* control-layer architecture (commands / events / state)
+* **completed TLS SDK integration** — tls_c1 via TLSService, SessionController TLS handling, TLSPanel GUI, opt-in TLS hardware smoke tests
+* hardware-free test infrastructure for all layers
 
 The repository still needs:
 
-* completed TLS application/GUI integration
-* updated documentation and AGENT rules
-* minimal capture task layer
-* raw capture HDF5 writer
-* conversion path toward `LCD_forward`
-* audited task structure
+* minimal capture task layer (Phase 2)
+* raw capture HDF5 writer (Phase 2)
+* conversion path toward `LCD_forward` (Phase 3)
+* family-aware GenerMask calibration (Phase 4)
