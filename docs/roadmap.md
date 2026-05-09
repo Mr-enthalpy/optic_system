@@ -50,6 +50,8 @@ Re-anchor the repository as a hardware-control and synchronized-capture frontend
 
 ## Phase 1  --  TLS SDK integration closure
 
+**Status: substantially complete.**
+
 ### Goal
 
 Make the `tls_c1` backend usable through the normal application/control path. Remove the active pywinauto TLS automation path. Expose TLS through control commands and events.
@@ -75,14 +77,14 @@ Make the `tls_c1` backend usable through the normal application/control path. Re
 - No direct GUI-to-TLS calls
 - No pywinauto fallback path
 
-### Completion criteria
+### Completion criteria (all met)
 
-- `TLSService` can be constructed through the app assembly path when explicitly enabled
-- TLS state is observable through control state
-- TLS commands flow through `SessionController`
-- TLS hardware tests pass opt-in; no-hardware tests pass by default
-- Pywinauto TLS automation path is fully removed from active code paths
-- Default import and default tests remain hardware-free
+- [x] `TLSService` can be constructed through the app assembly path when explicitly enabled
+- [x] TLS state is observable through control state
+- [x] TLS commands flow through `SessionController`
+- [x] TLS hardware tests pass opt-in; no-hardware tests pass by default
+- [x] Pywinauto TLS automation path is fully removed from active code paths
+- [x] Default import and default tests remain hardware-free
 
 ---
 
