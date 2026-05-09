@@ -2,9 +2,10 @@
 
 ## Current phase
 
-Phase 0  --  Documentation and boundary reset **is the current active phase.**
+Phase 1 is substantially complete.  Phase 2 (minimal capture task layer) may begin.
 
-The repository is at the **Phase 0 / Phase 1 boundary.** Camera and LCD base paths exist. TLS service / command / event / state support is partially present. The task layer and HDF5 export are not yet stable.
+The repository has exited Phase 0 (documentation and boundary reset).  Camera, LCD,
+and TLS paths are stable.  The task layer and HDF5 export are the next priorities.
 
 ---
 
