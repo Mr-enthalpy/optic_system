@@ -172,8 +172,19 @@ class CameraControlGUI:
             self.update_queue.put(('status', ('error', f"捕捉失败: {str(e)}")))
 
     def on_turn_clicked(self) -> None:
-        # Legacy: old wavelength sweep loop using pywinauto TLS.
-        # Superseded by Phase 2 capture tasks via control.commands.
+        """
+        **HISTORICAL** -- early wavelength-sweep capture loop.
+
+        This is a legacy / prototype capture path from the pywinauto TLS
+        era.  It is NOT an active capture path and must not be used as
+        one.  The loop bypasses ``SessionController``, captures without
+        metadata, and relies on deleted pywinauto TLS automation.
+
+        Superseded by planned Phase 2 capture tasks
+        (``tasks/capture_forward_dataset.py``) that will use the
+        ``control.commands`` / ``SessionController`` / ``TLSService``
+        stack and preserve raw capture HDF5 metadata.
+        """
         for w in range(455, 655, 10):
             # Legacy: tls.set_wavelength(w) was called here.
             for i in range(0, self.switch_img_sets.shape[0]):
