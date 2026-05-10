@@ -60,10 +60,13 @@ class LCDMaskEntry:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> LCDMaskEntry:
         mask_id = _require_str(d, "mask_id")
+        array = d.get("array")
+        if array is not None and not isinstance(array, np.ndarray):
+            array = np.asarray(array, dtype=np.uint8)
         return cls(
             mask_id=mask_id,
             path=_optional_str(d.get("path")),
-            array=None,
+            array=array,
             family_id=_optional_str(d.get("family_id")),
             family_params=_optional_dict(d.get("family_params")),
             extra=_optional_dict(d.get("extra")) or {},
@@ -287,7 +290,9 @@ def _optional_int(value: Any) -> int | None:
     try:
         return int(value)
     except (TypeError, ValueError):
-        return None
+        raise CapturePlanError(
+            f"expected int or null, got {type(value).__name__}: {value!r}"
+        ) from None
 
 
 def _optional_float(value: Any) -> float | None:
@@ -296,7 +301,9 @@ def _optional_float(value: Any) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
-        return None
+        raise CapturePlanError(
+            f"expected float or null, got {type(value).__name__}: {value!r}"
+        ) from None
 
 
 def _optional_dict(value: Any) -> dict[str, Any] | None:
@@ -311,11 +318,15 @@ def _optional_int_quadruple(value: Any) -> tuple[int, int, int, int] | None:
     if value is None:
         return None
     if not isinstance(value, (list, tuple)) or len(value) != 4:
-        return None
+        raise CapturePlanError(
+            f"roi must be a list or tuple of 4 ints, got {type(value).__name__}: {value!r}"
+        )
     try:
         return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))
     except (TypeError, ValueError):
-        return None
+        raise CapturePlanError(
+            f"roi elements must be ints, got {value!r}"
+        ) from None
 
 
 def _json_default(obj: Any) -> Any:

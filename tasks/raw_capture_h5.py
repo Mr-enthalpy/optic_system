@@ -153,19 +153,28 @@ class RawCaptureWriter:
         _ensure_open(self._file)
         masks_grp = self._file["masks"]
 
-        for i, mask in enumerate(masks):
+        arrays = [np.asarray(m, dtype=np.uint8) for m in masks]
+        shapes = {arr.shape for arr in arrays}
+        if len(shapes) != 1:
+            raise RawCaptureWriteError(
+                f"all physical masks must have the same shape, got {sorted(shapes)}"
+            )
+
+        arr0 = arrays[0]
+        if arr0.ndim != 2:
+            raise RawCaptureWriteError(
+                f"physical masks must be 2D [H, 3W], got shape {arr0.shape}"
+            )
+
+        h, w = arr0.shape
+
+        dset: h5py.Dataset = masks_grp["masks_physical"]
+        dset.resize((self._plan.n_masks, h, w))
+
+        for i, arr in enumerate(arrays):
             if i >= self._plan.n_masks:
                 break
-            arr = np.asarray(mask, dtype=np.uint8)
-            if arr.ndim != 2:
-                raise RawCaptureWriteError(
-                    f"mask {i} must be 2D [H, 3W], got shape {arr.shape}"
-                )
-            h, w = arr.shape
-            dset: h5py.Dataset = masks_grp["masks_physical"]
-            if dset.shape[1:] != arr.shape:
-                dset.resize((self._plan.n_masks, h, w))
-            dset[i, :h, :w] = arr
+            dset[i] = arr
             masks_grp["has_mask_array"][i] = True
 
         for i, entry in enumerate(self._plan.masks):
@@ -180,7 +189,7 @@ class RawCaptureWriter:
         capture_index: int,
         wavelength_index: int,
         mask_index: int,
-        frames: np.ndarray,
+        frames: np.ndarray | None,
         frames_avg: np.ndarray,
         camera_meta: dict[str, Any],
         tls_status: dict[str, Any] | None = None,
@@ -197,13 +206,26 @@ class RawCaptureWriter:
         store_burst = self._plan.store_burst
 
         avg = np.asarray(frames_avg, dtype=np.float64)
+        if avg.ndim != 2:
+            raise RawCaptureWriteError(
+                f"frames_avg must be 2D [H, W], got {avg.ndim}D shape {avg.shape}"
+            )
+
         dset_avg: h5py.Dataset = f["raw/frames_avg"]
         if dset_avg.shape[1:] != avg.shape:
             dset_avg.resize((self._plan.n_captures, avg.shape[0], avg.shape[1]))
         dset_avg[row] = avg
 
         if store_burst:
+            if frames is None:
+                raise RawCaptureWriteError(
+                    "frames is required when plan.store_burst=True"
+                )
             burst = np.asarray(frames, dtype=np.float64)
+            if burst.ndim != 3:
+                raise RawCaptureWriteError(
+                    f"frames burst must be 3D [K, H, W], got {burst.ndim}D shape {burst.shape}"
+                )
             dset = f["raw/frames"]
             if dset.shape[2:] != burst.shape[1:]:
                 dset.resize((self._plan.n_captures, burst.shape[0], burst.shape[1], burst.shape[2]))

@@ -17,9 +17,11 @@ automation here.
 
 from __future__ import annotations
 
+import hashlib
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol as _Protocol
 
 import numpy as np
 
@@ -53,17 +55,24 @@ class LCDDisplayError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
+# Capture result
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CaptureFrames:
+    burst: np.ndarray          # [K, H, W]
+    frames_avg: np.ndarray     # [H, W]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
 # Capture-device protocols — narrow synchronous adapter boundary
 # ---------------------------------------------------------------------------
 
-from typing import Protocol as _Protocol
-
 
 class CameraCaptureProtocol(_Protocol):
-    def acquire(self, k: int, average: bool) -> np.ndarray:
-        ...
-
-    def metadata(self) -> dict[str, Any]:
+    def acquire_burst(self, k: int) -> CaptureFrames:
         ...
 
 
@@ -79,6 +88,9 @@ class LCDDisplayProtocol(_Protocol):
 
 
 class TLSControlProtocol(_Protocol):
+    def set_grating(self, grating: int) -> None:
+        ...
+
     def set_wavelength(self, wavelength_nm: float) -> None:
         ...
 
@@ -106,20 +118,23 @@ class FakeCamera:
         self._h = height
         self._w = width
 
-    def acquire(self, k: int, average: bool) -> np.ndarray:
-        if average:
-            return self._rng.normal(128, 40, (self._h, self._w)).astype(np.float64)
-        return self._rng.normal(128, 40, (k, self._h, self._w)).astype(np.float64)
-
-    def metadata(self) -> dict[str, Any]:
-        return {
-            "exposure_us": None,
-            "gain_db": None,
-            "roi": None,
-            "timestamp_ns": time.monotonic_ns(),
-            "status": {"source": "fake"},
-            "frame_shape": [self._h, self._w],
-        }
+    def acquire_burst(self, k: int) -> CaptureFrames:
+        burst = self._rng.normal(128, 40, (k, self._h, self._w)).astype(np.float64)
+        avg = burst.mean(axis=0, dtype=np.float64)
+        return CaptureFrames(
+            burst=burst,
+            frames_avg=avg,
+            metadata={
+                "exposure_us": None,
+                "gain_db": None,
+                "roi": None,
+                "timestamp_ns": time.monotonic_ns(),
+                "status": {"source": "fake"},
+                "frame_shape": [self._h, self._w],
+                "acquisition": "burst",
+                "n": k,
+            },
+        )
 
 
 class FakeLCD:
@@ -155,6 +170,9 @@ class FakeTLS:
 
     def connect(self) -> None:
         self._connected = True
+
+    def set_grating(self, grating: int) -> None:
+        self._grating = int(grating)
 
     def set_wavelength(self, wavelength_nm: float) -> None:
         self._target_nm = float(wavelength_nm)
@@ -200,26 +218,23 @@ class CameraCaptureAdapter:
 
     def __init__(self, capture_helper):
         self._helper = capture_helper
-        self._last_meta: dict[str, Any] = {}
 
-    def acquire(self, k: int, average: bool) -> np.ndarray:
-        if average and k >= 2:
-            raw_mean, _rgb_mean = self._helper.capture_average(k)
-            self._last_meta = {"acquisition": "average", "n": k}
-            return raw_mean.astype(np.float64)
+    def acquire_burst(self, k: int) -> CaptureFrames:
         frames: list[np.ndarray] = []
         for _ in range(k):
             raw, _rgb = self._helper.capture_one()
-            frames.append(raw.astype(np.float64))
-        result = np.stack(frames, axis=0)
-        self._last_meta = {"acquisition": "burst", "n": k}
-        return result
-
-    def metadata(self) -> dict[str, Any]:
-        return {
-            **self._last_meta,
-            "timestamp_ns": time.monotonic_ns(),
-        }
+            frames.append(raw.astype(np.float64, copy=False))
+        burst = np.stack(frames, axis=0)
+        avg = burst.mean(axis=0, dtype=np.float64)
+        return CaptureFrames(
+            burst=burst,
+            frames_avg=avg,
+            metadata={
+                "acquisition": "burst",
+                "n": k,
+                "timestamp_ns": time.monotonic_ns(),
+            },
+        )
 
 
 class LCDAdapter:
@@ -241,6 +256,9 @@ class LCDAdapter:
 class TLSAdapter:
     def __init__(self, tls_service):
         self._service = tls_service
+
+    def set_grating(self, grating: int) -> None:
+        self._service.set_grating(int(grating))
 
     def set_wavelength(self, wavelength_nm: float) -> None:
         self._service.set_wavelength_nm(wavelength_nm)
@@ -279,7 +297,7 @@ def run_capture_forward_dataset(
     if enable_tls and devices.tls is None:
         raise TLSUnavailableError()
 
-    physical_masks = _materialize_masks(plan)
+    physical_masks = _materialize_masks(plan, allow_placeholder=dry_run, placeholder_shape=devices.lcd.physical_shape())
 
     writer = RawCaptureWriter(output_path, plan)
     writer.open()
@@ -291,9 +309,9 @@ def run_capture_forward_dataset(
         for wi, wl_entry in enumerate(plan.wavelengths):
             if enable_tls and devices.tls is not None:
                 tls = devices.tls
-                tls.set_wavelength(wl_entry.wavelength_nm)
                 if wl_entry.grating is not None:
-                    pass
+                    tls.set_grating(wl_entry.grating)
+                tls.set_wavelength(wl_entry.wavelength_nm)
                 tls.move_and_wait(timeout_s=60.0)
                 if wl_entry.settle_ms > 0 and not dry_run:
                     time.sleep(wl_entry.settle_ms / 1000.0)
@@ -310,8 +328,10 @@ def run_capture_forward_dataset(
 
             for mi, mask_entry in enumerate(plan.masks):
                 lcd = devices.lcd
-
                 mask_array = physical_masks[mi]
+
+                _validate_mask_shape(mask_array, mask_entry.mask_id, lcd)
+
                 lcd.show_physical_mask(mask_array)
                 lcd_display_ts = time.monotonic_ns()
 
@@ -319,28 +339,16 @@ def run_capture_forward_dataset(
                     time.sleep(plan.lcd_settle_ms / 1000.0)
 
                 k = plan.camera.frames_per_capture
-                avg_burst = plan.camera.average_burst
-
-                if dry_run:
-                    cam = devices.camera
-                    if isinstance(cam, FakeCamera):
-                        frames_avg = cam.acquire(k, average=True)
-                    else:
-                        frames_avg = np.zeros(
-                            (480, 640), dtype=np.float64
-                        )
-                    cam_meta = cam.metadata()
-                else:
-                    frames_avg = devices.camera.acquire(k, average=avg_burst)
-                    cam_meta = devices.camera.metadata()
+                capture = devices.camera.acquire_burst(k)
+                frames_to_store = capture.burst if plan.store_burst else None
 
                 writer.append_capture(
                     capture_index=capture_idx,
                     wavelength_index=wi,
                     mask_index=mi,
-                    frames=np.zeros((0,), dtype=np.float64),
-                    frames_avg=frames_avg,
-                    camera_meta=cam_meta,
+                    frames=frames_to_store,
+                    frames_avg=capture.frames_avg,
+                    camera_meta=capture.metadata,
                     tls_status=tls_status,
                     lcd_display_timestamp_ns=lcd_display_ts,
                 )
@@ -354,21 +362,47 @@ def run_capture_forward_dataset(
         ))
         raise
 
-    if not plan.store_burst:
-        _drop_burst_dataset(writer)
-
     return output_path
 
 
-def _materialize_masks(plan: CapturePlan) -> list[np.ndarray]:
+def _validate_mask_shape(
+    mask_array: np.ndarray,
+    mask_id: str,
+    lcd: LCDDisplayProtocol,
+) -> None:
+    expected_h, expected_w = lcd.physical_shape()
+    if mask_array.shape != (expected_h, expected_w):
+        raise CapturePlanError(
+            f"mask {mask_id!r} shape {mask_array.shape} "
+            f"does not match LCD physical shape ({expected_h}, {expected_w})"
+        )
+    if mask_array.shape[1] % 3 != 0:
+        raise CapturePlanError(
+            f"mask {mask_id!r}: physical mono mask width "
+            f"({mask_array.shape[1]}) must be divisible by 3 for [H, 3W] packing"
+        )
+
+
+def _materialize_masks(
+    plan: CapturePlan,
+    *,
+    allow_placeholder: bool = False,
+    placeholder_shape: tuple[int, int] = (1080, 5760),
+) -> list[np.ndarray]:
     masks: list[np.ndarray] = []
     for entry in plan.masks:
         if entry.array is not None:
             mask = np.asarray(entry.array, dtype=np.uint8)
         elif entry.path is not None:
             mask = _load_mask_from_path(entry.path)
+        elif allow_placeholder:
+            mask = _generate_placeholder_mask(entry, placeholder_shape)
         else:
-            mask = _generate_placeholder_mask(entry)
+            raise CapturePlanError(
+                f"mask {entry.mask_id!r}: either 'array' or 'path' "
+                f"must be provided; placeholder masks are allowed "
+                f"only in dry-run mode"
+            )
         if mask.ndim != 2:
             raise CapturePlanError(
                 f"mask {entry.mask_id!r}: expected 2D array [H, 3W], "
@@ -378,9 +412,11 @@ def _materialize_masks(plan: CapturePlan) -> list[np.ndarray]:
     return masks
 
 
-def _generate_placeholder_mask(entry) -> np.ndarray:
-    rng = np.random.default_rng(hash(entry.mask_id) & 0xFFFFFFFF)
-    h, w = 1080, 5760
+def _generate_placeholder_mask(entry, shape: tuple[int, int]) -> np.ndarray:
+    digest = hashlib.sha256(entry.mask_id.encode("utf-8")).hexdigest()
+    seed = int(digest[:16], 16) & 0xFFFFFFFF
+    rng = np.random.default_rng(seed)
+    h, w = shape
     return rng.integers(0, 256, (h, w), dtype=np.uint8)
 
 
@@ -409,10 +445,6 @@ def _load_mask_from_path(path: str) -> np.ndarray:
                 "Install it with: pip install opencv-python"
             )
     raise CapturePlanError(f"unsupported mask file format: {p.suffix}")
-
-
-def _drop_burst_dataset(writer: RawCaptureWriter) -> None:
-    pass
 
 
 def _last_exc_info() -> str:

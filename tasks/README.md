@@ -67,8 +67,6 @@ The CLI entry point is `scripts/capture_forward_dataset.py`.
 
 These have been implemented cleanly using `control -> devices` boundaries (via the narrow `CaptureDeviceBundle` protocol) and supersede the legacy stubs currently in this directory.
 
-These will be implemented cleanly using `control -> devices` boundaries and will supersede the legacy stubs currently in this directory.
-
 ## Policy
 
 - Old tasks should not be deleted without explicit authorization.
