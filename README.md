@@ -65,18 +65,26 @@ The sidecar boundary exists because the camera SDK stack may require a different
 
 The LCD is treated as a physical mono subpixel array, not as a semantic RGB display.
 
-The physical mono mask convention is:
+The physical mono mask convention depends on the configured ``subpixel_axis``:
 
 ```text
-mono mask: [H, 3W]
-display RGB buffer: [H, W, 3]
-
-rgb[y, x, c] = mono[y, 3*x + c]
+subpixel_axis=0:  mono mask [3H, W]  →  display RGB buffer [H, W, 3]
+subpixel_axis=1:  mono mask [H, 3W]  →  display RGB buffer [H, W, 3]
 ```
 
-All physical reasoning about LCD masks should use the mono representation `[H, 3W]`.
+The software does **not** infer which display is the target mono LCD.
+The user must select the display index and subpixel axis.
+The software only checks internal consistency and records metadata.
 
-Only the LCD device boundary should pack this representation into RGB display buffers.
+Configure via CLI or environment:
+
+```bash
+--lcd-display-index <index>  --lcd-subpixel-axis 0|1
+```
+
+Environment fallback: ``OPTIC_SYSTEM_LCD_DISPLAY_INDEX``, ``OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS``.
+
+Only the LCD device boundary should pack the physical mono representation into RGB display buffers.
 
 ### TLS
 
@@ -163,15 +171,11 @@ assemble `TLSService` and inject it into `SessionController`.  An optional
 wavelength / move / refresh).  Pywinauto TLS automation is fully removed from
 active code paths.  All default tests are hardware-free.
 
-### Phase 2  --  Minimal capture task layer
+### Phase 2A  --  Minimal capture task layer
 
 **Implemented.**  Modules `tasks/capture_plan.py`, `tasks/raw_capture_h5.py`,
 `tasks/capture_forward_dataset.py` provide the minimal capture path.  The CLI
 entry point is `scripts/capture_forward_dataset.py`.
-
-Goal:
-
-Create a clean acquisition task path instead of reviving historical task scripts.
 
 The capture task supports:
 
@@ -190,7 +194,7 @@ for each wavelength:
 write raw capture HDF5
 ```
 
-Modules:
+Modules and tests:
 
 ```text
 tasks/capture_plan.py              capture plan dataclasses + JSON/YAML loading
@@ -216,7 +220,48 @@ Hardware mode (explicit opt-in)::
 python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --hardware --enable-tls
 ```
 
-#### Raw capture HDF5 schema
+With explicit LCD configuration::
+
+```bash
+python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --hardware \
+  --lcd-display-index 1 --lcd-subpixel-axis 1 --enable-tls
+```
+
+See `docs/hardware_smoke.md` for complete hardware setup and environment variables.
+
+### Phase 2B  --  Hardware smoke capture validation
+
+**Implemented for current local hardware.**  Validates that the Phase 2 capture
+task can control the real camera, mono LCD, and optional TLS in a deterministic
+sequence and produce ``raw_capture.h5`` with valid structure and metadata.
+
+See `docs/hardware_smoke.md` for the full hardware capture guide, including
+exact commands, environment variables, LCD identity model, and failure modes.
+
+New modules:
+
+```text
+plans/hardware_smoke_no_tls.yaml       capture plan: camera + LCD
+plans/hardware_smoke_with_tls.yaml     capture plan: camera + LCD + TLS
+scripts/make_smoke_masks.py            generate [H,3W]/[3H,W] .npy masks
+scripts/inspect_raw_capture.py         print HDF5 structure and metadata
+tests/test_phase2_hardware_smoke.py    5 opt-in hardware smoke tests
+tests/test_lcd_service.py              axis-aware mono↔RGB roundtrip tests
+```
+
+**Important:** Raw captures produced by Phase 2B are not scientifically
+calibrated data.  ``processing_flags_json`` always records::
+
+```json
+{
+  "scientific_calibration_valid": false,
+  "optical_alignment_validated":   false,
+  "training_ready":                false,
+  "phase":                         "phase2_minimal_capture"
+}
+```
+
+### Raw capture HDF5 schema
 
 ```
 /                            attrs: plan_id, created_at_ns, software_version
@@ -239,7 +284,9 @@ python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --har
 /camera/status_json          [N_capture] str
 /lcd/settle_ms               [N_capture] int64
 /lcd/display_timestamp_ns    [N_capture] int64
-/lcd/mapping_policy_json     scalar str
+/lcd/mapping_policy_json     scalar str  (axis-aware: subpixel_axis, physical_mono)
+/lcd/metadata_json           scalar str  (display_index, reported_shape,
+                                          logical_shape, subpixel_axis, physical_shape)
 /capture/capture_index       [N_capture] int64
 /capture/wavelength_index    [N_capture] int64
 /capture/mask_index          [N_capture] int64
@@ -250,21 +297,9 @@ python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --har
 /capture/processing_flags_json scalar str
 ```
 
-Processing flags record::
-
-```json
-{
-  "scientific_calibration_valid": false,
-  "optical_alignment_validated": false,
-  "training_ready": false,
-  "phase": "phase2_minimal_capture",
-  "completed": true,
-  "error": null,
-  "last_completed_capture_index": ...
-}
-```
-
 ### Phase 3  --  Raw capture to LCD_forward conversion
+
+**Planned.**
 
 Goal:
 
@@ -508,14 +543,14 @@ The repository currently has:
 
 * camera sidecar / frame stream infrastructure
 * GUI preview path
-* mono LCD display abstraction
+* mono LCD display abstraction (axis-aware subpixel model)
 * control-layer architecture (commands / events / state)
 * **completed TLS SDK integration** — tls_c1 via TLSService, SessionController TLS handling, TLSPanel GUI, opt-in TLS hardware smoke tests
+* **completed Phase 2A** — minimal capture task layer with raw HDF5 export, CaptureDeviceBundle protocol, no-hardware tests
+* **completed Phase 2B** — hardware smoke capture validation for current local setup, axis-aware LCDService, opt-in hardware tests, HDF5 metadata audit
 * hardware-free test infrastructure for all layers
 
 The repository still needs:
 
-* minimal capture task layer (Phase 2)
-* raw capture HDF5 writer (Phase 2)
 * conversion path toward `LCD_forward` (Phase 3)
 * family-aware GenerMask calibration (Phase 4)
