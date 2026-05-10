@@ -32,21 +32,25 @@ Those belong to `LCD_forward` or later experiment-specific layers.
 
 ## Current phase
 
-Current phase: Phase 1 complete / Phase 2 ready.
+Current phase: Phase 2A complete / Phase 2B complete / Phase 3 planned.
 
 Meaning:
 
 - Camera base path exists and is stable.
-- LCD base path exists and is stable.
+- LCD base path exists and is stable (axis-aware subpixel model).
 - TLS SDK integration is complete — ``tls_c1`` is the sole active TLS backend,
   ``TLSService`` wraps it, ``SessionController`` dispatches TLS commands/events,
   and an optional ``TLSPanel`` provides GUI access.  Pywinauto TLS automation is
   fully removed from active code paths.
-- Minimal capture task layer is next (Phase 2).
-- Raw capture HDF5 export is next (Phase 2).
-- Conversion into ``LCD_forward`` format is planned (Phase 3).
+- Phase 2A minimal capture task layer is implemented:
+  plan loading, dry-run capture, raw HDF5 writer, hardware-free tests.
+- Phase 2B hardware smoke capture validation is implemented:
+  real camera / LCD / optional TLS control, raw HDF5 verification.
+  Phase 2B does **not** validate optical scientific correctness.
+- Phase 3 conversion into ``LCD_forward`` format is planned.
 
 Do not assume the repository is already a full calibration system.
+Do not assume Phase 2B output data is training-ready or scientifically valid.
 
 ## Roadmap
 
@@ -100,7 +104,7 @@ Non-goals:
 - training integration
 - direct GUI-to-TLS calls
 
-### Phase 2  --  Minimal capture task layer
+### Phase 2A  --  Minimal capture task layer
 
 Primary goal:
 
@@ -131,6 +135,42 @@ Non-goals:
 - GenerMask optimization loop
 - training
 - direct `LCD_forward` training invocation
+
+### Phase 2B  --  Hardware smoke capture validation
+
+Primary goal:
+
+Validate that the Phase 2A capture task can control real camera, mono LCD,
+and optional TLS in a deterministic sequence and produce ``raw_capture.h5``
+with valid structure and metadata.
+
+Expected work:
+
+- hardware smoke test plans (camera + LCD, camera + LCD + TLS)
+- ``scripts/make_smoke_masks.py`` for ``[H, 3W]`` / ``[3H, W]`` mask generation
+- ``scripts/inspect_raw_capture.py`` for HDF5 structure inspection
+- opt-in hardware smoke tests under ``tests/``
+- axis-aware ``LCDService`` with user-configured ``subpixel_axis``
+- LCD metadata audit in raw HDF5
+
+Non-goals:
+
+- optical scientific correctness validation
+- PSF measurement or calibration
+- light-source integration
+- spectral response characterization
+- claiming captured data is training-ready
+- forward surrogate training
+- ``LCD_forward`` import or invocation
+
+Phase 2B must keep ``processing_flags_json`` as::
+
+  scientific_calibration_valid: false
+  optical_alignment_validated:   false
+  training_ready:                false
+
+Passing hardware smoke tests does **not** imply the optical system is
+calibrated or scientifically valid.
 
 ### Phase 3  --  Raw capture to LCD_forward conversion
 
@@ -224,22 +264,39 @@ The LCD is a physical mono subpixel device.
 
 Do not treat the LCD as a semantic RGB image display.
 
-Canonical physical mask convention:
+### LCD identity and physical mono mask convention
 
-```text
-mono mask: [H, 3W]
-display RGB buffer: [H, W, 3]
+Do not assume the target mono LCD can be inferred automatically from
+display resolution.
 
-rgb[y, x, c] = mono[y, 3*x + c]
-```
+The user or configuration is responsible for selecting:
+
+* LCD display index
+* LCD subpixel axis
+
+The software is responsible for:
+
+* checking internal consistency between ``logical_shape``, ``subpixel_axis``,
+  and ``physical_shape``
+* recording LCD metadata into raw capture HDF5
+* failing clearly when mask shape does not match ``LCDService.physical_shape``
+
+Supported physical mono conventions:
+
+* ``subpixel_axis = 0``: physical mono mask is ``[3H, W]``
+* ``subpixel_axis = 1``: physical mono mask is ``[H, 3W]``
 
 Rules:
 
-* Physical mask logic must operate on `[H, 3W]`.
+* Do not hardcode ``1080×5760`` as an LCD physical mask shape.
+* Do not assume width is always the subpixel-expanded axis.
+* Do not silently select a desktop monitor as the target LCD.
+* Physical mask logic must operate on the axis-aware physical mono representation.
 * RGB packing should occur only at the LCD device boundary.
 * Do not move physical LCD mask reasoning into GUI widgets.
 * Do not introduce RGB LCD assumptions unless explicitly requested.
-* Do not silently reinterpret mono masks as ordinary grayscale `[H, W]` if physical subpixel semantics matter.
+* Do not silently reinterpret mono masks as ordinary grayscale ``[H, W]`` if
+  physical subpixel semantics matter.
 
 ## TLS rules
 
@@ -310,6 +367,24 @@ ROI metadata
 processing flags
 ```
 
+Raw capture HDF5 must preserve LCD metadata when available:
+
+* display_index
+* reported_shape
+* logical_shape
+* subpixel_axis
+* physical_shape
+* mapping policy (axis-aware)
+
+Raw capture HDF5 produced by Phase 2B must keep ``processing_flags_json`` as::
+
+  scientific_calibration_valid: false
+  optical_alignment_validated:   false
+  training_ready:                false
+
+Passing hardware smoke tests does **not** imply the optical system is
+calibrated or scientifically valid.
+
 Training-ready data for `LCD_forward` should be generated by a separate conversion step.
 
 Do not discard metadata during first acquisition.
@@ -376,6 +451,16 @@ RUN_LCD_HARDWARE_TESTS=1
 TLS_C1_RUN_HARDWARE_TESTS=1
 ```
 
+Phase 2B hardware tests may additionally use:
+
+```text
+OPTIC_SYSTEM_RUN_PHASE2_HARDWARE_TESTS=1
+OPTIC_SYSTEM_RUN_TLS_HARDWARE_TESTS=1
+OPTIC_SYSTEM_LCD_DISPLAY_INDEX
+OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS
+OPTIC_SYSTEM_EXPECT_LCD_LOGICAL_SHAPE
+```
+
 Rules:
 
 * Do not make hardware tests run by default.
@@ -432,10 +517,15 @@ Do not:
 
 ## Preferred next implementation order
 
-1. Finish documentation and boundary reset.
-2. Complete TLS SDK integration closure.
-3. Add minimal capture task layer.
-4. Add raw capture HDF5 export.
-5. Add conversion to `LCD_forward` HDF5.
-6. Add family-aware GenerMask capture support.
-7. Consider larger closed-loop experiment automation only after the above are stable.
+Completed:
+
+* TLS SDK integration closure
+* Phase 2A minimal capture task layer
+* raw capture HDF5 export
+* Phase 2B hardware smoke capture validation
+
+Next:
+
+1. Raw capture to ``LCD_forward`` conversion.
+2. Family-aware GenerMask capture support.
+3. Larger closed-loop experiment automation only after the above are stable.

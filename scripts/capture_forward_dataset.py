@@ -212,7 +212,11 @@ def _run_hardware(
 
         lcd_service = LCDService(display_index=args.lcd_display_index, subpixel_axis=args.lcd_subpixel_axis)
         meta = lcd_service.get_metadata()
-        print(f"  lcd: {meta.get('reported_shape')}")
+        print(f"  lcd: display_index={meta.get('display_index')} "
+              f"reported={meta.get('reported_shape')} "
+              f"logical={meta.get('logical_shape')} "
+              f"physical={meta.get('physical_shape')} "
+              f"subpixel_axis={meta.get('subpixel_axis')}")
 
         tls_service: TLSService | None = None
         tls_adapter = None
