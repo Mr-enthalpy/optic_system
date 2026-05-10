@@ -315,6 +315,7 @@ def run_capture_forward_dataset(
     writer.open()
 
     try:
+        writer.write_lcd_metadata(devices.lcd.metadata())
         writer.write_physical_masks(physical_masks)
 
         capture_idx = 0

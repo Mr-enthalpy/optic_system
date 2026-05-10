@@ -96,12 +96,26 @@ def _verify_lcd_consistency(lcd_service) -> dict:
         print("  NOTE: --lcd-display-index was not provided; "
               "display auto-detection may select a non-LCD monitor")
 
+    if _get_lcd_subpixel_axis() is None:
+        print("  NOTE: --lcd-subpixel-axis was not provided; "
+              "defaulting to axis=1. Set OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS "
+              "explicitly.")
+
     return meta
 
 
 def _temp_h5_path() -> Path:
     d = tempfile.mkdtemp(prefix="optsys_hw_")
     return Path(d) / "hardware_smoke.h5"
+
+
+def _h5_str_scalar(dset) -> str:
+    val = dset[()]
+    if isinstance(val, np.ndarray):
+        val = val.flat[0]
+    if isinstance(val, bytes):
+        return val.decode()
+    return str(val)
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +481,16 @@ def _verify_hdf5_structure(path: Path, plan, *, expect_tls: bool) -> None:
 
         assert "camera/timestamp_ns" in f
         assert "lcd/display_timestamp_ns" in f
+        assert "lcd/metadata_json" in f
+        lcd_meta_raw = _h5_str_scalar(f["lcd/metadata_json"])
+        assert "subpixel_axis" in lcd_meta_raw
+        assert "physical_shape" in lcd_meta_raw
+        assert "logical_shape" in lcd_meta_raw
+
+        assert "lcd/mapping_policy_json" in f
+        mp_raw = _h5_str_scalar(f["lcd/mapping_policy_json"])
+        assert "subpixel_axis" in mp_raw
+        assert "physical_mono" in mp_raw
         assert "capture/capture_index" in f
         assert "capture/completed" in f
         completed = f["capture/completed"][:]

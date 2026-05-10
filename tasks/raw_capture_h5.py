@@ -123,9 +123,7 @@ class RawCaptureWriter:
         lcd_grp.create_dataset("settle_ms", shape=(n_cap,), dtype=np.int64)
         lcd_grp.create_dataset("display_timestamp_ns", shape=(n_cap,), dtype=np.int64)
         lcd_grp.create_dataset("mapping_policy_json", shape=(1,), dtype=h5py.string_dtype())
-        lcd_grp["mapping_policy_json"][0] = _json_str(
-            {"physical_mono": "[H, 3W]", "display_rgb": "[H, W, 3]"}
-        )
+        lcd_grp.create_dataset("metadata_json", shape=(1,), dtype=h5py.string_dtype())
 
         cap_grp = f.require_group("capture")
         cap_grp.create_dataset("capture_index", shape=(n_cap,), dtype=np.int64, fillvalue=-1)
@@ -183,6 +181,26 @@ class RawCaptureWriter:
             masks_grp["family_params_json"][i] = _json_str(entry.family_params or {})
 
         self._mask_arrays_written = True
+
+    def write_lcd_metadata(self, lcd_meta: dict[str, Any]) -> None:
+        _ensure_open(self._file)
+        lcd_grp = self._file["lcd"]
+
+        axis = int(lcd_meta.get("subpixel_axis", 1))
+        if axis == 0:
+            mapping = {
+                "display_rgb": "[H, W, 3]",
+                "subpixel_axis": 0,
+                "physical_mono": "[3H, W]",
+            }
+        else:
+            mapping = {
+                "display_rgb": "[H, W, 3]",
+                "subpixel_axis": 1,
+                "physical_mono": "[H, 3W]",
+            }
+        lcd_grp["mapping_policy_json"][0] = _json_str(mapping)
+        lcd_grp["metadata_json"][0] = _json_str(lcd_meta)
 
     def append_capture(
         self,
