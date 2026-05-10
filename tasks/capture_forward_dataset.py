@@ -387,7 +387,7 @@ def _materialize_masks(
     plan: CapturePlan,
     *,
     allow_placeholder: bool = False,
-    placeholder_shape: tuple[int, int] = (1080, 5760),
+    placeholder_shape: tuple[int, int] = (60, 180),
 ) -> list[np.ndarray]:
     masks: list[np.ndarray] = []
     for entry in plan.masks:
