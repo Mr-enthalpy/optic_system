@@ -47,13 +47,25 @@ Tasks that do not preserve raw metadata should be marked `needs redesign`.
 
 ## Planned future tasks (Phase 2)
 
-The following modules will be implemented in Phase 2 as the new minimal capture task layer:
+The following modules have been implemented in Phase 2 as the new minimal capture task layer:
 
 | File | Status | Purpose |
 |------|--------|---------|
-| `capture_plan.py` | **planned** | Capture plan data structures |
-| `raw_capture_h5.py` | **planned** | Raw capture HDF5 writer |
-| `capture_forward_dataset.py` | **planned** | Minimal capture orchestration |
+| `capture_plan.py` | **active** | Capture plan data structures (dataclasses, JSON/YAML loading, validation) |
+| `raw_capture_h5.py` | **active** | Raw capture HDF5 writer (incremental, resizable datasets, metadata preservation) |
+| `capture_forward_dataset.py` | **active** | Minimal capture orchestration with CaptureDeviceBundle protocol + fake/real adapters |
+
+Corresponding tests:
+
+| File | Status |
+|------|--------|
+| `tests/test_capture_plan.py` | **active** |
+| `tests/test_raw_capture_h5.py` | **active** |
+| `tests/test_capture_forward_dataset_dry_run.py` | **active** |
+
+The CLI entry point is `scripts/capture_forward_dataset.py`.
+
+These have been implemented cleanly using `control -> devices` boundaries (via the narrow `CaptureDeviceBundle` protocol) and supersede the legacy stubs currently in this directory.
 
 These will be implemented cleanly using `control -> devices` boundaries and will supersede the legacy stubs currently in this directory.
 

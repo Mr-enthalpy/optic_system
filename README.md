@@ -165,13 +165,15 @@ active code paths.  All default tests are hardware-free.
 
 ### Phase 2  --  Minimal capture task layer
 
-**Current phase.**
+**Implemented.**  Modules `tasks/capture_plan.py`, `tasks/raw_capture_h5.py`,
+`tasks/capture_forward_dataset.py` provide the minimal capture path.  The CLI
+entry point is `scripts/capture_forward_dataset.py`.
 
 Goal:
 
 Create a clean acquisition task path instead of reviving historical task scripts.
 
-The first capture task should support:
+The capture task supports:
 
 ```text
 load capture plan
@@ -188,23 +190,79 @@ for each wavelength:
 write raw capture HDF5
 ```
 
-Expected new modules:
+Modules:
 
 ```text
-tasks/capture_plan.py
-tasks/raw_capture_h5.py
-tasks/capture_forward_dataset.py
+tasks/capture_plan.py              capture plan dataclasses + JSON/YAML loading
+tasks/raw_capture_h5.py            incremental raw HDF5 writer (context manager)
+tasks/capture_forward_dataset.py   orchestration + CaptureDeviceBundle protocol
+scripts/capture_forward_dataset.py thin CLI entry point
 ```
 
-The first implementation should be minimal and explicit.
+Tests: `tests/test_capture_plan.py`, `tests/test_raw_capture_h5.py`,
+`tests/test_capture_forward_dataset_dry_run.py`.
 
-Non-goals:
+#### CLI usage
 
-* no general experiment scheduler
-* no mask optimization loop
-* no neural training
-* no automatic full calibration system
-* no hidden dependency on legacy task scripts
+Dry-run (no hardware required)::
+
+```bash
+python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --dry-run
+```
+
+Hardware mode (explicit opt-in)::
+
+```bash
+python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --hardware --enable-tls
+```
+
+#### Raw capture HDF5 schema
+
+```
+/                            attrs: plan_id, created_at_ns, software_version
+/raw/frames_avg              [N_capture, H, W]  float64  (always written)
+/raw/frames                  [N_capture, K, H, W] float64  (only if store_burst=True)
+/masks/masks_physical        [N_mask, Hlcd, Wlcd_phys] uint8
+/masks/mask_id               [N_mask] str
+/masks/family_id             [N_mask] str
+/masks/family_params_json    [N_mask] str
+/masks/has_mask_array        [N_mask] bool
+/tls/wavelength_nm           [N_wavelengths] float64
+/tls/grating                 [N_wavelengths] int64
+/tls/settle_ms               [N_wavelengths] int64
+/tls/timestamp_ns            [N_wavelengths] int64
+/tls/status_json             [N_wavelengths] str
+/camera/exposure_us          [N_capture] float64
+/camera/gain_db              [N_capture] float64
+/camera/roi_json             [N_capture] str
+/camera/timestamp_ns         [N_capture] int64
+/camera/status_json          [N_capture] str
+/lcd/settle_ms               [N_capture] int64
+/lcd/display_timestamp_ns    [N_capture] int64
+/lcd/mapping_policy_json     scalar str
+/capture/capture_index       [N_capture] int64
+/capture/wavelength_index    [N_capture] int64
+/capture/mask_index          [N_capture] int64
+/capture/burst_count         [N_capture] int64
+/capture/completed           [N_capture] bool
+/capture/plan_json           scalar str
+/capture/plan_id             scalar str
+/capture/processing_flags_json scalar str
+```
+
+Processing flags record::
+
+```json
+{
+  "scientific_calibration_valid": false,
+  "optical_alignment_validated": false,
+  "training_ready": false,
+  "phase": "phase2_minimal_capture",
+  "completed": true,
+  "error": null,
+  "last_completed_capture_index": ...
+}
+```
 
 ### Phase 3  --  Raw capture to LCD_forward conversion
 
