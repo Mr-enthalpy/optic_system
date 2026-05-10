@@ -1,9 +1,10 @@
 """
 Generate physical mono LCD smoke-test masks as .npy files.
 
-All masks use the canonical physical representation ``[H, 3W]`` where the
-subpixel axis is expanded by 3.  The expansion axis is controlled by
-``--subpixel-axis``: ``0`` multiplies the height, ``1`` multiplies the width.
+All masks use the canonical physical mono representation:
+
+- ``subpixel_axis=0``:  ``[3H, W]``   (height tripled)
+- ``subpixel_axis=1``:  ``[H, 3W]``   (width tripled)
 
 Usage::
 

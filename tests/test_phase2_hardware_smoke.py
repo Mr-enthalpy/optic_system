@@ -207,6 +207,63 @@ def test_tls_status_hardware() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Mask generation helper — makes hardware tests self-contained
+# ---------------------------------------------------------------------------
+
+
+def _generate_smoke_masks_for_lcd(lcd_service, output_dir: Path) -> dict[str, Path]:
+    """
+    Generate smoke-test .npy masks matching *lcd_service*'s
+    logical_shape and subpixel_axis.  Returns ``{mask_id: path}``.
+    """
+    meta = lcd_service.get_metadata()
+    logical_h, logical_w = meta["logical_shape"]
+    axis = meta["subpixel_axis"]
+
+    if axis == 0:
+        phys_h, phys_w = logical_h * 3, logical_w
+    else:
+        phys_h, phys_w = logical_h, logical_w * 3
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    paths: dict[str, Path] = {}
+
+    all_black = np.zeros((phys_h, phys_w), dtype=np.uint8)
+    p = output_dir / "all_black.npy"
+    np.save(str(p), all_black)
+    paths["all_black"] = p
+
+    all_white = np.full((phys_h, phys_w), 255, dtype=np.uint8)
+    p = output_dir / "all_white.npy"
+    np.save(str(p), all_white)
+    paths["all_white"] = p
+
+    stripe_w = max(phys_w // 10, 3)
+    stripe_w = (stripe_w // 3) * 3
+    if stripe_w < 3:
+        stripe_w = 3
+    stripes_v = np.zeros((phys_h, phys_w), dtype=np.uint8)
+    for x in range(0, phys_w, stripe_w * 2):
+        end = min(x + stripe_w, phys_w)
+        stripes_v[:, x:end] = 255
+    p = output_dir / "vertical_stripes_coarse.npy"
+    np.save(str(p), stripes_v)
+    paths["vertical_stripes_coarse"] = p
+
+    stripe_h = max(phys_h // 10, 3)
+    stripes_h = np.zeros((phys_h, phys_w), dtype=np.uint8)
+    for y in range(0, phys_h, stripe_h * 2):
+        end = min(y + stripe_h, phys_h)
+        stripes_h[y:end, :] = 255
+    p = output_dir / "horizontal_stripes_coarse.npy"
+    np.save(str(p), stripes_h)
+    paths["horizontal_stripes_coarse"] = p
+
+    return paths
+
+
+# ---------------------------------------------------------------------------
 # Layer 2 — two-device: camera + LCD
 # ---------------------------------------------------------------------------
 
@@ -233,6 +290,8 @@ def test_capture_no_tls_hardware() -> None:
     camera_service = CameraServiceClient(timeout_ms=5000, auto_ensure=True)
     frame_stream = FrameStreamClient(recv_timeout_ms=5000)
     lcd_service = LCDService(display_index=display_index, subpixel_axis=subpixel_axis)
+
+    mask_dir = Path(tempfile.mkdtemp(prefix="optsys_masks_"))
     output = _temp_h5_path()
 
     try:
@@ -241,6 +300,11 @@ def test_capture_no_tls_hardware() -> None:
         camera_service.start_stream()
 
         _verify_lcd_consistency(lcd_service)
+        mask_paths = _generate_smoke_masks_for_lcd(lcd_service, mask_dir)
+
+        for i, entry in enumerate(plan.masks):
+            if entry.mask_id in mask_paths:
+                entry.path = str(mask_paths[entry.mask_id])
 
         capture_helper = FrameCaptureHelper(frame_stream)
         devices = _make_bundle(
@@ -312,6 +376,8 @@ def test_capture_with_tls_hardware() -> None:
     frame_stream = FrameStreamClient(recv_timeout_ms=5000)
     lcd_service = LCDService(display_index=display_index, subpixel_axis=subpixel_axis)
     tls_service = TLSService(default_serial_number=serial)
+
+    mask_dir = Path(tempfile.mkdtemp(prefix="optsys_masks_"))
     output = _temp_h5_path()
 
     try:
@@ -320,6 +386,11 @@ def test_capture_with_tls_hardware() -> None:
         camera_service.start_stream()
 
         _verify_lcd_consistency(lcd_service)
+        mask_paths = _generate_smoke_masks_for_lcd(lcd_service, mask_dir)
+
+        for i, entry in enumerate(plan.masks):
+            if entry.mask_id in mask_paths:
+                entry.path = str(mask_paths[entry.mask_id])
 
         tls_status = tls_service.connect(serial_number=serial)
         assert tls_status.connected

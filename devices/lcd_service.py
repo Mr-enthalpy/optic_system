@@ -114,7 +114,7 @@ class LCDService:
 
         height, width, _ = reported_shape
         if self.subpixel_axis == 0:
-            mono = frame.transpose(1, 0, 2).reshape(height * 3, width).copy()
+            mono = frame.transpose(0, 2, 1).reshape(height * 3, width).copy()
         else:
             mono = frame.reshape(height, width * 3).copy()
         return mono

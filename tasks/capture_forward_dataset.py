@@ -141,7 +141,7 @@ class FakeCamera:
 
 
 class FakeLCD:
-    def __init__(self, *, height: int = 1080, width_phys: int = 5760, subpixel_axis: int = 1):
+    def __init__(self, *, height: int = 60, width_phys: int = 180, subpixel_axis: int = 1):
         self._h = height
         self._w = width_phys
         self._subpixel_axis = subpixel_axis
