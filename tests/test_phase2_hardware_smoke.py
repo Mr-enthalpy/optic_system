@@ -12,6 +12,10 @@ TLS tests additionally require:
 
 These tests verify hardware control and raw HDF5 structure only.
 Scientific optical validity is explicitly out of scope.
+
+Display identity is trusted to the user / configuration.  The LCD probe
+verifies internal consistency (logical ↔ physical shape w.r.t. the
+configured subpixel axis) and may optionally check expected dimensions.
 """
 
 from __future__ import annotations
@@ -39,21 +43,59 @@ if not _HW_ENABLED:
     )
 
 
-_SUSPICIOUS_DISPLAY_HEIGHTS = frozenset({1080, 1440, 2160, 768, 900, 1050, 1200, 1600})
+def _get_lcd_subpixel_axis() -> int | None:
+    val = os.environ.get("OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS", "").strip()
+    if val in ("0", "1"):
+        return int(val)
+    return None
 
 
-def _require_target_lcd(lcd_service) -> dict:
+def _get_lcd_display_index() -> int | None:
+    val = os.environ.get("OPTIC_SYSTEM_LCD_DISPLAY_INDEX", "").strip()
+    if val:
+        return int(val)
+    return None
+
+
+def _verify_lcd_consistency(lcd_service) -> dict:
     meta = lcd_service.get_metadata()
     reported = tuple(meta["reported_shape"])
-    h, w, _ = reported
-    if h in _SUSPICIOUS_DISPLAY_HEIGHTS or w in _SUSPICIOUS_DISPLAY_HEIGHTS:
-        pytest.fail(
-            f"LCD reported_shape={reported} looks like a normal monitor, "
-            f"not the target 540×2560 LCD. "
-            f"Pass --lcd-display-index to select the correct display."
-        )
-    phys = meta["physical_shape"]
-    print(f"  LCD reported={reported} physical={phys}")
+    logical = tuple(meta["logical_shape"])
+    phys = tuple(meta["physical_shape"])
+    axis = meta["subpixel_axis"]
+    h_r, w_r, _ = reported
+
+    disp_idx = lcd_service._display_index
+    if disp_idx is None:
+        disp_idx = lcd_service._backend._display_index if lcd_service._backend else None
+    print(f"  LCD display={disp_idx}  reported={reported}  "
+          f"logical={logical}  physical={phys}  subpixel_axis={axis}")
+
+    if axis == 0:
+        expected_phys = (h_r * 3, w_r)
+    else:
+        expected_phys = (h_r, w_r * 3)
+
+    assert phys == expected_phys, (
+        f"LCD physical_shape={phys} inconsistent with "
+        f"reported_shape={reported} and subpixel_axis={axis} "
+        f"(expected {expected_phys})"
+    )
+
+    exp_shape_env = os.environ.get("OPTIC_SYSTEM_EXPECT_LCD_LOGICAL_SHAPE", "").strip()
+    if exp_shape_env:
+        parts = exp_shape_env.replace(",", " ").split()
+        if len(parts) == 2:
+            exp_h, exp_w = int(parts[0]), int(parts[1])
+            assert logical == (exp_h, exp_w), (
+                f"LCD logical_shape={logical} does not match "
+                f"expected OPTIC_SYSTEM_EXPECT_LCD_LOGICAL_SHAPE=({exp_h},{exp_w})"
+            )
+
+    if _get_lcd_display_index() is None:
+        print("  NOTE: --lcd-display-index was not provided; "
+              "display auto-detection may select a non-LCD monitor")
+
     return meta
 
 
@@ -101,10 +143,11 @@ def test_lcd_show_mask_hardware() -> None:
     _ensure_tasks_module()
     from devices.lcd_service import LCDService
 
-    display_index = int(os.environ.get("OPTIC_SYSTEM_LCD_DISPLAY_INDEX", "0"))
-    lcd = LCDService(display_index=display_index)
+    display_index = _get_lcd_display_index()
+    subpixel_axis = _get_lcd_subpixel_axis()
+    lcd = LCDService(display_index=display_index, subpixel_axis=subpixel_axis)
     try:
-        meta = _require_target_lcd(lcd)
+        meta = _verify_lcd_consistency(lcd)
         h, w = meta["physical_shape"]
 
         all_black = np.zeros((h, w), dtype=np.uint8)
@@ -179,7 +222,8 @@ def test_capture_no_tls_hardware() -> None:
     from tasks.capture_plan import CapturePlan
 
     camera_index = int(os.environ.get("OPTIC_SYSTEM_CAMERA_INDEX", "0"))
-    display_index = int(os.environ.get("OPTIC_SYSTEM_LCD_DISPLAY_INDEX", "0"))
+    display_index = _get_lcd_display_index()
+    subpixel_axis = _get_lcd_subpixel_axis()
 
     plan_path = _repo_root() / "plans" / "hardware_smoke_no_tls.yaml"
     if not plan_path.exists():
@@ -188,7 +232,7 @@ def test_capture_no_tls_hardware() -> None:
 
     camera_service = CameraServiceClient(timeout_ms=5000, auto_ensure=True)
     frame_stream = FrameStreamClient(recv_timeout_ms=5000)
-    lcd_service = LCDService(display_index=display_index)
+    lcd_service = LCDService(display_index=display_index, subpixel_axis=subpixel_axis)
     output = _temp_h5_path()
 
     try:
@@ -196,7 +240,7 @@ def test_capture_no_tls_hardware() -> None:
         print(f"  camera: {reply.get('serial')} {reply['width']}×{reply['height']}")
         camera_service.start_stream()
 
-        _require_target_lcd(lcd_service)
+        _verify_lcd_consistency(lcd_service)
 
         capture_helper = FrameCaptureHelper(frame_stream)
         devices = _make_bundle(
@@ -256,7 +300,8 @@ def test_capture_with_tls_hardware() -> None:
     from tasks.capture_plan import CapturePlan
 
     camera_index = int(os.environ.get("OPTIC_SYSTEM_CAMERA_INDEX", "0"))
-    display_index = int(os.environ.get("OPTIC_SYSTEM_LCD_DISPLAY_INDEX", "0"))
+    display_index = _get_lcd_display_index()
+    subpixel_axis = _get_lcd_subpixel_axis()
 
     plan_path = _repo_root() / "plans" / "hardware_smoke_with_tls.yaml"
     if not plan_path.exists():
@@ -265,7 +310,7 @@ def test_capture_with_tls_hardware() -> None:
 
     camera_service = CameraServiceClient(timeout_ms=5000, auto_ensure=True)
     frame_stream = FrameStreamClient(recv_timeout_ms=5000)
-    lcd_service = LCDService(display_index=display_index)
+    lcd_service = LCDService(display_index=display_index, subpixel_axis=subpixel_axis)
     tls_service = TLSService(default_serial_number=serial)
     output = _temp_h5_path()
 
@@ -274,7 +319,7 @@ def test_capture_with_tls_hardware() -> None:
         print(f"  camera: {reply.get('serial')} {reply['width']}×{reply['height']}")
         camera_service.start_stream()
 
-        _require_target_lcd(lcd_service)
+        _verify_lcd_consistency(lcd_service)
 
         tls_status = tls_service.connect(serial_number=serial)
         assert tls_status.connected

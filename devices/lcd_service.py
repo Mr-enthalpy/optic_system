@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 import numpy as np
@@ -10,11 +11,16 @@ from .lcd_debug_patterns import build_debug_pattern
 
 class LCDService:
     """
-    LCD device abstraction.
+    LCD device abstraction with configurable subpixel axis.
 
-    The canonical physical representation is a mono mask shaped as `(H, 3W)`.
-    Only this service packs that physical mono mask into the display RGB buffer
-    shaped as `(H, W, 3)`.
+    The canonical physical mono representation depends on ``subpixel_axis``:
+
+    - ``subpixel_axis=0``: physical mono ``[3H, W]``; RGB buffer ``[H, W, 3]``
+    - ``subpixel_axis=1``: physical mono ``[H, 3W]``; RGB buffer ``[H, W, 3]``
+
+    ``subpixel_axis`` can be set explicitly or via the environment variable
+    ``OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS``.  If ``subpixel_axis`` is ``None``,
+    defaults to axis=1 (legacy width-tripling).
     """
 
     def __init__(
@@ -22,11 +28,23 @@ class LCDService:
         *,
         backend: Optional[LCDBackend] = None,
         display_index: Optional[int] = None,
+        subpixel_axis: int | None = None,
         transmissive_code: int = 255,
         opaque_code: int = 0,
     ):
         self._backend = backend
         self._display_index = display_index
+
+        if subpixel_axis is None:
+            env_val = os.environ.get("OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS", "")
+            if env_val in ("0", "1"):
+                subpixel_axis = int(env_val)
+            else:
+                subpixel_axis = 1  # legacy default: width-tripling
+        if subpixel_axis not in (0, 1):
+            raise ValueError(f"subpixel_axis must be 0 or 1, got {subpixel_axis}")
+        self.subpixel_axis = int(subpixel_axis)
+
         self.transmissive_code = int(transmissive_code)
         self.opaque_code = int(opaque_code)
 
@@ -43,27 +61,44 @@ class LCDService:
         backend_metadata = self._backend.get_metadata()
         reported_shape = backend_metadata["reported_shape"]
         height, width, _ = reported_shape
+
+        if self.subpixel_axis == 0:
+            phys_h, phys_w = height * 3, width
+            logical_h, logical_w = height, width
+        else:
+            phys_h, phys_w = height, width * 3
+            logical_h, logical_w = height, width
+
         return {
             **backend_metadata,
-            "physical_shape": (height, width * 3),
+            "subpixel_axis": self.subpixel_axis,
+            "logical_shape": (logical_h, logical_w),
+            "physical_shape": (phys_h, phys_w),
             "transmissive_code": self.transmissive_code,
             "opaque_code": self.opaque_code,
             "current_mode": self._last_mode,
             "current_mask_id": self._last_mask_id,
         }
 
+    # ----- physics ↔ RGB packing -----
+
     def mono_to_rgb(self, mask: np.ndarray) -> np.ndarray:
         metadata = self.get_metadata()
-        height, width_phys = metadata["physical_shape"]
+        phys_h, phys_w = metadata["physical_shape"]
 
         mono = np.asarray(mask)
         if mono.dtype != np.uint8:
             mono = mono.astype(np.uint8)
-        if mono.shape != (height, width_phys):
+        if mono.shape != (phys_h, phys_w):
             raise ValueError(
-                f"Expected mono mask shape {(height, width_phys)}, got {tuple(mono.shape)}"
+                f"Expected mono mask shape {(phys_h, phys_w)}, got {tuple(mono.shape)}"
             )
-        return mono.reshape(height, width_phys // 3, 3).copy()
+
+        if self.subpixel_axis == 0:
+            rgb = mono.reshape(phys_h // 3, 3, phys_w).transpose(0, 2, 1).copy()
+        else:
+            rgb = mono.reshape(phys_h, phys_w // 3, 3).copy()
+        return rgb
 
     def rgb_to_mono(self, rgb: np.ndarray) -> np.ndarray:
         metadata = self.get_metadata()
@@ -76,8 +111,15 @@ class LCDService:
             raise ValueError(
                 f"Expected RGB buffer shape {reported_shape}, got {tuple(frame.shape)}"
             )
+
         height, width, _ = reported_shape
-        return frame.reshape(height, width * 3).copy()
+        if self.subpixel_axis == 0:
+            mono = frame.transpose(1, 0, 2).reshape(height * 3, width).copy()
+        else:
+            mono = frame.reshape(height, width * 3).copy()
+        return mono
+
+    # ----- display -----
 
     def show_rgb_buffer(
         self,
@@ -103,15 +145,17 @@ class LCDService:
         self.show_rgb_buffer(rgb, mode=mode, mask_id=mask_id)
         return rgb
 
+    # ----- pattern helpers -----
+
     def make_all_transmissive_mask(self) -> np.ndarray:
         metadata = self.get_metadata()
-        height, width_phys = metadata["physical_shape"]
-        return np.full((height, width_phys), self.transmissive_code, dtype=np.uint8)
+        h, w = metadata["physical_shape"]
+        return np.full((h, w), self.transmissive_code, dtype=np.uint8)
 
     def make_all_opaque_mask(self) -> np.ndarray:
         metadata = self.get_metadata()
-        height, width_phys = metadata["physical_shape"]
-        return np.full((height, width_phys), self.opaque_code, dtype=np.uint8)
+        h, w = metadata["physical_shape"]
+        return np.full((h, w), self.opaque_code, dtype=np.uint8)
 
     def show_all_transmissive(self) -> np.ndarray:
         mask = self.make_all_transmissive_mask()
@@ -123,11 +167,11 @@ class LCDService:
 
     def make_debug_pattern(self, pattern_name: str) -> np.ndarray:
         metadata = self.get_metadata()
-        height, width_phys = metadata["physical_shape"]
+        h, w = metadata["physical_shape"]
         return build_debug_pattern(
             pattern_name,
-            height=height,
-            width_phys=width_phys,
+            height=h,
+            width_phys=w,
             transmissive_code=self.transmissive_code,
             opaque_code=self.opaque_code,
         )

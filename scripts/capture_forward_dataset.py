@@ -83,6 +83,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
     )
     parser.add_argument(
+        "--lcd-subpixel-axis",
+        type=int,
+        choices=[0, 1],
+        default=None,
+        help="LCD subpixel axis: 0 = height-tripled [3H,W], 1 = width-tripled [H,3W]",
+    )
+    parser.add_argument(
         "--no-auto-sidecar",
         action="store_true",
         help="connect to an existing sidecar instead of auto-starting one",
@@ -203,7 +210,7 @@ def _run_hardware(
         frame_stream = FrameStreamClient()
         capture_helper = FrameCaptureHelper(frame_stream)
 
-        lcd_service = LCDService(display_index=args.lcd_display_index)
+        lcd_service = LCDService(display_index=args.lcd_display_index, subpixel_axis=args.lcd_subpixel_axis)
         meta = lcd_service.get_metadata()
         print(f"  lcd: {meta.get('reported_shape')}")
 
