@@ -232,3 +232,14 @@ class TestRawCaptureWriter:
             mp = _h5_str(f["lcd/mapping_policy_json"])
             assert "physical_mono" in mp
             assert "display_rgb" in mp
+
+    def test_rejects_variable_shape_masks(
+        self, sample_plan: CapturePlan, tmp_h5_path: Path
+    ) -> None:
+        writer = RawCaptureWriter(tmp_h5_path, sample_plan)
+        writer.open()
+        with pytest.raises(RawCaptureWriteError, match="same shape"):
+            writer.write_physical_masks([
+                np.zeros((100, 300), dtype=np.uint8),
+                np.zeros((200, 300), dtype=np.uint8),
+            ])

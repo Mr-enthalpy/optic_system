@@ -223,3 +223,23 @@ class TestCapturePlan:
         assert plan.n_captures == 12
         assert plan.n_wavelengths == 3
         assert plan.n_masks == 4
+
+    def test_invalid_optional_fields_raise(self) -> None:
+        with pytest.raises(CapturePlanError, match="float"):
+            CameraCaptureConfig.from_dict({"exposure_us": "not_a_number"})
+
+        with pytest.raises(CapturePlanError, match="int"):
+            TLSWavelengthEntry.from_dict({
+                "wavelength_nm": 500,
+                "grating": "bad",
+            })
+
+        with pytest.raises(CapturePlanError, match="roi"):
+            CameraCaptureConfig.from_dict({
+                "roi": [1, 2],
+            })
+
+        with pytest.raises(CapturePlanError, match="roi"):
+            CameraCaptureConfig.from_dict({
+                "roi": "not_a_list",
+            })
