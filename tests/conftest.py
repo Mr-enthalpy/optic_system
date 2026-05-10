@@ -72,7 +72,7 @@ def fake_devices() -> FakeDeviceBundle:
 def fake_devices_no_tls() -> FakeDeviceBundle:
     return FakeDeviceBundle(
         camera=FakeCamera(),
-        lcd=FakeLCD(),
+        lcd=FakeLCD(height=60, width_phys=180),
         tls=None,
     )
 

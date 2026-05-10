@@ -294,7 +294,7 @@ class TestCaptureForwardDatasetDryRun:
 
         with pytest.raises(CapturePlanError, match="placeholder"):
             _materialize_masks(sample_plan, allow_placeholder=False,
-                              placeholder_shape=(1080, 5760))
+                              placeholder_shape=(60, 180))
 
     def test_wrong_mask_shape_rejected(
         self, tmp_h5_path: Path

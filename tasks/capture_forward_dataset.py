@@ -86,6 +86,9 @@ class LCDDisplayProtocol(_Protocol):
     def physical_shape(self) -> tuple[int, int]:
         ...
 
+    def subpixel_axis(self) -> int:
+        ...
+
 
 class TLSControlProtocol(_Protocol):
     def set_grating(self, grating: int) -> None:
@@ -138,9 +141,10 @@ class FakeCamera:
 
 
 class FakeLCD:
-    def __init__(self, *, height: int = 1080, width_phys: int = 5760):
+    def __init__(self, *, height: int = 60, width_phys: int = 180, subpixel_axis: int = 1):
         self._h = height
         self._w = width_phys
+        self._subpixel_axis = subpixel_axis
         self.last_mask: np.ndarray | None = None
 
     def show_physical_mask(self, mask: np.ndarray) -> None:
@@ -153,12 +157,17 @@ class FakeLCD:
         return {
             "display_index": 0,
             "physical_shape": [self._h, self._w],
+            "logical_shape": (self._h // 3, self._w) if self._subpixel_axis == 0 else (self._h, self._w // 3),
+            "subpixel_axis": self._subpixel_axis,
             "transmissive_code": 255,
             "opaque_code": 0,
         }
 
     def physical_shape(self) -> tuple[int, int]:
         return (self._h, self._w)
+
+    def subpixel_axis(self) -> int:
+        return self._subpixel_axis
 
 
 class FakeTLS:
@@ -252,6 +261,9 @@ class LCDAdapter:
         h, w = meta["physical_shape"]
         return (int(h), int(w))
 
+    def subpixel_axis(self) -> int:
+        return int(self._service.subpixel_axis)
+
 
 class TLSAdapter:
     def __init__(self, tls_service):
@@ -303,6 +315,7 @@ def run_capture_forward_dataset(
     writer.open()
 
     try:
+        writer.write_lcd_metadata(devices.lcd.metadata())
         writer.write_physical_masks(physical_masks)
 
         capture_idx = 0
@@ -376,10 +389,13 @@ def _validate_mask_shape(
             f"mask {mask_id!r} shape {mask_array.shape} "
             f"does not match LCD physical shape ({expected_h}, {expected_w})"
         )
-    if mask_array.shape[1] % 3 != 0:
+    axis = lcd.subpixel_axis()
+    divisor = mask_array.shape[1] if axis == 1 else mask_array.shape[0]
+    if divisor % 3 != 0:
         raise CapturePlanError(
-            f"mask {mask_id!r}: physical mono mask width "
-            f"({mask_array.shape[1]}) must be divisible by 3 for [H, 3W] packing"
+            f"mask {mask_id!r}: physical mono mask shape {mask_array.shape} "
+            f"incompatible with subpixel_axis={axis}; "
+            f"the expanded axis length must be divisible by 3"
         )
 
 
@@ -387,7 +403,7 @@ def _materialize_masks(
     plan: CapturePlan,
     *,
     allow_placeholder: bool = False,
-    placeholder_shape: tuple[int, int] = (1080, 5760),
+    placeholder_shape: tuple[int, int] = (60, 180),
 ) -> list[np.ndarray]:
     masks: list[np.ndarray] = []
     for entry in plan.masks:

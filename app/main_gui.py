@@ -29,6 +29,7 @@ def build_controller(args: argparse.Namespace) -> SessionController:
     if not args.disable_lcd:
         lcd_service = LCDService(
             display_index=args.lcd_display_index,
+            subpixel_axis=args.lcd_subpixel_axis,
             transmissive_code=args.lcd_transmissive_code,
             opaque_code=args.lcd_opaque_code,
         )
@@ -95,6 +96,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=0,
         help="mono code used for the all-opaque LCD state",
+    )
+    parser.add_argument(
+        "--lcd-subpixel-axis",
+        type=int,
+        choices=[0, 1],
+        default=None,
+        help="LCD subpixel axis: 0 = height-tripled [3H,W], 1 = width-tripled [H,3W]",
     )
     parser.add_argument(
         "--enable-tls",

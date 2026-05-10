@@ -1,0 +1,19 @@
+plan_id: hardware_smoke_with_tls
+wavelengths:
+  - wavelength_nm: 550.0
+    grating: 1
+    settle_ms: 1000
+  - wavelength_nm: 532.0
+    grating: 1
+    settle_ms: 1000
+masks:
+  - mask_id: all_black
+    path: plans/generated_masks/all_black.npy
+  - mask_id: all_white
+    path: plans/generated_masks/all_white.npy
+camera:
+  frames_per_capture: 3
+  average_burst: false
+lcd_settle_ms: 200
+store_burst: true
+notes: Phase 2B camera+LCD+TLS hardware smoke

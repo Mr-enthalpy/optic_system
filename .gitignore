@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+data/raw/
+plans/generated_masks/

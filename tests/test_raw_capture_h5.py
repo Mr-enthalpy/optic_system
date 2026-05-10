@@ -226,12 +226,15 @@ class TestRawCaptureWriter:
     ) -> None:
         writer = RawCaptureWriter(tmp_h5_path, sample_plan)
         with writer:
-            pass
+            writer.write_lcd_metadata({"subpixel_axis": 1})
 
         with h5py.File(tmp_h5_path, "r") as f:
             mp = _h5_str(f["lcd/mapping_policy_json"])
             assert "physical_mono" in mp
             assert "display_rgb" in mp
+            assert "subpixel_axis" in mp
+            md = _h5_str(f["lcd/metadata_json"])
+            assert "subpixel_axis" in md
 
     def test_rejects_variable_shape_masks(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
