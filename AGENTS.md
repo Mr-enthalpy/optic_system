@@ -517,11 +517,15 @@ Do not:
 
 ## Preferred next implementation order
 
-1. Finish documentation and boundary reset.
-2. Complete TLS SDK integration closure.
-3. Add minimal capture task layer.
-4. Add raw capture HDF5 export.
-5. Add hardware smoke capture validation.
-6. Add conversion to `LCD_forward` HDF5.
-7. Add family-aware GenerMask capture support.
-8. Consider larger closed-loop experiment automation only after the above are stable.
+Completed:
+
+* TLS SDK integration closure
+* Phase 2A minimal capture task layer
+* raw capture HDF5 export
+* Phase 2B hardware smoke capture validation
+
+Next:
+
+1. Raw capture to ``LCD_forward`` conversion.
+2. Family-aware GenerMask capture support.
+3. Larger closed-loop experiment automation only after the above are stable.
