@@ -492,8 +492,8 @@ class MyCamLite:
             return float(info.get("abs_min", 0.0)), float(info.get("abs_max", 0.0))
         return int(info.get("min", 0)), int(info.get("max", 0))
 
-    def set_property_abs(self, name: str, value: float, *, auto: bool = False) -> Any:
-        return self.cam.set_property_abs(name, float(value), auto=bool(auto))
+    def set_property_abs(self, name: str, value: float, *, auto: bool = False, on: bool | None = None) -> Any:
+        return self.cam.set_property_abs(name, float(value), auto=bool(auto), on=on)
 
     def set_property_integer(
         self,

@@ -354,3 +354,78 @@ class TestCaptureForwardDatasetDryRun:
                 enable_tls=False,
                 dry_run=True,
             )
+
+    def test_camera_params_applied_and_stored_in_hdf5(
+        self, tmp_h5_path: Path
+    ) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "camera_params_test",
+            "wavelengths": [{"wavelength_nm": 500}],
+            "masks": [{"mask_id": "m1"}],
+            "camera": {
+                "frames_per_capture": 2,
+                "exposure_us": 5000.0,
+                "gain_db": 3.0,
+            },
+        })
+
+        cam = FakeCamera(height=240, width=320)
+        devices = FakeDeviceBundle(
+            camera=cam,
+            lcd=FakeLCD(height=600, width_phys=2400),
+        )
+
+        run_capture_forward_dataset(
+            plan=plan,
+            devices=devices,
+            output_path=tmp_h5_path,
+            enable_tls=False,
+            dry_run=True,
+        )
+
+        assert cam.exposure_us == 5000.0
+        assert cam.gain_db == 3.0
+
+        with h5py.File(tmp_h5_path, "r") as f:
+            req_exp = f["camera/requested_exposure_us"]
+            req_gain = f["camera/requested_gain_db"]
+            rb_exp = f["camera/readback_exposure_us"]
+            rb_gain = f["camera/readback_gain_db"]
+
+            assert float(req_exp[0]) == 5000.0
+            assert float(req_gain[0]) == 3.0
+            assert float(rb_exp[0]) == 5000.0
+            assert float(rb_gain[0]) == 3.0
+
+            assert "requested_exposure_us" in f["camera"]
+            assert "requested_gain_db" in f["camera"]
+            assert "readback_exposure_us" in f["camera"]
+            assert "readback_gain_db" in f["camera"]
+
+    def test_camera_params_not_applied_when_none(
+        self, tmp_h5_path: Path
+    ) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "no_camera_params_test",
+            "wavelengths": [{"wavelength_nm": 500}],
+            "masks": [{"mask_id": "m1"}],
+            "camera": {"frames_per_capture": 2},
+        })
+
+        cam = FakeCamera(height=240, width=320)
+        devices = FakeDeviceBundle(
+            camera=cam,
+            lcd=FakeLCD(height=600, width_phys=2400),
+        )
+
+        run_capture_forward_dataset(
+            plan=plan,
+            devices=devices,
+            output_path=tmp_h5_path,
+            enable_tls=False,
+            dry_run=True,
+        )
+
+        with h5py.File(tmp_h5_path, "r") as f:
+            assert float(f["camera/requested_exposure_us"][0]) == -1.0
+            assert float(f["camera/readback_exposure_us"][0]) == -1.0

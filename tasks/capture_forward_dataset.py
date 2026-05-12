@@ -119,10 +119,22 @@ class CaptureDeviceBundle(_Protocol):
 
 
 class FakeCamera:
-    def __init__(self, *, seed: int = 42, height: int = 480, width: int = 640):
+    def __init__(self, *, seed: int = 42, height: int = 480, width: int = 640,
+                 exposure_us: float | None = None, gain_db: float | None = None):
         self._rng = np.random.default_rng(seed)
         self._h = height
         self._w = width
+        self.exposure_us = exposure_us
+        self.gain_db = gain_db
+
+    def apply_camera_params(self, exposure_us=None, gain_db=None):
+        if exposure_us is not None:
+            self.exposure_us = float(exposure_us)
+        if gain_db is not None:
+            self.gain_db = float(gain_db)
+
+    def read_camera_params(self) -> dict:
+        return {"exposure_us": self.exposure_us, "gain_db": self.gain_db}
 
     def acquire_burst(self, k: int) -> CaptureFrames:
         burst = self._rng.normal(128, 40, (k, self._h, self._w)).astype(np.float64)
@@ -131,8 +143,8 @@ class FakeCamera:
             burst=burst,
             frames_avg=avg,
             metadata={
-                "exposure_us": None,
-                "gain_db": None,
+                "exposure_us": self.exposure_us,
+                "gain_db": self.gain_db,
                 "roi": None,
                 "timestamp_ns": time.monotonic_ns(),
                 "status": {"source": "fake"},
@@ -226,10 +238,44 @@ class CameraCaptureAdapter:
 
     *capture_helper* must be a ``FrameCaptureHelper`` with its own
     ``FrameStreamClient`` (not shared with PreviewWorker).
+
+    *camera_service* is an optional ``CameraServiceClient`` reference.
+    When provided, the adapter can set / read camera properties
+    (exposure, gain) and includes them in capture metadata.
+
+    Unit convention
+    --------------
+    * ``plan.camera.exposure_us`` is in **microseconds**.
+    * FlyCapture2 SHUTTER absolute property is in **milliseconds**.
+    * This adapter converts us <-> ms:
+      ``apply_camera_params`` divides exposure_us by 1000 to get SHUTTER ms;
+      ``read_camera_params`` multiplies SHUTTER ms by 1000 to get exposure_us.
+    * GAIN units are passed through directly.
     """
 
-    def __init__(self, capture_helper):
+    def __init__(self, capture_helper, camera_service=None):
         self._helper = capture_helper
+        self._camera = camera_service
+
+    def apply_camera_params(self, exposure_us=None, gain_db=None):
+        if self._camera is None:
+            return
+        if exposure_us is not None:
+            self._camera.set_value("SHUTTER", float(exposure_us) / 1000.0)
+        if gain_db is not None:
+            self._camera.set_value("GAIN", float(gain_db))
+
+    def read_camera_params(self) -> dict:
+        if self._camera is None:
+            return {"exposure_us": None, "gain_db": None}
+        try:
+            shutter_ms = self._camera.get_value("SHUTTER")
+            return {
+                "exposure_us": float(shutter_ms) * 1000.0 if shutter_ms is not None else None,
+                "gain_db": self._camera.get_value("GAIN"),
+            }
+        except Exception:
+            return {"exposure_us": None, "gain_db": None}
 
     def acquire_burst(self, k: int) -> CaptureFrames:
         frames: list[np.ndarray] = []
@@ -238,6 +284,7 @@ class CameraCaptureAdapter:
             frames.append(raw.astype(np.float64, copy=False))
         burst = np.stack(frames, axis=0)
         avg = burst.mean(axis=0, dtype=np.float64)
+        cam_params = self.read_camera_params()
         return CaptureFrames(
             burst=burst,
             frames_avg=avg,
@@ -245,6 +292,8 @@ class CameraCaptureAdapter:
                 "acquisition": "burst",
                 "n": k,
                 "timestamp_ns": time.monotonic_ns(),
+                "exposure_us": cam_params.get("exposure_us"),
+                "gain_db": cam_params.get("gain_db"),
             },
         )
 
@@ -338,6 +387,21 @@ def run_capture_forward_dataset(
         writer.write_lcd_metadata(devices.lcd.metadata())
         writer.write_physical_masks(physical_masks)
 
+        cam_requested_exposure_us = plan.camera.exposure_us
+        cam_requested_gain_db = plan.camera.gain_db
+        if hasattr(devices.camera, "apply_camera_params") and (
+            cam_requested_exposure_us is not None or cam_requested_gain_db is not None
+        ):
+            devices.camera.apply_camera_params(
+                exposure_us=cam_requested_exposure_us,
+                gain_db=cam_requested_gain_db,
+            )
+        cam_readback = (
+            devices.camera.read_camera_params()
+            if hasattr(devices.camera, "read_camera_params")
+            else {}
+        )
+
         capture_idx = 0
         for wi, wl_entry in enumerate(plan.wavelengths):
             if enable_tls and devices.tls is not None:
@@ -417,6 +481,10 @@ def run_capture_forward_dataset(
                     camera_meta=capture.metadata,
                     tls_status=tls_status,
                     lcd_display_timestamp_ns=lcd_display_ts,
+                    requested_exposure_us=cam_requested_exposure_us,
+                    requested_gain_db=cam_requested_gain_db,
+                    readback_exposure_us=cam_readback.get("exposure_us") if not dry_run else cam_requested_exposure_us,
+                    readback_gain_db=cam_readback.get("gain_db") if not dry_run else cam_requested_gain_db,
                 )
 
                 _safe_status_update(

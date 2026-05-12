@@ -113,8 +113,10 @@ class RawCaptureWriter:
         tls_grp.create_dataset("status_json", shape=(n_wl,), dtype=h5py.string_dtype())
 
         cam_grp = f.require_group("camera")
-        cam_grp.create_dataset("exposure_us", shape=(n_cap,), dtype=np.float64)
-        cam_grp.create_dataset("gain_db", shape=(n_cap,), dtype=np.float64)
+        cam_grp.create_dataset("requested_exposure_us", shape=(n_cap,), dtype=np.float64)
+        cam_grp.create_dataset("requested_gain_db", shape=(n_cap,), dtype=np.float64)
+        cam_grp.create_dataset("readback_exposure_us", shape=(n_cap,), dtype=np.float64)
+        cam_grp.create_dataset("readback_gain_db", shape=(n_cap,), dtype=np.float64)
         cam_grp.create_dataset("roi_json", shape=(n_cap,), dtype=h5py.string_dtype())
         cam_grp.create_dataset("timestamp_ns", shape=(n_cap,), dtype=np.int64)
         cam_grp.create_dataset("status_json", shape=(n_cap,), dtype=h5py.string_dtype())
@@ -212,6 +214,10 @@ class RawCaptureWriter:
         camera_meta: dict[str, Any],
         tls_status: dict[str, Any] | None = None,
         lcd_display_timestamp_ns: int = 0,
+        requested_exposure_us: float | None = None,
+        requested_gain_db: float | None = None,
+        readback_exposure_us: float | None = None,
+        readback_gain_db: float | None = None,
     ) -> None:
         _ensure_open(self._file)
         if self._closed:
@@ -261,8 +267,12 @@ class RawCaptureWriter:
         cap_grp["completed"][row] = True
 
         cam_grp = f["camera"]
-        cam_grp["exposure_us"][row] = float(camera_meta.get("exposure_us") or -1)
-        cam_grp["gain_db"][row] = float(camera_meta.get("gain_db") or -1)
+        cam_grp["requested_exposure_us"][row] = float(requested_exposure_us if requested_exposure_us is not None else -1)
+        cam_grp["requested_gain_db"][row] = float(requested_gain_db if requested_gain_db is not None else -1)
+        _readback_exposure = readback_exposure_us if readback_exposure_us is not None else camera_meta.get("exposure_us")
+        _readback_gain = readback_gain_db if readback_gain_db is not None else camera_meta.get("gain_db")
+        cam_grp["readback_exposure_us"][row] = float(_readback_exposure if _readback_exposure is not None else -1)
+        cam_grp["readback_gain_db"][row] = float(_readback_gain if _readback_gain is not None else -1)
         cam_grp["roi_json"][row] = _json_str(camera_meta.get("roi"))
         cam_grp["timestamp_ns"][row] = int(camera_meta.get("timestamp_ns") or _now_ns())
         cam_grp["status_json"][row] = _json_str(camera_meta.get("status", {}))

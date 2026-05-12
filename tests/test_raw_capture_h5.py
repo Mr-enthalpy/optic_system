@@ -134,7 +134,7 @@ class TestRawCaptureWriter:
             assert bool(cap["completed"][0]) is True
 
             cam = f["camera"]
-            assert float(cam["exposure_us"][0]) == 10000.0
+            assert float(cam["readback_exposure_us"][0]) == 10000.0
 
             tls_ds = f["tls"]
             assert float(tls_ds["wavelength_nm"][0]) == 532.0
