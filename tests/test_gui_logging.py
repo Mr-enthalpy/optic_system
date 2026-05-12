@@ -88,6 +88,22 @@ class TestSetupGuiLogging:
             assert n_handlers_after == n_handlers_before
             _cleanup(ctx2.logger)
 
+    def test_handler_deduplication_disable_after_enable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ctx1 = setup_gui_logging(log_dir=tmpdir, run_id="dedup2", enable_file_log=True)
+            has_file_before = any(
+                isinstance(h, logging.FileHandler) for h in ctx1.logger.handlers
+            )
+            assert has_file_before
+
+            ctx2 = setup_gui_logging(log_dir=tmpdir, run_id="dedup2", enable_file_log=False)
+            has_file_after = any(
+                isinstance(h, logging.FileHandler) for h in ctx2.logger.handlers
+            )
+            assert not has_file_after
+
+            _cleanup(ctx2.logger)
+
     def test_writes_to_human_log(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             context = setup_gui_logging(log_dir=tmpdir, run_id="write_test")

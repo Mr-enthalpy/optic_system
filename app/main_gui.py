@@ -202,8 +202,8 @@ def _log_device_metadata(controller: SessionController, log: GuiLogContext) -> N
         try:
             tls_status = controller.tls_service.get_status()
             logger.info(
-                "TLS: enabled, connected=%s, device_id=%s, current_wl=%.3f nm, "
-                "target_wl=%.3f nm, grating=%s, moving=%s",
+                "TLS: enabled, connected=%s, device_id=%s, current_wl=%s nm, "
+                "target_wl=%s nm, grating=%s, moving=%s",
                 tls_status.connected, tls_status.device_id,
                 tls_status.current_wavelength_nm,
                 tls_status.target_wavelength_nm,
@@ -236,9 +236,16 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Human log:     %s", log_context.human_log_path)
         logger.info("Event log:     %s", log_context.event_log_path)
 
-    logger.info("Building controller ...")
-    controller = build_controller(args)
-    logger.info("Controller built")
+    try:
+        logger.info("Building controller ...")
+        controller = build_controller(args)
+        logger.info("Controller built")
+    except SystemExit:
+        logger.exception("Controller build failed with SystemExit")
+        raise
+    except Exception:
+        logger.exception("Controller build failed")
+        raise
 
     event_sink = EventLogSink(
         log_context.event_log_path,
@@ -269,12 +276,25 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             controller.dispatch(SetTLSGrating(args.tls_safe_grating))
-            logger.info("TLS auto-connect complete, grating=%s", args.tls_safe_grating)
+            logger.info("TLS auto-connect commands dispatched, grating=%s", args.tls_safe_grating)
         except Exception as exc:
-            logger.warning("TLS auto-connect failed: %s", exc)
+            logger.warning("TLS auto-connect dispatch failed: %s", exc)
             controller.bus.publish(
                 StatusMessage("warning", f"TLS auto-connect failed: {exc}")
             )
+
+        state = controller.state.get()
+        logger.info(
+            "TLS state after auto-connect: connected=%s, device_id=%s, "
+            "current_wl=%s, target_wl=%s, grating=%s, moving=%s, last_error=%s",
+            state.tls_connected,
+            state.tls_device_id,
+            state.tls_current_wavelength_nm,
+            state.tls_target_wavelength_nm,
+            state.tls_grating,
+            state.tls_moving,
+            state.tls_last_error,
+        )
 
     logger.info("Opening MainWindow ...")
     window = MainWindow(controller, logger=logger)

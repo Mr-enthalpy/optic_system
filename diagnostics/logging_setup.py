@@ -45,6 +45,8 @@ def setup_gui_logging(
     _level = getattr(logging, log_level.upper(), logging.INFO)
     logger.setLevel(_level)
 
+    _remove_tagged_handlers(logger)
+
     if enable_file_log:
         try:
             log_root.mkdir(parents=True, exist_ok=True)
@@ -58,7 +60,6 @@ def setup_gui_logging(
                 "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
             ))
             fh._optic_system_gui_handler = True  # type: ignore[attr-defined]
-            _remove_tagged_handlers(logger)
             logger.addHandler(fh)
         except Exception:
             pass
