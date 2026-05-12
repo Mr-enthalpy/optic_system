@@ -47,6 +47,8 @@ def setup_gui_logging(
 
     _remove_tagged_handlers(logger)
 
+    file_log_error: Exception | None = None
+
     if enable_file_log:
         try:
             log_root.mkdir(parents=True, exist_ok=True)
@@ -61,10 +63,19 @@ def setup_gui_logging(
             ))
             fh._optic_system_gui_handler = True  # type: ignore[attr-defined]
             logger.addHandler(fh)
-        except Exception:
-            pass
+        except Exception as exc:
+            file_log_error = exc
+            human_log_path = None
+            event_log_path = None
+            session_start_path = None
 
     _ensure_console_handler(logger, _level)
+
+    if file_log_error is not None:
+        logger.warning(
+            "File logging disabled because setup failed: %s",
+            file_log_error,
+        )
 
     logger.propagate = False
 

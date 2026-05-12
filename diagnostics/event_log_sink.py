@@ -45,10 +45,10 @@ class EventLogSink:
             payload = dataclasses.asdict(event)
         except Exception:
             self._logger.exception(
-                "Failed to convert event %s to dict",
+                "Failed to convert event %s via asdict, falling back to __dict__",
                 type(event).__name__,
             )
-            return
+            payload = getattr(event, "__dict__", {})
 
         line = {
             "ts": datetime.now(timezone.utc).isoformat(),
