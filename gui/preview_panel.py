@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Optional
+from typing import Callable, Optional
 
 import cv2
 import numpy as np
@@ -20,7 +20,7 @@ class PreviewPanel(ttk.LabelFrame):
     Live preview + lightweight frame diagnostics.
     """
 
-    def __init__(self, master, max_pixel_max: int = 65535):
+    def __init__(self, master, max_pixel_max: int = 65535, on_bayer_change: Callable[[str | None], None] | None = None):
         super().__init__(master, text="Live Preview", padding=8)
 
         self._photo = None
@@ -48,6 +48,21 @@ class PreviewPanel(ttk.LabelFrame):
 
         ttk.Label(self, textvariable=self.display_info_var, anchor="w").pack(fill="x")
         ttk.Label(self, textvariable=self.frame_info_var, anchor="w").pack(fill="x")
+
+        bayer_row = ttk.Frame(self)
+        bayer_row.pack(fill="x", pady=2)
+        ttk.Label(bayer_row, text="Bayer:").pack(side="left")
+        self._bayer_var = tk.StringVar(value="GB")
+        bayer_combo = ttk.Combobox(
+            bayer_row,
+            textvariable=self._bayer_var,
+            values=["GB", "BG", "RG", "GR", "None (Grayscale)"],
+            state="readonly",
+            width=16,
+        )
+        bayer_combo.pack(side="left", padx=4)
+        if on_bayer_change is not None:
+            bayer_combo.bind("<<ComboboxSelected>>", lambda e: self._on_bayer_selected(on_bayer_change))
 
     def update_preview(self, preview_bgr: Optional[np.ndarray]) -> None:
         if preview_bgr is None:
@@ -85,6 +100,7 @@ class PreviewPanel(ttk.LabelFrame):
         stride: int,
         pixel_format: str | None,
     ) -> None:
+        self._update_bar_max(pixel_format)
         self.update_max_pixel(max_pixel)
 
         dims = f"{width} x {height}" if width and height else "--"
@@ -97,7 +113,23 @@ class PreviewPanel(ttk.LabelFrame):
             f"Frame: {dims} | stride {stride_text} | {pix_fmt_text} | seq {seq_text} | ts {ts_text}"
         )
 
+    def _update_bar_max(self, pixel_format: str | None) -> None:
+        fmt = (pixel_format or "").strip().lower()
+        if fmt in ("raw16", "mono16"):
+            new_max = 65535
+        else:
+            new_max = 255
+        if int(self.max_pixel_bar["maximum"]) != new_max:
+            self.max_pixel_bar.configure(maximum=new_max)
+
     def update_max_pixel(self, max_pixel: float) -> None:
         self.max_pixel_var.set(f"{max_pixel:.0f}")
         vmax = int(self.max_pixel_bar["maximum"])
         self.max_pixel_bar["value"] = max(0, min(vmax, int(max_pixel)))
+
+    def _on_bayer_selected(self, callback: Callable[[str | None], None]) -> None:
+        value = self._bayer_var.get()
+        if value == "None (Grayscale)":
+            callback(None)
+        else:
+            callback(value)

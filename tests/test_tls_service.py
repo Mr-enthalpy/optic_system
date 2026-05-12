@@ -15,8 +15,8 @@ class FakeBackendStatus:
     mono: str | None = None
     port_type: str | None = None
     serial_number: str | None = None
-    current_wavelength: float | None = None
-    target_wavelength: float | None = None
+    current_wavelength_nm: float | None = None
+    target_wavelength_nm: float | None = None
     grating: int | None = None
     moving: bool = False
     last_error: str | None = None
@@ -41,14 +41,14 @@ class FakeTLSC1:
         self.status.mono = Mono
         self.status.port_type = port_type
         self.status.serial_number = serial_number
-        self.status.current_wavelength = 405.0
-        self.status.target_wavelength = 405.0
+        self.status.current_wavelength_nm = 405.0
+        self.status.target_wavelength_nm = 405.0
         self.status.grating = 1
 
     def disconnect(self):
         self.status.connected = False
         self.status.device_id = None
-        self.status.current_wavelength = None
+        self.status.current_wavelength_nm = None
         self.status.moving = False
 
     def set_grating(self, grating):
@@ -57,11 +57,11 @@ class FakeTLSC1:
         self.status.grating = int(grating)
 
     def set_wavelength(self, wavelength):
-        self.status.target_wavelength = float(wavelength)
+        self.status.target_wavelength_nm = float(wavelength)
 
     def move(self, timeout=60.0):
         self.status.moving = True
-        self.status.current_wavelength = self.status.target_wavelength
+        self.status.current_wavelength_nm = self.status.target_wavelength_nm
         self.status.moving = False
 
     def wait_until_idle(self, timeout=60.0, poll_interval=0.2, tolerance_nm=0.5):

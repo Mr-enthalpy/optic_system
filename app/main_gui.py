@@ -15,6 +15,8 @@ from devices.camera_service import CameraServiceClient
 from devices.frame_stream import FrameStreamClient
 from devices.lcd_service import LCDService
 from devices.tls_service import TLSService, TLSServiceUnavailableError
+from diagnostics.logging_setup import GuiLogContext, close_gui_logging, setup_gui_logging, write_session_start
+from diagnostics.event_log_sink import EventLogSink
 from gui.main_window import MainWindow
 
 
@@ -131,20 +133,141 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="TLS port type (default: USB)",
     )
+    parser.add_argument(
+        "--log-dir",
+        default="outputs/gui_logs",
+        help="parent directory for GUI session logs",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="logging level for GUI session logs",
+    )
+    parser.add_argument(
+        "--run-id",
+        default="auto",
+        help="run identifier for log subdirectory (default: auto generates timestamp)",
+    )
+    parser.add_argument(
+        "--no-file-log",
+        action="store_true",
+        help="disable file logging (console logging still active)",
+    )
+    parser.add_argument(
+        "--log-preview-stats-interval-ms",
+        type=int,
+        default=1000,
+        help="minimum interval between PreviewStatsUpdated event log writes (ms)",
+    )
     return parser.parse_args(argv)
+
+
+def _log_device_metadata(controller: SessionController, log: GuiLogContext) -> None:
+    logger = log.logger
+    state = controller.state.get()
+
+    logger.info("--- Device metadata ---")
+
+    logger.info(
+        "Camera: serial=%s, dims=%dx%d, stride=%d, pixel_format=%s",
+        state.camera_serial, state.frame_width, state.frame_height,
+        state.frame_stride, state.pixel_format,
+    )
+    logger.info(
+        "Sidecar: running=%s, owned=%s, pid=%s",
+        state.sidecar_running, state.sidecar_owned, state.sidecar_pid,
+    )
+
+    if controller.lcd_service is not None:
+        try:
+            lcd_meta = controller.lcd_service.get_metadata()
+            logger.info(
+                "LCD: enabled, display_index=%s, reported_shape=%s, logical_shape=%s, "
+                "physical_shape=%s, subpixel_axis=%s, transmissive=%s, opaque=%s",
+                lcd_meta.get("display_index"),
+                lcd_meta.get("reported_shape"),
+                lcd_meta.get("logical_shape"),
+                lcd_meta.get("physical_shape"),
+                lcd_meta.get("subpixel_axis"),
+                lcd_meta.get("transmissive_code"),
+                lcd_meta.get("opaque_code"),
+            )
+        except Exception as exc:
+            logger.warning("LCD metadata unavailable: %s", exc)
+    else:
+        logger.info("LCD: disabled")
+
+    if controller.tls_service is not None:
+        try:
+            tls_status = controller.tls_service.get_status()
+            logger.info(
+                "TLS: enabled, connected=%s, device_id=%s, current_wl=%s nm, "
+                "target_wl=%s nm, grating=%s, moving=%s",
+                tls_status.connected, tls_status.device_id,
+                tls_status.current_wavelength_nm,
+                tls_status.target_wavelength_nm,
+                tls_status.grating, tls_status.moving,
+            )
+        except Exception as exc:
+            logger.warning("TLS metadata unavailable: %s", exc)
+    else:
+        logger.info("TLS: disabled")
+
+    logger.info("--- End device metadata ---")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    controller = build_controller(args)
+
+    log_context = setup_gui_logging(
+        log_dir=args.log_dir,
+        run_id=args.run_id,
+        log_level=args.log_level,
+        enable_file_log=not args.no_file_log,
+    )
+    logger = log_context.logger
+
+    effective_argv = sys.argv if argv is None else ["app/main_gui.py", *argv]
+    write_session_start(log_context, argv=effective_argv, args=args)
+
+    logger.info("Starting main_gui.py (run_id=%s)", log_context.run_id)
+    if log_context.human_log_path:
+        logger.info("Log directory: %s", log_context.log_root)
+        logger.info("Human log:     %s", log_context.human_log_path)
+        logger.info("Event log:     %s", log_context.event_log_path)
+
+    try:
+        logger.info("Building controller ...")
+        controller = build_controller(args)
+        logger.info("Controller built")
+    except SystemExit:
+        logger.exception("Controller build failed with SystemExit")
+        raise
+    except Exception:
+        logger.exception("Controller build failed")
+        raise
+
+    event_sink = EventLogSink(
+        log_context.event_log_path,
+        logger,
+        preview_stats_interval_ms=args.log_preview_stats_interval_ms,
+    )
+    controller.bus.subscribe(event_sink)
 
     start_error: Exception | None = None
     try:
+        logger.info("Starting controller ...")
         controller.start()
+        logger.info("Controller started")
     except Exception as exc:
+        logger.exception("Controller start failed")
         start_error = exc
 
+    _log_device_metadata(controller, log_context)
+
     if getattr(args, "enable_tls", False) and controller.tls_service is not None:
+        logger.info("Auto-connecting TLS ...")
         try:
             controller.dispatch(
                 ConnectTLS(
@@ -154,12 +277,28 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             controller.dispatch(SetTLSGrating(args.tls_safe_grating))
+            logger.info("TLS auto-connect commands dispatched, grating=%s", args.tls_safe_grating)
         except Exception as exc:
+            logger.warning("TLS auto-connect dispatch failed: %s", exc)
             controller.bus.publish(
                 StatusMessage("warning", f"TLS auto-connect failed: {exc}")
             )
 
-    window = MainWindow(controller)
+        state = controller.state.get()
+        logger.info(
+            "TLS state after auto-connect: connected=%s, device_id=%s, "
+            "current_wl=%s, target_wl=%s, grating=%s, moving=%s, last_error=%s",
+            state.tls_connected,
+            state.tls_device_id,
+            state.tls_current_wavelength_nm,
+            state.tls_target_wavelength_nm,
+            state.tls_grating,
+            state.tls_moving,
+            state.tls_last_error,
+        )
+
+    logger.info("Opening MainWindow ...")
+    window = MainWindow(controller, logger=logger)
     if start_error is not None:
         window.root.after(
             0,
@@ -167,9 +306,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     try:
+        logger.info("GUI main loop started")
         window.run()
     finally:
+        logger.info("Shutting down controller ...")
         controller.shutdown(force=True)
+        logger.info("Shutdown complete")
+        close_gui_logging(logger)
+
     return 0
 
 

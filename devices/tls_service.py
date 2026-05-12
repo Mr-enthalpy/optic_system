@@ -264,10 +264,10 @@ class TLSService:
                 self._read_attr(raw_status, "serial_number", self._last_status.serial_number)
             ),
             current_wavelength_nm=self._to_float(
-                self._read_attr(raw_status, "current_wavelength", self._last_status.current_wavelength_nm)
+                self._read_attr(raw_status, "current_wavelength_nm", self._last_status.current_wavelength_nm)
             ),
             target_wavelength_nm=self._to_float(
-                self._read_attr(raw_status, "target_wavelength", self._last_status.target_wavelength_nm)
+                self._read_attr(raw_status, "target_wavelength_nm", self._last_status.target_wavelength_nm)
             ),
             grating=self._to_int(self._read_attr(raw_status, "grating", self._last_status.grating)),
             moving=bool(self._read_attr(raw_status, "moving", self._last_status.moving)),

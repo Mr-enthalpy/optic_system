@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import logging
 import queue
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import Callable
 
 from control.events import (
@@ -46,13 +47,18 @@ class MainWindow:
     while routing user actions back through the controller.
     """
 
-    def __init__(self, controller, title: str = "Camera Preview"):
+    def __init__(self, controller, title: str = "Camera Preview", logger: logging.Logger | None = None):
         self.controller = controller
+        self.logger = logger or logging.getLogger("optic_system.gui")
         self.root = tk.Tk()
         self.root.title(title)
 
         self._event_queue: queue.Queue[Event] = queue.Queue()
+        self._latest_frame_event: PreviewFrameUpdated | None = None
+        self._poll_interval_ms: int = 16
         self.controller.bus.subscribe(self._enqueue_event)
+
+        self.root.report_callback_exception = self._report_callback_exception
 
         setting_specs = self._build_camera_setting_specs()
 
@@ -106,14 +112,17 @@ class MainWindow:
         right_frame = ttk.Frame(self.root)
         right_frame.pack(side="right", fill="both", expand=True, padx=8, pady=8)
 
-        self.preview_panel = PreviewPanel(right_frame)
+        self.preview_panel = PreviewPanel(
+            right_frame,
+            on_bayer_change=lambda pattern: self.controller.set_bayer_pattern(pattern),
+        )
         self.preview_panel.pack(fill="both", expand=True, pady=4)
 
         self.status_panel = StatusPanel(right_frame)
-        self.status_panel.pack(fill="x", pady=4)
+        self.status_panel.pack(fill="both", expand=True, pady=4)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
-        self.root.after(50, self._poll_event_queue)
+        self.root.after(self._poll_interval_ms, self._poll_event_queue)
         self.root.after(100, self._refresh_state)
 
     def _build_camera_setting_specs(self) -> list[CameraSettingSpec]:
@@ -130,7 +139,10 @@ class MainWindow:
         return specs
 
     def _enqueue_event(self, event: Event) -> None:
-        self._event_queue.put(event)
+        if isinstance(event, PreviewFrameUpdated):
+            self._latest_frame_event = event
+        else:
+            self._event_queue.put(event)
 
     def _poll_event_queue(self) -> None:
         while True:
@@ -138,10 +150,21 @@ class MainWindow:
                 event = self._event_queue.get_nowait()
             except queue.Empty:
                 break
-            self._handle_event(event)
+            try:
+                self._handle_event(event)
+            except Exception:
+                self.logger.exception("_handle_event crashed for %s", type(event).__name__)
+
+        frame = self._latest_frame_event
+        if frame is not None:
+            self._latest_frame_event = None
+            try:
+                self._handle_event(frame)
+            except Exception:
+                self.logger.exception("_handle_event crashed for PreviewFrameUpdated")
 
         if self.root.winfo_exists():
-            self.root.after(50, self._poll_event_queue)
+            self.root.after(self._poll_interval_ms, self._poll_event_queue)
 
     def _handle_event(self, event: Event) -> None:
         if isinstance(event, StatusMessage):
@@ -177,7 +200,6 @@ class MainWindow:
         if self.tls_panel is not None:
             self.tls_panel.update_from_state(state)
 
-        self.preview_panel.update_preview(state.latest_preview_bgr)
         self.preview_panel.update_stats(
             max_pixel=state.latest_max_pixel,
             frame_seq=state.latest_frame_seq,
@@ -195,12 +217,23 @@ class MainWindow:
         try:
             fn(self)
         except Exception as exc:
+            self.logger.exception("GUI callback failed")
+            messagebox.showerror("Camera Settings Error", str(exc))
             self.status_panel.show_message("error", str(exc))
+
+    def _report_callback_exception(self, exc_type, exc, tb):
+        self.logger.error(
+            "Unhandled Tk callback exception",
+            exc_info=(exc_type, exc, tb),
+        )
+        messagebox.showerror("Error", str(exc))
+        self.status_panel.show_message("error", str(exc))
 
     def _on_window_close(self) -> None:
         try:
             bind_shutdown(self, force=True)
-        except Exception:
+        except Exception as exc:
+            self.logger.exception("Error during window close shutdown")
             if self.root.winfo_exists():
                 self.root.destroy()
 
