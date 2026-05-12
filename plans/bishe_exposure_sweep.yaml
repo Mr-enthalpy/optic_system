@@ -1,0 +1,43 @@
+plan_id: bishe_exposure_sweep
+
+wavelengths:
+  - wavelength_nm: 450.0
+    grating: 1
+    settle_ms: 1000
+  - wavelength_nm: 550.0
+    grating: 1
+    settle_ms: 1000
+  - wavelength_nm: 650.0
+    grating: 1
+    settle_ms: 1000
+
+lcd:
+  mode: all_open
+  mask_path: null
+  settle_ms: 200
+
+camera_search:
+  exposure_us_start: 50000
+  exposure_us_min: 100
+  exposure_us_step_factor: 0.5
+  gain_db_start: 0.0
+  gain_db_min: 0.0
+  gain_db_max: 24.0
+  gain_db_step_db: 3.0
+  frames_per_setting: 5
+
+saturation:
+  percentile: 99.9
+  max_pixel_fraction_threshold: 0.85
+  saturated_fraction_threshold: 0.001
+
+signal:
+  percentile: 99.0
+  min_signal_fraction_threshold: 0.10
+  min_dynamic_range_fraction: 0.08
+
+lock_file: outputs/run_status/capture_hardware.lock
+
+output:
+  raw_h5: data/raw/bishe_exposure_sweep.h5
+  camera_params_json: outputs/exposure_calibration/camera_params.json
