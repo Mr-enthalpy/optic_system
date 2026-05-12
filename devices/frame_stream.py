@@ -53,6 +53,7 @@ class FrameStreamClient:
         self.topic = topic
         self.recv_timeout_ms = recv_timeout_ms
         self.bayer_pattern = self._normalize_bayer_pattern(bayer_pattern) if bayer_pattern else None
+        self._bayer_pattern_user: str | None = None
 
         self._ctx = zmq.Context.instance()
         self._sub: Optional[zmq.Socket] = None
@@ -69,6 +70,12 @@ class FrameStreamClient:
             supported = ", ".join(sorted(_BAYER_TO_CV_CODE))
             raise ValueError(f"Unsupported Bayer pattern {pattern!r}; expected one of {supported}")
         return normalized
+
+    def set_bayer_pattern(self, pattern: str | None) -> None:
+        if pattern is None:
+            self._bayer_pattern_user = "__NONE__"
+        else:
+            self._bayer_pattern_user = self._normalize_bayer_pattern(pattern)
 
     @staticmethod
     def _resolve_bayer_pattern(meta: dict, default_bayer_pattern: str | None) -> tuple[str | None, str | None]:
@@ -116,17 +123,24 @@ class FrameStreamClient:
         shm: shared_memory.SharedMemory,
         meta: dict,
         default_bayer_pattern: str | None,
+        user_bayer_pattern: str | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         idx = int(meta["index"])
         width = int(meta["width"])
         height = int(meta["height"])
         stride = int(meta["stride"])
         pix_fmt = str(meta["format"]).strip().lower()
-        bayer_pattern, bayer_warning = FrameStreamClient._resolve_bayer_pattern(meta, default_bayer_pattern)
-        if bayer_warning:
-            meta["preview_warning"] = bayer_warning
-        _default_bayer_code = _BAYER_TO_CV_CODE.get("GB")
-        bayer_code = _BAYER_TO_CV_CODE[bayer_pattern] if bayer_pattern else _default_bayer_code
+        if user_bayer_pattern is not None:
+            if user_bayer_pattern == "__NONE__":
+                bayer_code = None
+            else:
+                bayer_code = _BAYER_TO_CV_CODE.get(user_bayer_pattern)
+        else:
+            bayer_pattern, bayer_warning = FrameStreamClient._resolve_bayer_pattern(meta, default_bayer_pattern)
+            if bayer_warning:
+                meta["preview_warning"] = bayer_warning
+            _default_bayer_code = _BAYER_TO_CV_CODE.get("GB")
+            bayer_code = _BAYER_TO_CV_CODE[bayer_pattern] if bayer_pattern else _default_bayer_code
 
         start = idx * stride * height
         end = start + stride * height
@@ -145,14 +159,21 @@ class FrameStreamClient:
                 preview_bgr = raw
             elif pix_fmt == "raw8":
                 raw = np.ndarray((height, width), dtype=np.uint8, buffer=mv).copy()
-                preview_bgr = cv2.cvtColor(raw, bayer_code)
+                if bayer_code is not None:
+                    preview_bgr = cv2.cvtColor(raw, bayer_code)
+                else:
+                    preview_bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
             elif pix_fmt == "mono8":
                 raw = np.ndarray((height, width), dtype=np.uint8, buffer=mv).copy()
                 preview_bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
             elif pix_fmt == "raw16":
                 raw = np.ndarray((height, width), dtype=np.uint16, buffer=mv).copy()
-                preview16 = cv2.cvtColor(raw, bayer_code)
-                preview_bgr = np.clip(preview16 / 256, 0, 255).astype(np.uint8)
+                if bayer_code is not None:
+                    preview16 = cv2.cvtColor(raw, bayer_code)
+                    preview_bgr = np.clip(preview16 / 256, 0, 255).astype(np.uint8)
+                else:
+                    mono8 = np.clip(raw / 256, 0, 255).astype(np.uint8)
+                    preview_bgr = cv2.cvtColor(mono8, cv2.COLOR_GRAY2BGR)
             elif pix_fmt == "mono16":
                 raw = np.ndarray((height, width), dtype=np.uint16, buffer=mv).copy()
                 mono8 = np.clip(raw / 256, 0, 255).astype(np.uint8)
@@ -187,6 +208,7 @@ class FrameStreamClient:
                 self._shm,
                 meta,
                 self.bayer_pattern,
+                user_bayer_pattern=self._bayer_pattern_user,
             )
             packet = FramePacket(raw=raw, preview_bgr=preview_bgr, meta=meta)
             self._last_packet = packet

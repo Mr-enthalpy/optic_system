@@ -4,6 +4,9 @@ import tkinter as tk
 from tkinter import ttk
 
 
+_SCROLL_HEIGHT = 160
+
+
 class StatusPanel(ttk.LabelFrame):
     """Show session status and hardware-debug context."""
 
@@ -22,16 +25,41 @@ class StatusPanel(ttk.LabelFrame):
         self.error_var = tk.StringVar(value="Last error: --")
         self.message_var = tk.StringVar(value="Ready")
 
-        ttk.Label(self, textvariable=self.camera_var, anchor="w").pack(fill="x", pady=2)
-        ttk.Label(self, textvariable=self.stream_var, anchor="w").pack(fill="x", pady=2)
-        ttk.Label(self, textvariable=self.sidecar_var, anchor="w").pack(fill="x", pady=2)
-        ttk.Label(self, textvariable=self.camera_info_var, anchor="w").pack(fill="x", pady=2)
-        ttk.Label(self, textvariable=self.lcd_var, anchor="w").pack(fill="x", pady=2)
-        ttk.Label(self, textvariable=self.lcd_mode_var, anchor="w").pack(fill="x", pady=2)
-        ttk.Label(self, textvariable=self.lcd_codes_var, anchor="w").pack(fill="x", pady=2)
-        ttk.Label(self, textvariable=self.tls_var, anchor="w").pack(fill="x", pady=2)
-        ttk.Label(self, textvariable=self.tls_wave_var, anchor="w").pack(fill="x", pady=2)
-        ttk.Label(self, textvariable=self.error_var, anchor="w").pack(fill="x", pady=2)
+        canvas = tk.Canvas(self, height=_SCROLL_HEIGHT, borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+
+        inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+
+        canvas.create_window((0, 0), window=inner, anchor="nw", tags="inner")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig("inner", width=event.width)
+
+        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self._canvas = canvas
+        self._inner = inner
+
+        ttk.Label(inner, textvariable=self.camera_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(inner, textvariable=self.stream_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(inner, textvariable=self.sidecar_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(inner, textvariable=self.camera_info_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(inner, textvariable=self.lcd_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(inner, textvariable=self.lcd_mode_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(inner, textvariable=self.lcd_codes_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(inner, textvariable=self.tls_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(inner, textvariable=self.tls_wave_var, anchor="w").pack(fill="x", pady=2)
+        ttk.Label(inner, textvariable=self.error_var, anchor="w").pack(fill="x", pady=2)
 
         ttk.Separator(self, orient="horizontal").pack(fill="x", pady=6)
 

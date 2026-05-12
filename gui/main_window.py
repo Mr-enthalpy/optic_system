@@ -112,11 +112,14 @@ class MainWindow:
         right_frame = ttk.Frame(self.root)
         right_frame.pack(side="right", fill="both", expand=True, padx=8, pady=8)
 
-        self.preview_panel = PreviewPanel(right_frame)
+        self.preview_panel = PreviewPanel(
+            right_frame,
+            on_bayer_change=lambda pattern: self.controller.set_bayer_pattern(pattern),
+        )
         self.preview_panel.pack(fill="both", expand=True, pady=4)
 
         self.status_panel = StatusPanel(right_frame)
-        self.status_panel.pack(fill="x", pady=4)
+        self.status_panel.pack(fill="both", expand=True, pady=4)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
         self.root.after(self._poll_interval_ms, self._poll_event_queue)
