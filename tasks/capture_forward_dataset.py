@@ -242,6 +242,15 @@ class CameraCaptureAdapter:
     *camera_service* is an optional ``CameraServiceClient`` reference.
     When provided, the adapter can set / read camera properties
     (exposure, gain) and includes them in capture metadata.
+
+    Unit convention
+    --------------
+    * ``plan.camera.exposure_us`` is in **microseconds**.
+    * FlyCapture2 SHUTTER absolute property is in **milliseconds**.
+    * This adapter converts us <-> ms:
+      ``apply_camera_params`` divides exposure_us by 1000 to get SHUTTER ms;
+      ``read_camera_params`` multiplies SHUTTER ms by 1000 to get exposure_us.
+    * GAIN units are passed through directly.
     """
 
     def __init__(self, capture_helper, camera_service=None):
