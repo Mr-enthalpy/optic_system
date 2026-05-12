@@ -130,8 +130,13 @@ def infer_full_scale(frame: np.ndarray) -> int:
         return 65535
     elif frame.dtype == np.uint32:
         return 4294967295
+    elif np.issubdtype(frame.dtype, np.floating):
+        raise ValueError(
+            "Cannot infer full_scale from float image. "
+            "Use metadata.frame_dtype_full_scale or plan.camera.full_scale."
+        )
     else:
-        return int(np.iinfo(np.int32).max)
+        raise ValueError(f"Unknown dtype for full_scale inference: {frame.dtype}")
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +259,11 @@ def run_exposure_sweep(
 
             camera_service.start_stream()
             first_frame = camera_adapter.acquire_burst(1)
-            full_scale = float(infer_full_scale(first_frame.frames_avg))
+            full_scale = float(
+                first_frame.metadata.get("frame_dtype_full_scale")
+                or plan.get("camera", {}).get("full_scale")
+                or infer_full_scale(first_frame.frames_avg)
+            )
         else:
             camera_adapter = _make_fake_adapter()
             full_scale = 255.0

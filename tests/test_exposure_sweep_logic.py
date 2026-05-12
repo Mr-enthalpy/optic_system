@@ -126,7 +126,8 @@ class TestFullScaleInference:
         assert infer_full_scale(np.zeros((10, 10), dtype=np.uint16)) == 65535
 
     def test_float64(self):
-        assert infer_full_scale(np.zeros((10, 10), dtype=np.float64)) > 0
+        with pytest.raises(ValueError, match="float"):
+            infer_full_scale(np.zeros((10, 10), dtype=np.float64))
 
 
 class TestSweepDecisionLogic:

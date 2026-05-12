@@ -16,7 +16,13 @@ lcd:
   mask_path: null
   settle_ms: 200
 
+camera:
+  full_scale: 255  # optional override; normally auto-detected from raw dtype
+
 camera_search:
+  # exposure_us_start must be set to the MAXIMUM exposure you are willing to try
+  # (the search upper bound).  The sweep starts at this ceiling and descends
+  # by step_factor until reaching exposure_us_min or finding a safe exposure.
   exposure_us_start: 50000
   exposure_us_min: 100
   exposure_us_step_factor: 0.5

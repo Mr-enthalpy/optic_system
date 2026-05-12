@@ -118,6 +118,13 @@ class CaptureDeviceBundle(_Protocol):
 # ---------------------------------------------------------------------------
 
 
+_DTYPE_FULL_SCALE = {
+    np.dtype("uint8"): 255,
+    np.dtype("uint16"): 65535,
+    np.dtype("uint32"): 4294967295,
+}
+
+
 class FakeCamera:
     def __init__(self, *, seed: int = 42, height: int = 480, width: int = 640,
                  exposure_us: float | None = None, gain_db: float | None = None):
@@ -151,6 +158,8 @@ class FakeCamera:
                 "frame_shape": [self._h, self._w],
                 "acquisition": "burst",
                 "n": k,
+                "raw_dtype": "float64",
+                "frame_dtype_full_scale": 255,
             },
         )
 
@@ -279,8 +288,13 @@ class CameraCaptureAdapter:
 
     def acquire_burst(self, k: int) -> CaptureFrames:
         frames: list[np.ndarray] = []
+        raw_dtype: str | None = None
+        frame_dtype_full_scale: int | None = None
         for _ in range(k):
             raw, _rgb = self._helper.capture_one()
+            if raw_dtype is None:
+                raw_dtype = str(raw.dtype)
+                frame_dtype_full_scale = _DTYPE_FULL_SCALE.get(raw.dtype)
             frames.append(raw.astype(np.float64, copy=False))
         burst = np.stack(frames, axis=0)
         avg = burst.mean(axis=0, dtype=np.float64)
@@ -294,6 +308,8 @@ class CameraCaptureAdapter:
                 "timestamp_ns": time.monotonic_ns(),
                 "exposure_us": cam_params.get("exposure_us"),
                 "gain_db": cam_params.get("gain_db"),
+                "raw_dtype": raw_dtype,
+                "frame_dtype_full_scale": frame_dtype_full_scale,
             },
         )
 

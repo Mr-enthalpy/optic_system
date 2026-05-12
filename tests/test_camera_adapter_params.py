@@ -24,7 +24,7 @@ class FakeCaptureHelper:
         self._w = width
 
     def capture_one(self):
-        raw = np.ones((self._h, self._w), dtype=np.float64) * 128
+        raw = (np.ones((self._h, self._w), dtype=np.float64) * 128).astype(np.uint8)
         rgb = np.zeros((self._h, self._w, 3), dtype=np.uint8)
         return raw, rgb
 
@@ -180,3 +180,23 @@ class TestCameraCaptureAdapterReadbackWithAbsValue:
         params = adapter.read_camera_params()
         assert params["exposure_us"] == 5000.0
         assert params["gain_db"] == 3.0
+
+
+class TestCaptureMetadataRawDtype:
+    def test_adapter_metadata_includes_raw_dtype_and_full_scale(self):
+        mock_svc = MagicMock()
+        mock_svc.get_value.side_effect = lambda name: (
+            5.0 if name == "SHUTTER" else 3.0
+        )
+        helper = FakeCaptureHelper()
+        adapter = CameraCaptureAdapter(helper, camera_service=mock_svc)
+
+        capture = adapter.acquire_burst(2)
+        assert capture.metadata["raw_dtype"] == "uint8"
+        assert capture.metadata["frame_dtype_full_scale"] == 255
+
+    def test_fake_camera_metadata_has_full_scale(self):
+        cam = FakeCamera(height=240, width=320)
+        capture = cam.acquire_burst(1)
+        assert capture.metadata["raw_dtype"] == "float64"
+        assert capture.metadata["frame_dtype_full_scale"] == 255
