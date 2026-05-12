@@ -20,17 +20,17 @@ Start the capture task with a status directory:
 
 ```bash
 python scripts/capture_forward_dataset.py \
-  --plan plans/bishe_psf_repeatability.yaml \
-  --output data/raw/repeatability_raw.h5 \
+  --plan path/to/capture_plan.yaml \
+  --output data/raw/example_raw.h5 \
   --hardware \
-  --status-dir outputs/run_status/repeatability_001
+  --status-dir outputs/run_status/example_run
 ```
 
 Start the monitor with the same status directory:
 
 ```bash
 python app/monitor_gui.py \
-  --status-dir outputs/run_status/repeatability_001 \
+  --status-dir outputs/run_status/example_run \
   --frame-timeout-ms 500 \
   --log-dir outputs/gui_logs
 ```
@@ -39,7 +39,7 @@ The monitor can also run without camera preview:
 
 ```bash
 python app/monitor_gui.py \
-  --status-dir outputs/run_status/repeatability_001 \
+  --status-dir outputs/run_status/example_run \
   --no-camera
 ```
 
@@ -47,8 +47,12 @@ If `--status-dir` is omitted, `--run-id` resolves to
 `outputs/run_status/<run-id>`:
 
 ```bash
-python app/monitor_gui.py --run-id repeatability_001 --no-camera
+python app/monitor_gui.py --run-id example_run --no-camera
 ```
+
+In normal use, pass either `--status-dir` or `--run-id` explicitly. If both
+are omitted, the monitor falls back to `outputs/run_status/unknown`; it does
+not auto-discover the most recent capture task.
 
 ## What it displays
 
