@@ -540,9 +540,9 @@ When `tls_c1` is not installed, `--enable-tls` exits with a clear error
 describing the missing dependency.  Omitting `--enable-tls` starts the
 GUI without any TLS requirement.
 
-`app/monitor_gui.py` is a read-only experiment monitor. It does not own the
-hardware lifecycle and is safe to open or close while a capture task keeps
-running.
+`scripts/monitor_run_status.py` is the file-only run-status monitor. It reads
+only task-published status files and previews, does not open camera/LCD/TLS
+hardware, and is safe to open or close while a capture task keeps running.
 
 Example monitor usage:
 
@@ -550,10 +550,23 @@ Example monitor usage:
 python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --hardware \
   --status-dir outputs/run_status/repeatability_001
 
-python app/monitor_gui.py --status-dir outputs/run_status/repeatability_001
+python scripts/monitor_run_status.py --status-dir outputs/run_status/repeatability_001
 ```
 
-See `docs/monitor_gui.md` for monitor behavior and troubleshooting.
+Use `--no-gui` for terminal-only polling. See
+`docs/readonly_monitor_gui.md` for behavior, limitations, and the safety
+boundary.
+
+Current limitation: the GUI view displays `.png` previews. If preview publishing
+falls back to `.npy` because image-writing dependencies are unavailable,
+terminal mode can still read the array through `RunStatusReader`, but the GUI
+may show that preview as unavailable.
+
+The monitor infrastructure only displays diagnostics that a task publishes.
+Future task integrations, including Phase 3.1 diagnostics work, should call
+`write_frame_preview(...)`, `write_frame_stats(...)`, and `append_log(...)`
+where appropriate. Until then, older tasks may show only `state.json` and the
+current mask preview.
 
 ## Current status
 

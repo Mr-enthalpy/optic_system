@@ -350,6 +350,30 @@ New minimal capture tasks should be implemented cleanly and separately.
 
 Do not silently revive legacy task logic.
 
+## Run-status diagnostics rules
+
+`RunStatusPublisher` / `RunStatusReader` provide a file-only diagnostics
+boundary for read-only monitoring.  They are infrastructure; task code must
+explicitly publish diagnostics if the monitor should display them.
+
+Task integrations that want richer monitor output should call, as applicable:
+
+```text
+status.write_frame_preview(...)
+status.write_frame_stats(...)
+status.append_log(...)
+```
+
+If a task only writes `state.json` and `current_mask_preview`, the monitor must
+continue to work and show only those available fields.  Missing frame previews,
+frame stats, or logs are not monitor failures.
+
+Current GUI limitation: the read-only monitor GUI displays `.png` previews.  If
+the publisher falls back to `.npy` because image-writing dependencies such as
+`cv2` are unavailable, terminal mode and `RunStatusReader` can still read the
+array, but the GUI may show the preview as unavailable.  Treat GUI `.npy`
+rendering as a future enhancement, not a hardware or architecture blocker.
+
 ## Capture data rules
 
 Raw capture data must be preserved before conversion.
