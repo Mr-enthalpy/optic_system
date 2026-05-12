@@ -199,6 +199,9 @@ class SessionController:
             )
         return snapshots
 
+    def set_bayer_pattern(self, pattern: str | None) -> None:
+        self.preview_worker.stream.set_bayer_pattern(pattern)
+
     def _connect_tls(self, command: ConnectTLS) -> None:
         service = self._require_tls_service()
         status = service.connect(

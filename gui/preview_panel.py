@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Optional
+from typing import Callable, Optional
 
 import cv2
 import numpy as np
@@ -20,7 +20,7 @@ class PreviewPanel(ttk.LabelFrame):
     Live preview + lightweight frame diagnostics.
     """
 
-    def __init__(self, master, max_pixel_max: int = 65535):
+    def __init__(self, master, max_pixel_max: int = 65535, on_bayer_change: Callable[[str | None], None] | None = None):
         super().__init__(master, text="Live Preview", padding=8)
 
         self._photo = None
@@ -48,6 +48,21 @@ class PreviewPanel(ttk.LabelFrame):
 
         ttk.Label(self, textvariable=self.display_info_var, anchor="w").pack(fill="x")
         ttk.Label(self, textvariable=self.frame_info_var, anchor="w").pack(fill="x")
+
+        bayer_row = ttk.Frame(self)
+        bayer_row.pack(fill="x", pady=2)
+        ttk.Label(bayer_row, text="Bayer:").pack(side="left")
+        self._bayer_var = tk.StringVar(value="GB")
+        bayer_combo = ttk.Combobox(
+            bayer_row,
+            textvariable=self._bayer_var,
+            values=["GB", "BG", "RG", "GR", "None (Grayscale)"],
+            state="readonly",
+            width=16,
+        )
+        bayer_combo.pack(side="left", padx=4)
+        if on_bayer_change is not None:
+            bayer_combo.bind("<<ComboboxSelected>>", lambda e: self._on_bayer_selected(on_bayer_change))
 
     def update_preview(self, preview_bgr: Optional[np.ndarray]) -> None:
         if preview_bgr is None:
@@ -111,3 +126,10 @@ class PreviewPanel(ttk.LabelFrame):
         self.max_pixel_var.set(f"{max_pixel:.0f}")
         vmax = int(self.max_pixel_bar["maximum"])
         self.max_pixel_bar["value"] = max(0, min(vmax, int(max_pixel)))
+
+    def _on_bayer_selected(self, callback: Callable[[str | None], None]) -> None:
+        value = self._bayer_var.get()
+        if value == "None (Grayscale)":
+            callback(None)
+        else:
+            callback(value)
