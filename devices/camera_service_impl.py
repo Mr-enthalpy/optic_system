@@ -282,7 +282,9 @@ def _set_property_abs(cam: MyCamLite, name: str, value: float, *, auto: bool = F
         raise UnsupportedOperationError(
             f"Property {name} does not support absolute values. Use property-specific integer controls."
         )
-    updated = cam.set_property_abs(name, float(value), auto=bool(auto))
+    on_supported = bool(info.get("on_off_supported"))
+    on_param = None if not on_supported else True
+    updated = cam.set_property_abs(name, float(value), auto=bool(auto), on=on_param)
     return {"ok": True, "property": property_value_to_dict(updated)}
 
 
