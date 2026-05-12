@@ -465,7 +465,6 @@ class MyCamLite:
     def get_property_value(self, name: str) -> Any:
         return self.cam.get_property(name)
 
-<<<<<<< HEAD
     def get_property_display_value(self, name: str) -> float | int:
         if hasattr(self.cam, "get_property_display_value"):
             return self.cam.get_property_display_value(name)
@@ -493,12 +492,8 @@ class MyCamLite:
             return float(info.get("abs_min", 0.0)), float(info.get("abs_max", 0.0))
         return int(info.get("min", 0)), int(info.get("max", 0))
 
-    def set_property_abs(self, name: str, value: float, *, auto: bool = False) -> Any:
-        return self.cam.set_property_abs(name, float(value), auto=bool(auto))
-=======
-    def set_property_abs(self, name: str, value: float, *, auto: bool = False, on: bool | None = True) -> Any:
+    def set_property_abs(self, name: str, value: float, *, auto: bool = False, on: bool | None = None) -> Any:
         return self.cam.set_property_abs(name, float(value), auto=bool(auto), on=on)
->>>>>>> 0cc5814 (Fix: wire camera property control (SHUTTER/GAIN) through capture adapter)
 
     def set_property_integer(
         self,
