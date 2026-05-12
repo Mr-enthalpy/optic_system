@@ -449,8 +449,8 @@ class FakeCamera:
     def set_roi(self, **kwargs):
         self.calls.append(("set_roi", kwargs))
 
-    def set_property_abs(self, name, value, auto=False):
-        self.calls.append(("set_property_abs", name, value, auto))
+    def set_property_abs(self, name, value, auto=False, on=None):
+        self.calls.append(("set_property_abs", name, value, auto, on))
         return SimpleNamespace(
             property_type=PropertyName.SHUTTER,
             present=True,
@@ -532,7 +532,7 @@ def test_open_camera_with_fake_backend_applies_scriptable_configuration(monkeypa
         assert ("set_grab_timeout", 1000) in FakeCamera.calls
         assert ("set_pixel_format", "RAW8", 0) in FakeCamera.calls
         assert any(call[0] == "set_roi" for call in FakeCamera.calls)
-        assert ("set_property_abs", "SHUTTER", 5.0, False) in FakeCamera.calls
+        assert ("set_property_abs", "SHUTTER", 5.0, False, None) in FakeCamera.calls
         assert ("start",) in FakeCamera.calls
         assert ("read_frame_with_info",) in FakeCamera.calls
     finally:
