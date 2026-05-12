@@ -489,6 +489,7 @@ def _build_result(
         "schema_version": "1.0",
         "plan_id": plan["plan_id"],
         "source_raw_capture_h5": plan["output"]["raw_h5"],
+        "frame_dtype_full_scale": int(full_scale),
         "global_safe_camera": global_safe,
         "wavelengths_nm": [float(w["wavelength_nm"]) for w in wls],
         "saturation_policy": {
