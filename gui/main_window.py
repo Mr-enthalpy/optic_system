@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import queue
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import Callable
 
 from control.events import (
@@ -215,6 +215,7 @@ class MainWindow:
             fn(self)
         except Exception as exc:
             self.logger.exception("GUI callback failed")
+            messagebox.showerror("Camera Settings Error", str(exc))
             self.status_panel.show_message("error", str(exc))
 
     def _report_callback_exception(self, exc_type, exc, tb):
@@ -222,6 +223,7 @@ class MainWindow:
             "Unhandled Tk callback exception",
             exc_info=(exc_type, exc, tb),
         )
+        messagebox.showerror("Error", str(exc))
         self.status_panel.show_message("error", str(exc))
 
     def _on_window_close(self) -> None:
