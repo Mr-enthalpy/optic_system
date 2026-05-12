@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import queue
+import traceback
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable
@@ -46,13 +48,16 @@ class MainWindow:
     while routing user actions back through the controller.
     """
 
-    def __init__(self, controller, title: str = "Camera Preview"):
+    def __init__(self, controller, title: str = "Camera Preview", logger: logging.Logger | None = None):
         self.controller = controller
+        self.logger = logger or logging.getLogger("optic_system.gui")
         self.root = tk.Tk()
         self.root.title(title)
 
         self._event_queue: queue.Queue[Event] = queue.Queue()
         self.controller.bus.subscribe(self._enqueue_event)
+
+        self.root.report_callback_exception = self._report_callback_exception
 
         setting_specs = self._build_camera_setting_specs()
 
@@ -195,12 +200,21 @@ class MainWindow:
         try:
             fn(self)
         except Exception as exc:
+            self.logger.exception("GUI callback failed")
             self.status_panel.show_message("error", str(exc))
+
+    def _report_callback_exception(self, exc_type, exc, tb):
+        self.logger.error(
+            "Unhandled Tk callback exception",
+            exc_info=(exc_type, exc, tb),
+        )
+        self.status_panel.show_message("error", str(exc))
 
     def _on_window_close(self) -> None:
         try:
             bind_shutdown(self, force=True)
-        except Exception:
+        except Exception as exc:
+            self.logger.exception("Error during window close shutdown")
             if self.root.winfo_exists():
                 self.root.destroy()
 
