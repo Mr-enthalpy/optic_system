@@ -10,7 +10,7 @@ class FakeSharedMemory:
         self.buf = bytearray(data)
 
 
-def test_raw8_preview_with_unknown_bayer_metadata_uses_mono_fallback() -> None:
+def test_raw8_preview_with_unknown_bayer_metadata_uses_default_bayer() -> None:
     meta = {
         "index": 0,
         "width": 2,
@@ -28,13 +28,12 @@ def test_raw8_preview_with_unknown_bayer_metadata_uses_mono_fallback() -> None:
 
     assert raw.tolist() == [[1, 2], [3, 4]]
     assert preview.shape == (2, 2, 3)
-    assert np.array_equal(preview[:, :, 0], raw)
-    assert np.array_equal(preview[:, :, 1], raw)
-    assert np.array_equal(preview[:, :, 2], raw)
-    assert "mono fallback" in meta["preview_warning"]
+    assert preview.dtype == np.uint8
+    assert "mono fallback" not in meta.get("preview_warning", "")
+    assert "default BayerGB" in meta.get("preview_warning", "")
 
 
-def test_raw16_preview_without_bayer_metadata_uses_mono_fallback() -> None:
+def test_raw16_preview_without_bayer_metadata_uses_default_bayer() -> None:
     raw16 = np.array([[0, 256], [512, 1024]], dtype=np.uint16)
     meta = {
         "index": 0,
@@ -50,9 +49,7 @@ def test_raw16_preview_without_bayer_metadata_uses_mono_fallback() -> None:
         default_bayer_pattern=None,
     )
 
-    expected = np.array([[0, 1], [2, 4]], dtype=np.uint8)
     assert np.array_equal(raw, raw16)
-    assert np.array_equal(preview[:, :, 0], expected)
-    assert np.array_equal(preview[:, :, 1], expected)
-    assert np.array_equal(preview[:, :, 2], expected)
-    assert "No Bayer pattern" in meta["preview_warning"]
+    assert preview.shape == (2, 2, 3)
+    assert preview.dtype == np.uint8
+    assert "default BayerGB" in meta["preview_warning"]

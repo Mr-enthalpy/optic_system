@@ -85,6 +85,7 @@ class PreviewPanel(ttk.LabelFrame):
         stride: int,
         pixel_format: str | None,
     ) -> None:
+        self._update_bar_max(pixel_format)
         self.update_max_pixel(max_pixel)
 
         dims = f"{width} x {height}" if width and height else "--"
@@ -96,6 +97,15 @@ class PreviewPanel(ttk.LabelFrame):
         self.frame_info_var.set(
             f"Frame: {dims} | stride {stride_text} | {pix_fmt_text} | seq {seq_text} | ts {ts_text}"
         )
+
+    def _update_bar_max(self, pixel_format: str | None) -> None:
+        fmt = (pixel_format or "").strip().lower()
+        if fmt in ("raw16", "mono16"):
+            new_max = 65535
+        else:
+            new_max = 255
+        if int(self.max_pixel_bar["maximum"]) != new_max:
+            self.max_pixel_bar.configure(maximum=new_max)
 
     def update_max_pixel(self, max_pixel: float) -> None:
         self.max_pixel_var.set(f"{max_pixel:.0f}")

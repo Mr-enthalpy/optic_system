@@ -14,11 +14,36 @@ from control.commands import (
     ShowLCDDebugPattern,
     Shutdown,
 )
+from control.events import StatusMessage
 
 
 def bind_apply_settings(window) -> None:
+    suspicious = window.camera_panel.get_suspicious_names()
+    if suspicious:
+        for name in suspicious:
+            spec = window.camera_panel._setting_widgets[name]
+            min_val, max_val = spec[2], spec[3]
+            entry_text = spec[0].get().strip()
+            try:
+                current_val = float(entry_text)
+            except ValueError:
+                current_val = float("nan")
+            msg = (
+                f"Camera setting {name} has out-of-range readback "
+                f"{current_val:.2f} not in [{min_val:.2f}, {max_val:.2f}]; excluded from apply."
+            )
+            window.logger.warning(msg)
+            window.controller.bus.publish(StatusMessage("warning", msg))
+
     settings = window.camera_panel.collect_settings()
-    window.controller.dispatch(ApplyCameraSettings(settings=settings))
+    if not settings:
+        window.controller.bus.publish(StatusMessage("info", "No valid camera settings to apply"))
+        return
+    try:
+        window.controller.dispatch(ApplyCameraSettings(settings=settings))
+    except Exception as exc:
+        window.logger.exception("ApplyCameraSettings failed; forcing refresh")
+        window.controller.dispatch(RefreshCameraSettings())
 
 
 def bind_refresh_settings(window) -> None:

@@ -691,6 +691,7 @@ def stream_loop(state: CameraServiceState, pub: zmq.Socket) -> None:
                     embedded_metadata=getattr(frame, "metadata", None),
                     dropped_frames=state.dropped_frames,
                 )
+                meta.setdefault("bayer_pattern", "GB")
                 state.widx = (state.widx + 1) % RING
                 state.seq += 1
                 state.last_frame_ts_ns = int(meta["ts_ns"])

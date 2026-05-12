@@ -74,11 +74,11 @@ class FrameStreamClient:
     def _resolve_bayer_pattern(meta: dict, default_bayer_pattern: str | None) -> tuple[str | None, str | None]:
         candidate = meta.get("bayer_pattern", default_bayer_pattern)
         if candidate is None or str(candidate).strip() == "":
-            return None, "No Bayer pattern provided; raw preview uses mono fallback."
+            return None, "No Bayer pattern provided; raw preview uses default BayerGB."
         try:
             return FrameStreamClient._normalize_bayer_pattern(str(candidate)), None
         except ValueError:
-            return None, f"Unsupported Bayer pattern {candidate!r}; raw preview uses mono fallback."
+            return None, f"Unsupported Bayer pattern {candidate!r}; raw preview uses default BayerGB."
 
     def _ensure_sub(self) -> None:
         current_thread_id = get_ident()
@@ -125,7 +125,8 @@ class FrameStreamClient:
         bayer_pattern, bayer_warning = FrameStreamClient._resolve_bayer_pattern(meta, default_bayer_pattern)
         if bayer_warning:
             meta["preview_warning"] = bayer_warning
-        bayer_code = _BAYER_TO_CV_CODE[bayer_pattern] if bayer_pattern else None
+        _default_bayer_code = _BAYER_TO_CV_CODE.get("GB")
+        bayer_code = _BAYER_TO_CV_CODE[bayer_pattern] if bayer_pattern else _default_bayer_code
 
         start = idx * stride * height
         end = start + stride * height
@@ -144,18 +145,14 @@ class FrameStreamClient:
                 preview_bgr = raw
             elif pix_fmt == "raw8":
                 raw = np.ndarray((height, width), dtype=np.uint8, buffer=mv).copy()
-                preview_bgr = cv2.cvtColor(raw, bayer_code) if bayer_code is not None else cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
+                preview_bgr = cv2.cvtColor(raw, bayer_code)
             elif pix_fmt == "mono8":
                 raw = np.ndarray((height, width), dtype=np.uint8, buffer=mv).copy()
                 preview_bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
             elif pix_fmt == "raw16":
                 raw = np.ndarray((height, width), dtype=np.uint16, buffer=mv).copy()
-                if bayer_code is not None:
-                    preview16 = cv2.cvtColor(raw, bayer_code)
-                    preview_bgr = np.clip(preview16 / 256, 0, 255).astype(np.uint8)
-                else:
-                    mono8 = np.clip(raw / 256, 0, 255).astype(np.uint8)
-                    preview_bgr = cv2.cvtColor(mono8, cv2.COLOR_GRAY2BGR)
+                preview16 = cv2.cvtColor(raw, bayer_code)
+                preview_bgr = np.clip(preview16 / 256, 0, 255).astype(np.uint8)
             elif pix_fmt == "mono16":
                 raw = np.ndarray((height, width), dtype=np.uint16, buffer=mv).copy()
                 mono8 = np.clip(raw / 256, 0, 255).astype(np.uint8)
