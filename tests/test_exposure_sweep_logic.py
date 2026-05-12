@@ -287,6 +287,7 @@ class TestCameraParamsJSON:
         )
 
         assert result["schema_version"] == "1.0"
+        assert result["frame_dtype_full_scale"] == 255
         assert result["global_safe_camera"]["exposure_us"] == 3125.0
         assert result["global_safe_camera"]["gain_db"] == 0.0
         assert result["global_safe_camera"]["gain_elevated"] is False
