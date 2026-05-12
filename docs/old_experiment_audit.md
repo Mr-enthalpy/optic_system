@@ -5,15 +5,29 @@
 The old project under `old/` is legacy. It is **not** an active capture path.
 None of its code may be imported, called, or revived in active code paths.
 
-All hardware access must go through the current stack:
+All active hardware access must go through current device/service boundaries.
+
+GUI / interactive control path:
 
 ```text
-GUI / CLI / task
+GUI / CLI
   -> control command
   -> SessionController
-  -> devices / capture
+  -> devices
   -> hardware or stream
 ```
+
+Batch capture task path (Phase 2/3):
+
+```text
+capture plan
+  -> capture_forward_dataset.py
+  -> CaptureDeviceBundle
+  -> devices / capture adapters
+  -> hardware or stream
+```
+
+Old direct hardware wrappers under `old/` remain forbidden.
 
 ## Known old-project findings
 

@@ -90,10 +90,12 @@ Explicit success criterion: Observe clear, reproducible structure in dOTF.
 ### M5 — Simple forward model
 **Status: planned**
 
-- For a held-out mask, convolve mask with measured PSF to produce predicted
-  camera frame.
-- Compare predicted frame against measured frame (qualitative + simple
-  metrics).
+- For a held-out mask, use its measured PSF (from the dictionary) to render
+  a target/object frame via convolution.
+- Compare the rendered frame against the measured camera frame (qualitative +
+  simple metrics).
+- Also validate mask-to-PSF prediction consistency across the dictionary
+  (held-out mask PSF vs. interpolated/predicted PSF).
 - Output: `outputs/linear_recon/forward_model_validation.json`
 
 ### M6 — Three-wavelength multiframe linear reconstruction
