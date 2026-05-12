@@ -50,6 +50,17 @@ from .events import (
 from .state import CameraSettingSnapshot, StateStore
 
 
+GUI_EDITABLE_CAMERA_SETTINGS = frozenset({
+    "EXPOSURE",
+    "GAIN",
+    "SHUTTER",
+})
+
+
+def is_gui_editable_camera_setting(name: str) -> bool:
+    return str(name).strip().upper() in GUI_EDITABLE_CAMERA_SETTINGS
+
+
 class SessionController:
     """
     Controller layer for the hardware-backed camera preview and minimal LCD control.
@@ -185,6 +196,8 @@ class SessionController:
         state = self.state.get()
         snapshots: list[CameraSettingSnapshot] = []
         for name in sorted(state.camera_settings):
+            if not is_gui_editable_camera_setting(name):
+                continue
             if name not in state.camera_setting_ranges:
                 continue
             value = state.camera_settings[name]
@@ -401,6 +414,12 @@ class SessionController:
             return
 
         requested = {name: float(value) for name, value in settings.items()}
+        disallowed = sorted(name for name in requested if not is_gui_editable_camera_setting(name))
+        if disallowed:
+            raise RuntimeError(
+                "Camera setting edits are restricted to exposure/shutter and gain; "
+                f"read-only setting(s): {', '.join(disallowed)}"
+            )
         applied: dict[str, float] = {}
         for name, value in requested.items():
             self.camera_service.set_value(name, value)

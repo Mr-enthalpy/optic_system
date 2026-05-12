@@ -15,6 +15,7 @@ from devices import camera_service_impl as impl
 
 class PropertyName(Enum):
     SHUTTER = 12
+    FRAME_RATE = 15
 
 
 def _fake_property_snapshot():
@@ -65,6 +66,9 @@ def test_property_snapshot_conversion_is_json_safe() -> None:
     assert payload["present"] is True
     assert payload["abs_val_supported"] is True
     assert payload["abs_value"] == 5.0
+    assert payload["display_value"] == 5.0
+    assert payload["display_range"] == [0.01, 1000.0]
+    assert payload["readback_policy"] == "abs_value"
     assert payload["auto"] is False
     json.dumps(payload)
 
@@ -137,6 +141,63 @@ def test_start_stop_stream_are_idempotent() -> None:
     assert first_stop["ok"] is True
     assert second_stop["ok"] is True
     assert state.running is False
+
+
+def test_frame_rate_get_value_uses_absolute_readback_when_abs_control_is_false() -> None:
+    class Backend:
+        def get_property_info(self, name: str):
+            assert name == "FRAME_RATE"
+            return SimpleNamespace(
+                property_type=PropertyName.FRAME_RATE,
+                present=True,
+                read_out_supported=True,
+                manual_supported=True,
+                auto_supported=True,
+                on_off_supported=False,
+                one_push_supported=False,
+                abs_val_supported=True,
+                writable=True,
+                min_value=480,
+                max_value=4095,
+                abs_min=1.0,
+                abs_max=75.47169494628906,
+                units="Frames Per Second",
+                unit_abbr="fps",
+            )
+
+        def get_property_value(self, name: str):
+            assert name == "FRAME_RATE"
+            return SimpleNamespace(
+                property_type=PropertyName.FRAME_RATE,
+                present=True,
+                abs_control=False,
+                one_push=False,
+                on_off=True,
+                auto_manual_mode=False,
+                value_a=1811,
+                value_b=0,
+                abs_value=20.004396438598633,
+            )
+
+    state = impl.CameraServiceState()
+    state.cam = Backend()
+
+    value_reply = impl.handle_request(state, {"op": "GetValue", "name": "FRAME_RATE"})
+    range_reply = impl.handle_request(state, {"op": "GetRange", "name": "FRAME_RATE"})
+
+    assert value_reply["ok"] is True
+    assert value_reply["value"] == pytest.approx(20.004396438598633)
+    assert value_reply["display_value"] == pytest.approx(20.004396438598633)
+    assert value_reply["property"]["value_a"] == 1811
+    assert value_reply["property"]["abs_control"] is False
+    assert value_reply["readback_policy"] == "abs_value"
+    assert value_reply["units"] == "Frames Per Second"
+
+    assert range_reply["ok"] is True
+    assert range_reply["range"] == pytest.approx([1.0, 75.47169494628906])
+    assert range_reply["display_range"] == pytest.approx([1.0, 75.47169494628906])
+    assert range_reply["integer_range"] == [480, 4095]
+    assert range_reply["readback_policy"] == "abs_value"
 
 
 def test_import_failure_open_camera_error_is_readable(monkeypatch) -> None:

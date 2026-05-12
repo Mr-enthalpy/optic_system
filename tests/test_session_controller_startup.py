@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from control.session_controller import SessionController
+from control.session_controller import SessionController, is_gui_editable_camera_setting
 
 
 class FakeCameraService:
@@ -112,3 +112,41 @@ def test_main_gui_build_controller_constructs_headless_startup_path() -> None:
 
     assert controller.preconfigure is False
     assert controller.camera_service.auto_ensure is False
+
+
+def test_gui_camera_settings_are_allowlist_based() -> None:
+    controller = SessionController(
+        camera_service=FakeCameraService(),
+        preview_worker=FakePreviewWorker(),
+    )
+    controller.state.update(
+        camera_settings={
+            "SHUTTER": 5.0,
+            "GAIN": 1.5,
+            "FRAME_RATE": 20.0044,
+            "TRIGGER_MODE": 0.0,
+        },
+        camera_setting_ranges={
+            "SHUTTER": (0.01, 1000.0),
+            "GAIN": (0.0, 24.0),
+            "FRAME_RATE": (1.0, 75.47),
+            "TRIGGER_MODE": (0.0, 1.0),
+        },
+    )
+
+    specs = controller.list_camera_settings()
+
+    assert [spec.name for spec in specs] == ["GAIN", "SHUTTER"]
+    assert is_gui_editable_camera_setting("FRAME_RATE") is False
+    assert is_gui_editable_camera_setting("SHUTTER") is True
+    assert is_gui_editable_camera_setting("GAIN") is True
+
+
+def test_gui_rejects_disallowed_camera_setting_apply() -> None:
+    controller = SessionController(
+        camera_service=FakeCameraService(),
+        preview_worker=FakePreviewWorker(),
+    )
+
+    with pytest.raises(RuntimeError, match="read-only setting\\(s\\): FRAME_RATE"):
+        controller._apply_camera_settings({"FRAME_RATE": 30.0})

@@ -15,7 +15,9 @@ try:
         enum_name,
         json_safe,
         object_to_dict,
+        property_info_to_dict,
         property_snapshot_to_dict,
+        property_value_to_dict,
         trigger_change_summary,
     )
 except ImportError:  # pragma: no cover - direct script execution path
@@ -25,7 +27,9 @@ except ImportError:  # pragma: no cover - direct script execution path
         enum_name,
         json_safe,
         object_to_dict,
+        property_info_to_dict,
         property_snapshot_to_dict,
+        property_value_to_dict,
         trigger_change_summary,
     )
 
@@ -460,6 +464,33 @@ class MyCamLite:
 
     def get_property_value(self, name: str) -> Any:
         return self.cam.get_property(name)
+
+    def get_property_display_value(self, name: str) -> float | int:
+        if hasattr(self.cam, "get_property_display_value"):
+            return self.cam.get_property_display_value(name)
+        value = property_value_to_dict(self.get_property_value(name))
+        info = property_info_to_dict(self.get_property_info(name))
+        if info.get("abs_val_supported"):
+            return float(value.get("abs_value", 0.0))
+        return int(value.get("value_a", 0))
+
+    def get_property_abs_readback(self, name: str) -> float | None:
+        if hasattr(self.cam, "get_property_abs_readback"):
+            return self.cam.get_property_abs_readback(name)
+        info = property_info_to_dict(self.get_property_info(name))
+        if not info.get("abs_val_supported"):
+            return None
+        value = property_value_to_dict(self.get_property_value(name))
+        return float(value.get("abs_value", 0.0))
+
+    def get_property_display_range(self, name: str) -> tuple[float, float] | tuple[int, int]:
+        if hasattr(self.cam, "get_property_display_range"):
+            display_range = self.cam.get_property_display_range(name)
+            return tuple(display_range)
+        info = property_info_to_dict(self.get_property_info(name))
+        if info.get("abs_val_supported"):
+            return float(info.get("abs_min", 0.0)), float(info.get("abs_max", 0.0))
+        return int(info.get("min", 0)), int(info.get("max", 0))
 
     def set_property_abs(self, name: str, value: float, *, auto: bool = False) -> Any:
         return self.cam.set_property_abs(name, float(value), auto=bool(auto))

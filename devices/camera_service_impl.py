@@ -225,24 +225,53 @@ def _get_property_range(cam: MyCamLite, name: str) -> dict[str, Any]:
     if not info.get("present"):
         raise UnsupportedOperationError(f"Property {name} is not present on this camera.")
     abs_supported = bool(info.get("abs_val_supported"))
-    if abs_supported:
-        range_values = [float(info["abs_min"]), float(info["abs_max"])]
-    else:
-        range_values = [int(info["min"]), int(info["max"])]
+    try:
+        display_range = cam.get_property_display_range(name)
+        if abs_supported:
+            range_values = [float(display_range[0]), float(display_range[1])]
+        else:
+            range_values = [int(display_range[0]), int(display_range[1])]
+    except Exception:
+        if abs_supported:
+            range_values = [float(info["abs_min"]), float(info["abs_max"])]
+        else:
+            range_values = [int(info["min"]), int(info["max"])]
     return {
         "ok": True,
         "range": range_values,
+        "display_range": range_values,
         "units": info.get("units", ""),
         "integer_range": [int(info["min"]), int(info["max"])],
         "abs_supported": abs_supported,
+        "readback_policy": "abs_value" if abs_supported else "value_a",
         "info": info,
     }
 
 
 def _get_property_value(cam: MyCamLite, name: str) -> dict[str, Any]:
+    info = property_info_to_dict(cam.get_property_info(name))
+    if not info.get("present"):
+        raise UnsupportedOperationError(f"Property {name} is not present on this camera.")
     value = property_value_to_dict(cam.get_property_value(name))
-    result_value = value["abs_value"] if value.get("abs_control") else value["value_a"]
-    return {"ok": True, "value": result_value, "property": value}
+    abs_supported = bool(info.get("abs_val_supported"))
+    try:
+        result_value = cam.get_property_display_value(name)
+    except Exception:
+        result_value = value["abs_value"] if abs_supported else value["value_a"]
+    if abs_supported:
+        result_value = float(result_value)
+    else:
+        result_value = int(result_value)
+    return {
+        "ok": True,
+        "value": result_value,
+        "display_value": result_value,
+        "units": info.get("units", ""),
+        "abs_supported": abs_supported,
+        "readback_policy": "abs_value" if abs_supported else "value_a",
+        "property": value,
+        "info": info,
+    }
 
 
 def _set_property_abs(cam: MyCamLite, name: str, value: float, *, auto: bool = False) -> dict[str, Any]:

@@ -267,6 +267,21 @@ Set auto/manual:
 `GetRange` remains compatible with old callers and returns `range`. It now also
 returns `units`, `integer_range`, and `abs_supported` when available.
 
+For user-facing property readback, `GetValue` and `GetRange` must use the same
+unit policy. If `abs_val_supported` is true, `GetValue` returns the absolute
+display/readback value and `GetRange` returns `abs_min` / `abs_max`. If
+`abs_val_supported` is false, `GetValue` returns raw `value_a` and `GetRange`
+returns the raw integer range. `abs_control` is write/control-mode metadata; it
+must not be used as proof that `abs_value` is invalid. This matters for cameras
+where `FRAME_RATE` reports raw `value_a` alongside a valid absolute FPS
+readback.
+
+The main GUI intentionally exposes only verified absolute camera settings for
+editing: exposure/shutter and gain. `FRAME_RATE`, trigger settings, pixel
+format, ROI / Format7 layout, stream state, and counters remain read-only from
+the monitor/settings GUI because changing them can affect capture timing or
+stream layout.
+
 ## Pixel Format And ROI
 
 `flycapture2_c` now exposes a machine-readable

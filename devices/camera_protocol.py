@@ -188,6 +188,24 @@ def property_snapshot_to_dict(snapshot: Any) -> dict[str, Any]:
         "on": value_dict.get("on"),
         "error": getattr(snapshot, "error", None),
     }
+    if hasattr(snapshot, "display_value"):
+        result["display_value"] = getattr(snapshot, "display_value")
+    elif result["abs_val_supported"]:
+        result["display_value"] = result["abs_value"]
+    else:
+        result["display_value"] = result["value_a"]
+
+    if hasattr(snapshot, "display_range"):
+        result["display_range"] = getattr(snapshot, "display_range")
+    elif result["abs_val_supported"]:
+        result["display_range"] = [result["abs_min"], result["abs_max"]]
+    else:
+        result["display_range"] = [result["min"], result["max"]]
+
+    if hasattr(snapshot, "readback_policy"):
+        result["readback_policy"] = getattr(snapshot, "readback_policy")
+    else:
+        result["readback_policy"] = "abs_value" if result["abs_val_supported"] else "value_a"
     return json_safe(result)
 
 
