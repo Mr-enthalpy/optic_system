@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 import queue
-import time
-import traceback
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable
@@ -56,8 +54,8 @@ class MainWindow:
         self.root.title(title)
 
         self._event_queue: queue.Queue[Event] = queue.Queue()
-        self._last_preview_render_ns: int = 0
-        self._poll_batch_limit: int = 3
+        self._latest_frame_event: PreviewFrameUpdated | None = None
+        self._poll_interval_ms: int = 16
         self.controller.bus.subscribe(self._enqueue_event)
 
         self.root.report_callback_exception = self._report_callback_exception
@@ -121,7 +119,7 @@ class MainWindow:
         self.status_panel.pack(fill="x", pady=4)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
-        self.root.after(50, self._poll_event_queue)
+        self.root.after(self._poll_interval_ms, self._poll_event_queue)
         self.root.after(100, self._refresh_state)
 
     def _build_camera_setting_specs(self) -> list[CameraSettingSpec]:
@@ -138,34 +136,32 @@ class MainWindow:
         return specs
 
     def _enqueue_event(self, event: Event) -> None:
-        self._event_queue.put(event)
+        if isinstance(event, PreviewFrameUpdated):
+            self._latest_frame_event = event
+        else:
+            self._event_queue.put(event)
 
     def _poll_event_queue(self) -> None:
-        processed = 0
-        try:
-            qsize = self._event_queue.qsize()
-        except Exception:
-            qsize = -1
-        if qsize:
-            self.logger.debug("_poll_event_queue: qsize=%d", qsize)
-
-        while processed < self._poll_batch_limit:
+        while True:
             try:
                 event = self._event_queue.get_nowait()
             except queue.Empty:
                 break
-            processed += 1
             try:
                 self._handle_event(event)
             except Exception:
                 self.logger.exception("_handle_event crashed for %s", type(event).__name__)
 
-        if processed >= self._poll_batch_limit:
-            self.logger.info("_poll_event_queue: batch limit %d reached (qsize=%d), rescheduling",
-                             self._poll_batch_limit, self._event_queue.qsize())
+        frame = self._latest_frame_event
+        if frame is not None:
+            self._latest_frame_event = None
+            try:
+                self._handle_event(frame)
+            except Exception:
+                self.logger.exception("_handle_event crashed for PreviewFrameUpdated")
 
         if self.root.winfo_exists():
-            self.root.after(50, self._poll_event_queue)
+            self.root.after(self._poll_interval_ms, self._poll_event_queue)
 
     def _handle_event(self, event: Event) -> None:
         if isinstance(event, StatusMessage):
@@ -177,12 +173,7 @@ class MainWindow:
         elif isinstance(event, TLSError):
             self.status_panel.show_message("error", f"{event.source}: {event.message}")
         elif isinstance(event, PreviewFrameUpdated):
-            t0 = time.monotonic_ns()
             self.preview_panel.update_preview(event.preview_bgr)
-            self._last_preview_render_ns = time.monotonic_ns()
-            dt_ms = (self._last_preview_render_ns - t0) / 1_000_000
-            if dt_ms > 20:
-                self.logger.info("PreviewFrameUpdated render took %.1f ms", dt_ms)
         elif isinstance(event, PreviewStatsUpdated):
             self.preview_panel.update_stats(
                 max_pixel=event.max_pixel,
@@ -206,9 +197,6 @@ class MainWindow:
         if self.tls_panel is not None:
             self.tls_panel.update_from_state(state)
 
-        elapsed_ns = time.monotonic_ns() - self._last_preview_render_ns
-        if state.latest_preview_bgr is not None and elapsed_ns > 200_000_000:
-            self.preview_panel.update_preview(state.latest_preview_bgr)
         self.preview_panel.update_stats(
             max_pixel=state.latest_max_pixel,
             frame_seq=state.latest_frame_seq,
