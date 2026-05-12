@@ -44,6 +44,10 @@ class EventLogSink:
         try:
             payload = dataclasses.asdict(event)
         except Exception:
+            self._logger.exception(
+                "Failed to convert event %s to dict",
+                type(event).__name__,
+            )
             return
 
         line = {
@@ -57,8 +61,11 @@ class EventLogSink:
             serialized = json.dumps(line, default=_json_fallback, ensure_ascii=False)
             with open(str(self._path), "a", encoding="utf-8") as fh:
                 fh.write(serialized + "\n")
-        except Exception as exc:
-            self._logger.warning("Failed to serialize event %s: %s", type(event).__name__, exc)
+        except Exception:
+            self._logger.exception(
+                "Failed to serialize event %s to JSONL",
+                type(event).__name__,
+            )
 
     def _log_to_human(self, event: Event) -> None:
         from control.events import (

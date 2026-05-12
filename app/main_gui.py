@@ -15,7 +15,7 @@ from devices.camera_service import CameraServiceClient
 from devices.frame_stream import FrameStreamClient
 from devices.lcd_service import LCDService
 from devices.tls_service import TLSService, TLSServiceUnavailableError
-from diagnostics.logging_setup import GuiLogContext, setup_gui_logging, write_session_start
+from diagnostics.logging_setup import GuiLogContext, close_gui_logging, setup_gui_logging, write_session_start
 from diagnostics.event_log_sink import EventLogSink
 from gui.main_window import MainWindow
 
@@ -228,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     logger = log_context.logger
 
-    write_session_start(log_context, argv=argv or sys.argv, args=args)
+    effective_argv = sys.argv if argv is None else ["app/main_gui.py", *argv]
+    write_session_start(log_context, argv=effective_argv, args=args)
 
     logger.info("Starting main_gui.py (run_id=%s)", log_context.run_id)
     if log_context.human_log_path:
@@ -311,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Shutting down controller ...")
         controller.shutdown(force=True)
         logger.info("Shutdown complete")
+        close_gui_logging(logger)
 
     return 0
 
