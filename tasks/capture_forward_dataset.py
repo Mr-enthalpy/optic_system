@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import hashlib
 import time
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol as _Protocol
 
 import numpy as np
+
+from diagnostics.run_status import RunStatusPublisher
 
 from .capture_plan import CapturePlan, CapturePlanError
 from .raw_capture_h5 import RawCaptureWriter, RawCaptureWriteError
@@ -303,11 +306,28 @@ def run_capture_forward_dataset(
     *,
     enable_tls: bool = False,
     dry_run: bool = False,
+    status_dir: Path | None = None,
+    run_id: str | None = None,
 ) -> Path:
     plan.validate()
 
     if enable_tls and devices.tls is None:
         raise TLSUnavailableError()
+
+    status = (
+        RunStatusPublisher(status_dir, run_id or _default_run_id(plan))
+        if status_dir is not None
+        else None
+    )
+    _safe_status_update(
+        status,
+        plan_id=plan.plan_id,
+        phase="starting",
+        capture_index=0,
+        n_captures=plan.n_captures,
+        completed=False,
+        error=None,
+    )
 
     physical_masks = _materialize_masks(plan, allow_placeholder=dry_run, placeholder_shape=devices.lcd.physical_shape())
 
@@ -339,6 +359,17 @@ def run_capture_forward_dataset(
                     "timestamp_ns": time.monotonic_ns(),
                 }
 
+            _safe_status_update(
+                status,
+                phase="wavelength_ready",
+                capture_index=capture_idx,
+                n_captures=plan.n_captures,
+                current_wavelength_nm=_optional_float_value(tls_status.get("current_wavelength_nm")),
+                target_wavelength_nm=_optional_float_value(tls_status.get("target_wavelength_nm")),
+                tls_grating=_optional_int_value(tls_status.get("grating")),
+                tls_moving=_optional_bool_value(tls_status.get("moving")),
+            )
+
             for mi, mask_entry in enumerate(plan.masks):
                 lcd = devices.lcd
                 mask_array = physical_masks[mi]
@@ -347,12 +378,34 @@ def run_capture_forward_dataset(
 
                 lcd.show_physical_mask(mask_array)
                 lcd_display_ts = time.monotonic_ns()
+                _safe_write_mask_preview(status, mask_array)
+                _safe_status_update(
+                    status,
+                    phase="mask_shown",
+                    capture_index=capture_idx,
+                    n_captures=plan.n_captures,
+                    current_mask_id=mask_entry.mask_id,
+                    current_wavelength_nm=_optional_float_value(tls_status.get("current_wavelength_nm")),
+                    target_wavelength_nm=_optional_float_value(tls_status.get("target_wavelength_nm")),
+                    tls_grating=_optional_int_value(tls_status.get("grating")),
+                    tls_moving=_optional_bool_value(tls_status.get("moving")),
+                )
 
                 if plan.lcd_settle_ms > 0 and not dry_run:
                     time.sleep(plan.lcd_settle_ms / 1000.0)
 
                 k = plan.camera.frames_per_capture
                 capture = devices.camera.acquire_burst(k)
+                camera_frame_seq = _optional_int_value(capture.metadata.get("frame_seq"))
+                camera_max_pixel = float(np.max(capture.frames_avg)) if capture.frames_avg.size else None
+                _safe_status_update(
+                    status,
+                    phase="burst_captured",
+                    capture_index=capture_idx,
+                    n_captures=plan.n_captures,
+                    camera_frame_seq=camera_frame_seq,
+                    camera_max_pixel=camera_max_pixel,
+                )
                 frames_to_store = capture.burst if plan.store_burst else None
 
                 writer.append_capture(
@@ -366,10 +419,35 @@ def run_capture_forward_dataset(
                     lcd_display_timestamp_ns=lcd_display_ts,
                 )
 
+                _safe_status_update(
+                    status,
+                    phase="capture_appended",
+                    capture_index=capture_idx + 1,
+                    n_captures=plan.n_captures,
+                    camera_frame_seq=camera_frame_seq,
+                    camera_max_pixel=camera_max_pixel,
+                )
                 capture_idx += 1
 
         writer.finalize(completed=True)
+        _safe_status_update(
+            status,
+            phase="completed",
+            capture_index=capture_idx,
+            n_captures=plan.n_captures,
+            completed=True,
+            error=None,
+        )
     except Exception:
+        error = str(_last_exc_info())
+        _safe_status_update(
+            status,
+            phase="error",
+            capture_index=None,
+            n_captures=plan.n_captures,
+            completed=False,
+            error=error,
+        )
         writer.finalize(completed=False, error=str(
             _last_exc_info()
         ))
@@ -467,3 +545,50 @@ def _last_exc_info() -> str:
     import sys
     exc = sys.exc_info()[1]
     return str(exc) if exc is not None else "unknown error"
+
+
+def _default_run_id(plan: CapturePlan) -> str:
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return f"{plan.plan_id}_{stamp}"
+
+
+def _safe_status_update(status: RunStatusPublisher | None, **kwargs: Any) -> None:
+    if status is None:
+        return
+    try:
+        status.update(**kwargs)
+    except Exception as exc:
+        warnings.warn(f"run status update failed: {exc}", RuntimeWarning)
+
+
+def _safe_write_mask_preview(status: RunStatusPublisher | None, mask: np.ndarray) -> None:
+    if status is None:
+        return
+    try:
+        status.write_mask_preview(mask)
+    except Exception as exc:
+        warnings.warn(f"run status mask preview failed: {exc}", RuntimeWarning)
+
+
+def _optional_float_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int_value(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_bool_value(value: Any) -> bool | None:
+    if value is None:
+        return None
+    return bool(value)
