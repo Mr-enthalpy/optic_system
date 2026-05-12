@@ -378,6 +378,21 @@ def run_capture_forward_dataset(
         writer.write_lcd_metadata(devices.lcd.metadata())
         writer.write_physical_masks(physical_masks)
 
+        cam_requested_exposure_us = plan.camera.exposure_us
+        cam_requested_gain_db = plan.camera.gain_db
+        if hasattr(devices.camera, "apply_camera_params") and (
+            cam_requested_exposure_us is not None or cam_requested_gain_db is not None
+        ):
+            devices.camera.apply_camera_params(
+                exposure_us=cam_requested_exposure_us,
+                gain_db=cam_requested_gain_db,
+            )
+        cam_readback = (
+            devices.camera.read_camera_params()
+            if hasattr(devices.camera, "read_camera_params")
+            else {}
+        )
+
         capture_idx = 0
         for wi, wl_entry in enumerate(plan.wavelengths):
             if enable_tls and devices.tls is not None:
@@ -457,6 +472,10 @@ def run_capture_forward_dataset(
                     camera_meta=capture.metadata,
                     tls_status=tls_status,
                     lcd_display_timestamp_ns=lcd_display_ts,
+                    requested_exposure_us=cam_requested_exposure_us,
+                    requested_gain_db=cam_requested_gain_db,
+                    readback_exposure_us=cam_readback.get("exposure_us") if not dry_run else cam_requested_exposure_us,
+                    readback_gain_db=cam_readback.get("gain_db") if not dry_run else cam_requested_gain_db,
                 )
 
                 _safe_status_update(

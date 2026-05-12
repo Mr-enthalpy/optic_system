@@ -1110,3 +1110,171 @@ def test_mycam_lite_init_has_cleanup_errors_field() -> None:
     cam = backend_mod.MyCamLite(FakeCam(), index=0)
     assert hasattr(cam, "cleanup_errors")
     assert cam.cleanup_errors == []
+
+
+class TestGetPropertyValueAbsValue:
+    def test_returns_abs_value_when_abs_val_supported_and_abs_control_false(self, monkeypatch) -> None:
+        from devices.camera_protocol import property_info_to_dict, property_value_to_dict
+
+        class FakeCam:
+            def get_property_value(self, _name):
+                return SimpleNamespace(
+                    property_type=PropertyName.SHUTTER,
+                    present=True,
+                    abs_control=False,
+                    one_push=False,
+                    on_off=True,
+                    auto_manual_mode=False,
+                    value_a=8000,
+                    value_b=0,
+                    abs_value=8.0,
+                )
+
+            def get_property_info(self, _name):
+                return SimpleNamespace(
+                    property_type=PropertyName.SHUTTER,
+                    present=True,
+                    read_out_supported=True,
+                    manual_supported=True,
+                    auto_supported=True,
+                    on_off_supported=True,
+                    one_push_supported=False,
+                    abs_val_supported=True,
+                    writable=True,
+                    min_value=0,
+                    max_value=4095,
+                    abs_min=0.01,
+                    abs_max=1000.0,
+                    units="ms",
+                    unit_abbr="ms",
+                )
+
+        cam = FakeCam()
+        result = impl._get_property_value(cam, "SHUTTER")
+        assert result["ok"] is True
+        assert result["value"] == 8.0
+
+    def test_returns_value_a_when_abs_val_not_supported(self, monkeypatch) -> None:
+        class FakeCam:
+            def get_property_value(self, _name):
+                return SimpleNamespace(
+                    property_type=PropertyName.SHUTTER,
+                    present=True,
+                    abs_control=False,
+                    one_push=False,
+                    on_off=True,
+                    auto_manual_mode=False,
+                    value_a=4000,
+                    value_b=0,
+                    abs_value=4.0,
+                )
+
+            def get_property_info(self, _name):
+                return SimpleNamespace(
+                    property_type=PropertyName.SHUTTER,
+                    present=True,
+                    read_out_supported=True,
+                    manual_supported=True,
+                    auto_supported=True,
+                    on_off_supported=True,
+                    one_push_supported=False,
+                    abs_val_supported=False,
+                    writable=True,
+                    min_value=0,
+                    max_value=4095,
+                    abs_min=0.0,
+                    abs_max=0.0,
+                    units="",
+                    unit_abbr="",
+                )
+
+        cam = FakeCam()
+        result = impl._get_property_value(cam, "SHUTTER")
+        assert result["ok"] is True
+        assert result["value"] == 4000
+
+
+class TestSetPropertyAbsOnParam:
+    def test_on_none_when_on_off_not_supported(self) -> None:
+        recorded_calls = []
+
+        class FakeCam:
+            def get_property_info(self, _name):
+                return SimpleNamespace(
+                    property_type=PropertyName.SHUTTER,
+                    present=True,
+                    read_out_supported=True,
+                    manual_supported=True,
+                    auto_supported=True,
+                    on_off_supported=False,
+                    one_push_supported=False,
+                    abs_val_supported=True,
+                    writable=True,
+                    min_value=0,
+                    max_value=4095,
+                    abs_min=0.01,
+                    abs_max=1000.0,
+                    units="ms",
+                    unit_abbr="ms",
+                )
+
+            def set_property_abs(self, name, value, auto=False, on=None):
+                recorded_calls.append(("set_property_abs", name, value, auto, on))
+                return SimpleNamespace(
+                    property_type=PropertyName.SHUTTER,
+                    present=True,
+                    abs_control=True,
+                    one_push=False,
+                    on_off=True,
+                    auto_manual_mode=auto,
+                    value_a=0,
+                    value_b=0,
+                    abs_value=value,
+                )
+
+        cam = FakeCam()
+        result = impl._set_property_abs(cam, "SHUTTER", 5.0, auto=False)
+        assert result["ok"] is True
+        assert recorded_calls == [("set_property_abs", "SHUTTER", 5.0, False, None)]
+
+    def test_on_true_when_on_off_supported(self) -> None:
+        recorded_calls = []
+
+        class FakeCam:
+            def get_property_info(self, _name):
+                return SimpleNamespace(
+                    property_type=PropertyName.SHUTTER,
+                    present=True,
+                    read_out_supported=True,
+                    manual_supported=True,
+                    auto_supported=True,
+                    on_off_supported=True,
+                    one_push_supported=False,
+                    abs_val_supported=True,
+                    writable=True,
+                    min_value=0,
+                    max_value=4095,
+                    abs_min=0.01,
+                    abs_max=1000.0,
+                    units="ms",
+                    unit_abbr="ms",
+                )
+
+            def set_property_abs(self, name, value, auto=False, on=None):
+                recorded_calls.append(("set_property_abs", name, value, auto, on))
+                return SimpleNamespace(
+                    property_type=PropertyName.SHUTTER,
+                    present=True,
+                    abs_control=True,
+                    one_push=False,
+                    on_off=True,
+                    auto_manual_mode=auto,
+                    value_a=0,
+                    value_b=0,
+                    abs_value=value,
+                )
+
+        cam = FakeCam()
+        result = impl._set_property_abs(cam, "SHUTTER", 5.0, auto=False)
+        assert result["ok"] is True
+        assert recorded_calls == [("set_property_abs", "SHUTTER", 5.0, False, True)]
