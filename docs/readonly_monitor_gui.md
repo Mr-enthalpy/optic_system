@@ -57,6 +57,9 @@ or modify task state.
 The latest frame is not a video stream. It is the most recent preview image or
 array written by the task.
 
+The monitor does not subscribe to a live camera stream; `latest_frame_preview`
+means the last preview file explicitly published by the running task.
+
 The GUI view currently displays `.png` preview files. If the publisher falls
 back to `.npy` because image-writing dependencies such as `cv2` are unavailable,
 terminal mode and `RunStatusReader` can still read the array, but the GUI may
