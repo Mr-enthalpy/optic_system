@@ -2,6 +2,7 @@
   "schema_version": "1.0",
   "plan_id": "bishe_exposure_sweep",
   "source_raw_capture_h5": "data/raw/bishe_exposure_sweep.h5",
+  "frame_dtype_full_scale": 255,
   "global_safe_camera": {
     "exposure_us": 50000.0,
     "gain_db": 0.0,
@@ -26,31 +27,31 @@
   },
   "per_wavelength_metrics": {
     "450.0": {
-      "max_pixel": 216.15066958617837,
-      "p99_9": 183.5359768614578,
-      "saturated_fraction": 0.0,
-      "p_signal": 169.67397698693722,
+      "max_pixel": 255.0,
+      "p99_9": 207.0,
+      "saturated_fraction": 0.000709683287377451,
+      "p_signal": 38.6,
       "safe": true,
-      "low_signal": false
+      "low_signal": true
     },
     "550.0": {
-      "max_pixel": 221.57503100164294,
-      "p99_9": 183.39165476302125,
-      "saturated_fraction": 0.0,
-      "p_signal": 169.56895483024476,
+      "max_pixel": 255.0,
+      "p99_9": 178.6,
+      "saturated_fraction": 0.0007262385748570262,
+      "p_signal": 34.8,
       "safe": true,
-      "low_signal": false
+      "low_signal": true
     },
     "650.0": {
-      "max_pixel": 207.0007128168656,
-      "p99_9": 183.11031277258616,
-      "saturated_fraction": 0.0,
-      "p_signal": 169.7444293192277,
+      "max_pixel": 255.0,
+      "p99_9": 180.4,
+      "saturated_fraction": 0.0007348154105392157,
+      "p_signal": 34.8,
       "safe": true,
-      "low_signal": false
+      "low_signal": true
     }
   },
-  "selection_reason": "gain_min_max_safe_exposure",
+  "selection_reason": "gain_min_max_safe_exposure_low_signal_global",
   "validity": {
     "exposure_safety_valid": true,
     "scientific_calibration_valid": false,

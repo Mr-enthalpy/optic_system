@@ -16,23 +16,25 @@ consume the raw HDF5 to produce processed results.
 |---|---|
 | `hardware_smoke_no_tls.yaml` | Hardware smoke test: camera + LCD, no TLS |
 | `hardware_smoke_with_tls.yaml` | Hardware smoke test: camera + LCD + TLS |
+| `bishe_exposure_sweep.yaml` | Phase 3.0.5 exposure/gain safety sweep |
+| `bishe_pupil_scan.yaml` | Phase 3.1 procedural effective LCD pupil scan |
+
+### `plans/bishe_pupil_scan.yaml`
+- **Phase:** 3.1 - Effective LCD pupil / active modulation region scan
+- **Purpose:** Locate the physical LCD region where procedural mask changes
+  measurably affect camera captures.
+- **Input:** `camera_params_source` from Phase 3.0.5
+  (`outputs/exposure_calibration/camera_params.json`).
+- **Masks:** Generated procedurally at runtime by
+  `tasks/pupil_scan_masks.py`; the plan does not list hundreds of mask files.
+- **Output raw HDF5:** `data/raw/bishe_pupil_scan.h5`.
+- **Analysis:** `scripts/analyze_pupil_scan.py` writes
+  `outputs/pupil_scan/effective_lcd_roi.json` and diagnostics.
 
 ## Planned plans (Phase 3 thesis)
 
 The following capture plans are defined for the Phase 3 thesis workflow.
-They do not yet exist as files; they will be implemented in their respective
-milestones.
-
-### `plans/bishe_pupil_scan.yaml`
-- **Phase:** 3.1 — Effective LCD pupil scan
-- **Purpose:** Sweep a narrow bar across X and Y axes, capture camera response
-  at each position, to locate the effective LCD pupil region.
-- **Masks:** Vertical bar at X positions 0..W, horizontal bar at Y positions
-  0..H.  Generated programmatically or by a mask-generation script.
-- **Wavelengths:** Single wavelength (e.g., 555 nm).
-- **Camera:** Averaged frames per bar position (`frames_per_capture` > 1).
-- **Expected output raw HDF5:** `outputs/pupil_scan/pupil_scan_raw.h5`
-- **Downstream analysis:** Pupil scan analysis script -> `effective_lcd_roi.json`
+They will be implemented in their respective milestones.
 
 ### `plans/bishe_psf_repeatability.yaml`
 - **Phase:** 3.2 — PSF repeatability and ROI alignment
