@@ -287,6 +287,41 @@ class TestCaptureForwardDatasetDryRun:
 
         assert tls._grating == 3
 
+    def test_optional_run_status_written(
+        self,
+        sample_plan: CapturePlan,
+        tmp_h5_path: Path,
+        tmp_path: Path,
+    ) -> None:
+        from diagnostics.run_status import RunStatusReader
+
+        devices = FakeDeviceBundle(
+            camera=FakeCamera(height=240, width=320),
+            lcd=FakeLCD(height=1080, width_phys=5760),
+        )
+        status_dir = tmp_path / "run_status" / "dry_run_001"
+
+        run_capture_forward_dataset(
+            plan=sample_plan,
+            devices=devices,
+            output_path=tmp_h5_path,
+            enable_tls=False,
+            dry_run=True,
+            status_dir=status_dir,
+            run_id="dry_run_001",
+        )
+
+        status = RunStatusReader(status_dir).read()
+        assert status is not None
+        assert status.run_id == "dry_run_001"
+        assert status.plan_id == sample_plan.plan_id
+        assert status.phase == "completed"
+        assert status.capture_index == sample_plan.n_captures
+        assert status.completed is True
+        assert status.error is None
+        assert status.current_mask_id == "mask_b"
+        assert RunStatusReader(status_dir).read_mask_preview() is not None
+
     def test_hardware_materialization_rejects_missing_mask(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
     ) -> None:

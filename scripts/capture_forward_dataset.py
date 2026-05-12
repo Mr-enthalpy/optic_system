@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 
@@ -94,6 +95,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="connect to an existing sidecar instead of auto-starting one",
     )
+    parser.add_argument(
+        "--status-dir",
+        default=None,
+        help="optional run-status directory for monitor_gui",
+    )
+    parser.add_argument(
+        "--run-id",
+        default="auto",
+        help="run id stored in status output; use 'auto' for a timestamp id",
+    )
+    parser.add_argument(
+        "--no-status",
+        action="store_true",
+        default=False,
+        help="disable optional run-status output",
+    )
     return parser.parse_args(argv)
 
 
@@ -136,6 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         plan.store_burst = args.store_burst
 
     output_path = Path(args.output) if args.output else Path(f"{plan.plan_id}.h5")
+    status_dir, run_id = _resolve_status_args(args, plan.plan_id)
+    if status_dir is not None:
+        print(f"Run status: {status_dir}")
+        print(f"Run id: {run_id}")
 
     if args.dry_run or not args.hardware:
         print(f"[dry-run] plan: {plan.plan_id}")
@@ -157,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
             output_path=output_path,
             enable_tls=args.enable_tls,
             dry_run=True,
+            status_dir=status_dir,
+            run_id=run_id,
         )
         print(f"[dry-run] wrote {plan.n_captures} captures to {result}")
         return 0
@@ -168,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  output: {output_path}")
 
     try:
-        return _run_hardware(args, plan, output_path)
+        return _run_hardware(args, plan, output_path, status_dir=status_dir, run_id=run_id)
     except Exception as exc:
         print(f"Hardware capture failed: {exc}")
         return 1
@@ -178,6 +201,9 @@ def _run_hardware(
     args: argparse.Namespace,
     plan: CapturePlan,
     output_path: Path,
+    *,
+    status_dir: Path | None,
+    run_id: str | None,
 ) -> int:
     from devices.camera_service import CameraServiceClient
     from devices.frame_stream import FrameStreamClient
@@ -248,6 +274,8 @@ def _run_hardware(
             output_path=output_path,
             enable_tls=args.enable_tls,
             dry_run=False,
+            status_dir=status_dir,
+            run_id=run_id,
         )
         print(f"Capture complete: {result}")
     finally:
@@ -270,6 +298,22 @@ def _run_hardware(
                 pass
 
     return 0
+
+
+def _resolve_status_args(
+    args: argparse.Namespace,
+    plan_id: str,
+) -> tuple[Path | None, str | None]:
+    if args.no_status or not args.status_dir:
+        return None, None
+
+    run_id = _make_run_id(plan_id) if args.run_id == "auto" else str(args.run_id)
+    status_dir_text = str(args.status_dir).replace("{run_id}", run_id)
+    return Path(status_dir_text), run_id
+
+
+def _make_run_id(plan_id: str) -> str:
+    return f"{plan_id}_{time.strftime('%Y%m%d_%H%M%S')}"
 
 
 if __name__ == "__main__":

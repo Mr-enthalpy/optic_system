@@ -511,7 +511,10 @@ Do not assume TLS support is available unless the dependency is installed and ex
 
 ## Running the GUI
 
-Basic GUI launch:
+`app/main_gui.py` is the manual/debug control GUI. It owns a controller
+lifecycle and may change camera, LCD, and TLS hardware state.
+
+Basic manual/debug GUI launch:
 
 ```bash
 python -m app.main_gui
@@ -536,6 +539,21 @@ TLS CLI options:
 When `tls_c1` is not installed, `--enable-tls` exits with a clear error
 describing the missing dependency.  Omitting `--enable-tls` starts the
 GUI without any TLS requirement.
+
+`app/monitor_gui.py` is a read-only experiment monitor. It does not own the
+hardware lifecycle and is safe to open or close while a capture task keeps
+running.
+
+Example monitor usage:
+
+```bash
+python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --hardware \
+  --status-dir outputs/run_status/repeatability_001
+
+python app/monitor_gui.py --status-dir outputs/run_status/repeatability_001
+```
+
+See `docs/monitor_gui.md` for monitor behavior and troubleshooting.
 
 ## Current status
 
