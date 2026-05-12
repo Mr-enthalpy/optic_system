@@ -57,8 +57,19 @@ or modify task state.
 The latest frame is not a video stream. It is the most recent preview image or
 array written by the task.
 
+The GUI view currently displays `.png` preview files. If the publisher falls
+back to `.npy` because image-writing dependencies such as `cv2` are unavailable,
+terminal mode and `RunStatusReader` can still read the array, but the GUI may
+show that preview as unavailable. GUI rendering for `.npy` previews can be
+added later without changing the diagnostics boundary.
+
 Refresh rate depends on task publishing frequency and the monitor
 `--poll-interval`.
 
 If a task does not publish a frame preview, only state, mask preview, frame
 statistics, and logs that are present in the run-status directory are shown.
+
+This monitor is infrastructure only. Capture and calibration tasks must
+explicitly publish richer diagnostics by calling `write_frame_preview(...)`,
+`write_frame_stats(...)`, and `append_log(...)`. Phase 3.1 task integration
+should add those calls where live diagnostics are useful.
