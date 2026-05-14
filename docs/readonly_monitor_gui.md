@@ -100,7 +100,8 @@ Mask previews are written as PNG images using `cv2` (OpenCV) when available and
 fall back to `.npy` otherwise. Frame previews are written as raw `.npy` arrays
 by default so the monitor can choose the Bayer display encoding.
 
-Mask PNG previews and explicitly requested frame PNG previews are downsampled
-to a maximum side of 768 pixels before writing. Default raw frame `.npy`
+Mask previews are always lightweight diagnostics and may be downsampled before
+PNG or NPY publication. Raw frame NPY previews are never downsampled before
+publishing, preserving the full sensor data for the monitor. Raw frame `.npy`
 previews are not downsampled before publishing. Raw HDF5 data is unaffected;
 this is status-dir policy only.
