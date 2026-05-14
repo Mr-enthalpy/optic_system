@@ -47,6 +47,7 @@ def analyze_pupil_scan(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     data = _read_pupil_scan_h5(input_path)
+    _validate_h5_camera_params(data["camera_params"])
     responses, diagnostics = _compute_responses(
         input_path,
         data["mask_ids"],
@@ -114,15 +115,6 @@ def analyze_pupil_scan(
         }
         warnings.append("No reliable ROI support found; returned full physical LCD extent.")
 
-    camera_params_source_text = str(data["camera_params_source"]).replace("\\", "/")
-    if camera_params_source_text.endswith("camera_params.json"):
-        warnings.append(
-            "This analysis used the original Phase 3.0.5 coarse camera_params.json. "
-            "PR #24 review observed clipping/local saturation, so this result is "
-            "first-pass coarse active-region localization only; final fine scans, "
-            "dOTF, PSF dictionary, and repeatability must use camera_params_psf_safe.json."
-        )
-
     _write_profile_csv(out_dir / "x_profile.csv", x_profile)
     _write_profile_csv(out_dir / "y_profile.csv", y_profile)
     np.save(str(out_dir / "response_map.npy"), response_map)
@@ -172,6 +164,35 @@ def analyze_pupil_scan(
     return result
 
 
+def _validate_h5_camera_params(camera_params: dict[str, Any] | None) -> None:
+    if not isinstance(camera_params, dict) or not camera_params:
+        raise ValueError(
+            "raw HDF5 does not contain verifiable PSF-safe camera parameter provenance"
+        )
+    validity = camera_params.get("validity", {})
+    if validity.get("psf_exposure_safe") is not True:
+        raise ValueError(
+            "raw HDF5 camera_params.validity.psf_exposure_safe must be True"
+        )
+    if validity.get("exposure_safety_valid") is not True:
+        raise ValueError(
+            "raw HDF5 camera_params.validity.exposure_safety_valid must be True"
+        )
+    if camera_params.get("frame_dtype_full_scale") is None:
+        raise ValueError(
+            "raw HDF5 camera_params.frame_dtype_full_scale is required"
+        )
+    gsc = camera_params.get("global_safe_camera", {})
+    if gsc.get("exposure_us") is None:
+        raise ValueError(
+            "raw HDF5 camera_params.global_safe_camera.exposure_us is required"
+        )
+    if gsc.get("gain_db") is None:
+        raise ValueError(
+            "raw HDF5 camera_params.global_safe_camera.gain_db is required"
+        )
+
+
 def _read_pupil_scan_h5(path: Path) -> dict[str, Any]:
     with h5py.File(path, "r") as f:
         frames_shape = tuple(int(v) for v in f["raw/frames_avg"].shape)
@@ -191,6 +212,7 @@ def _read_pupil_scan_h5(path: Path) -> dict[str, Any]:
         lcd_meta = _json_dataset(f["lcd/metadata_json"])
         cam_source = _json_dataset(f["camera/camera_params_source_json"])
         camera_params_source = cam_source.get("source") if isinstance(cam_source, dict) else None
+        camera_params = cam_source.get("camera_params") if isinstance(cam_source, dict) else None
         wavelength_nm = _finite_or_none(float(f["tls/wavelength_nm"][()]))
         physical_shape = lcd_meta.get("physical_shape")
         if physical_shape is None:
@@ -212,6 +234,7 @@ def _read_pupil_scan_h5(path: Path) -> dict[str, Any]:
         "plan_id": plan_id,
         "lcd_metadata": lcd_meta,
         "camera_params_source": camera_params_source,
+        "camera_params": camera_params,
         "wavelength_nm": wavelength_nm,
         "physical_shape": (int(physical_shape[0]), int(physical_shape[1])),
         "subpixel_axis": subpixel_axis,

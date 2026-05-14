@@ -15,6 +15,20 @@ PHYSICAL_SHAPE = (100, 300)
 KNOWN_ROI = {"x_min": 90, "x_max": 210, "y_min": 30, "y_max": 70}
 
 
+def _default_psf_safe_camera_params() -> dict:
+    return {
+        "validity": {
+            "exposure_safety_valid": True,
+            "psf_exposure_safe": True,
+        },
+        "frame_dtype_full_scale": 255,
+        "global_safe_camera": {
+            "exposure_us": 50000.0,
+            "gain_db": 0.0,
+        },
+    }
+
+
 def _write_synthetic_scan(
     path: Path,
     *,
@@ -23,7 +37,11 @@ def _write_synthetic_scan(
     low_snr: bool = False,
     outlier: bool = False,
     block_roi: dict[str, int] | None = None,
+    camera_params_data: dict | None = None,
+    camera_params_source_name: str = "camera_params_psf_safe.json",
 ) -> None:
+    if camera_params_data is None:
+        camera_params_data = _default_psf_safe_camera_params()
     spec = ScanMaskSpec(
         physical_shape=PHYSICAL_SHAPE,
         subpixel_axis=1,
@@ -35,14 +53,18 @@ def _write_synthetic_scan(
     )
     with PupilScanWriter(path, plan_id="synthetic_pupil") as writer:
         writer.write_plan_json(
-            {"plan_id": "synthetic_pupil", "camera_params_source": "camera_params.json"}
+            {"plan_id": "synthetic_pupil", "camera_params_source": camera_params_source_name}
         )
         writer.write_lcd_metadata({"physical_shape": list(PHYSICAL_SHAPE), "subpixel_axis": 1})
         writer.write_camera_metadata(
             exposure_us=50000.0,
             gain_db=0.0,
             frame_dtype_full_scale=255,
-            camera_params_source={"source": "camera_params.json", "overridden": False},
+            camera_params_source={
+                "source": camera_params_source_name,
+                "overridden": False,
+                "camera_params": camera_params_data,
+            },
         )
         writer.write_tls_metadata(wavelength_nm=550.0, grating=1, status={})
 
@@ -211,7 +233,7 @@ def test_effective_lcd_roi_json_provenance_fields(tmp_path: Path) -> None:
         saved = json.load(f)
     assert saved["source_raw_capture_h5"] == str(h5_path)
     assert saved["capture_plan_id"] == "synthetic_pupil"
-    assert saved["camera_params_source"] == "camera_params.json"
+    assert saved["camera_params_source"] == "camera_params_psf_safe.json"
     assert saved["wavelength_nm"] == 550.0
     assert saved["validity"]["scientific_calibration_valid"] is False
     assert saved["validity"]["training_ready"] is False
@@ -228,3 +250,16 @@ def test_analysis_traces_to_raw_h5(tmp_path: Path) -> None:
     with h5py.File(h5_path, "r") as f:
         assert f["raw/frames_avg"].shape[0] > 0
         assert f["scan/mask_recipe_json"].shape[0] == f["raw/frames_avg"].shape[0]
+
+
+def test_reject_raw_h5_without_embedded_psf_safe_camera_params(tmp_path: Path) -> None:
+    h5_path = tmp_path / "unsafe.h5"
+    out_dir = tmp_path / "out"
+    unsafe_params = _default_psf_safe_camera_params()
+    unsafe_params["validity"]["psf_exposure_safe"] = False
+    _write_synthetic_scan(h5_path, modes=["blocks"], camera_params_data=unsafe_params)
+
+    import pytest
+
+    with pytest.raises(ValueError, match="psf_exposure_safe"):
+        analyze_pupil_scan(h5_path, out_dir, smooth_window=3, min_component_size=2)

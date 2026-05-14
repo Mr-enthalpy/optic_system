@@ -14,8 +14,8 @@ from scripts.capture_pupil_scan import load_pupil_scan_plan, run_pupil_scan
 def _camera_params(path: Path) -> Path:
     payload = {
         "schema_version": "1.0",
-        "plan_id": "bishe_exposure_psf_safe_sweep",
-        "source_raw_capture_h5": "data/raw/bishe_exposure_psf_safe_sweep.h5",
+        "plan_id": "bishe_psf_safe_exposure",
+        "source_raw_capture_h5": "data/raw/bishe_psf_safe_exposure.h5",
         "frame_dtype_full_scale": 255,
         "global_safe_camera": {
             "exposure_us": 50000.0,
@@ -38,7 +38,6 @@ def _plan(tmp_path: Path, camera_params_path: Path) -> dict:
     return {
         "plan_id": "dry_pupil",
         "camera_params_source": str(camera_params_path),
-        "require_psf_safe_camera_params": True,
         "wavelength": {"wavelength_nm": 550.0, "grating": 1, "settle_ms": 0},
         "lcd": {
             "settle_ms": 0,
@@ -67,7 +66,7 @@ def _plan(tmp_path: Path, camera_params_path: Path) -> dict:
 
 
 def test_dry_run_produces_valid_raw_h5(tmp_path: Path) -> None:
-    params = _camera_params(tmp_path / "camera_params.json")
+    params = _camera_params(tmp_path / "camera_params_psf_safe.json")
     plan = _plan(tmp_path, params)
 
     out = run_pupil_scan(plan, dry_run=True)
@@ -81,7 +80,7 @@ def test_dry_run_produces_valid_raw_h5(tmp_path: Path) -> None:
 
 
 def test_camera_params_source_is_required(tmp_path: Path) -> None:
-    plan = _plan(tmp_path, tmp_path / "camera_params.json")
+    plan = _plan(tmp_path, tmp_path / "camera_params_psf_safe.json")
     del plan["camera_params_source"]
     path = tmp_path / "plan.yaml"
     path.write_text(yaml.safe_dump(plan), encoding="utf-8")
@@ -91,7 +90,7 @@ def test_camera_params_source_is_required(tmp_path: Path) -> None:
 
 
 def test_camera_params_are_copied_into_h5_provenance(tmp_path: Path) -> None:
-    params = _camera_params(tmp_path / "camera_params.json")
+    params = _camera_params(tmp_path / "camera_params_psf_safe.json")
     plan = _plan(tmp_path, params)
 
     out = run_pupil_scan(plan, dry_run=True)
@@ -110,7 +109,7 @@ def test_camera_params_are_copied_into_h5_provenance(tmp_path: Path) -> None:
 
 
 def test_dry_run_requires_no_hardware_imports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    params = _camera_params(tmp_path / "camera_params.json")
+    params = _camera_params(tmp_path / "camera_params_psf_safe.json")
     plan = _plan(tmp_path, params)
     original_import = builtins.__import__
 
@@ -125,10 +124,36 @@ def test_dry_run_requires_no_hardware_imports(tmp_path: Path, monkeypatch: pytes
 
 
 def test_store_physical_masks_option(tmp_path: Path) -> None:
-    params = _camera_params(tmp_path / "camera_params.json")
+    params = _camera_params(tmp_path / "camera_params_psf_safe.json")
     plan = _plan(tmp_path, params)
 
     out = run_pupil_scan(plan, dry_run=True, store_physical_masks=True)
 
     with h5py.File(out, "r") as f:
         assert f["masks/masks_physical"].shape[0] == f["raw/frames_avg"].shape[0]
+
+
+def test_non_psf_safe_camera_params_are_rejected(tmp_path: Path) -> None:
+    params = _camera_params(tmp_path / "camera_params_psf_safe.json")
+    payload = json.loads(params.read_text(encoding="utf-8"))
+    payload["validity"]["psf_exposure_safe"] = False
+    params.write_text(json.dumps(payload), encoding="utf-8")
+    plan = _plan(tmp_path, params)
+
+    with pytest.raises(ValueError, match="psf_exposure_safe"):
+        run_pupil_scan(plan, dry_run=True)
+
+
+def test_accept_psf_safe_camera_params_regardless_of_filename(tmp_path: Path) -> None:
+    params = _camera_params(tmp_path / "foo.json")
+    plan = _plan(tmp_path, params)
+
+    out = run_pupil_scan(plan, dry_run=True)
+    assert out.exists()
+    with h5py.File(out, "r") as f:
+        raw = f["camera/camera_params_source_json"][()]
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        provenance = json.loads(raw)
+        assert provenance["camera_params"]["validity"]["psf_exposure_safe"] is True
+

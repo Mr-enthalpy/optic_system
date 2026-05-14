@@ -7,7 +7,7 @@ max-pixel headroom across a predefined wavelength set while preserving usable
 signal strength. Global saturated fraction is recorded only as a diagnostic.
 
 Outputs:
-  data/raw/bishe_exposure_psf_safe_sweep.h5
+  data/raw/bishe_psf_safe_exposure.h5
   outputs/exposure_calibration/camera_params_psf_safe.json
 
 Constraints:
@@ -51,7 +51,7 @@ def _now_ns() -> int:
 # ---------------------------------------------------------------------------
 
 
-def load_exposure_sweep_plan(path: str | Path) -> dict[str, Any]:
+def load_psf_safe_exposure_plan(path: str | Path) -> dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         plan = yaml.safe_load(f)
     _validate_plan(plan)
@@ -252,7 +252,7 @@ def _worst_signal_wavelength(results_per_wl: list[dict]) -> dict:
     return min(results_per_wl, key=lambda r: r["p_signal"])
 
 
-def run_exposure_sweep(
+def run_psf_safe_exposure(
     plan: dict[str, Any],
     camera_service,
     lcd_service,
@@ -261,7 +261,7 @@ def run_exposure_sweep(
     dry_run: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
     _ensure_sys_path()
-    from tasks.exposure_sweep_h5 import ExposureSweepWriter
+    from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
     from tasks.capture_forward_dataset import CameraCaptureAdapter
     from capture.frame_capture import FrameCaptureHelper
     from devices.frame_stream import FrameStreamClient
@@ -308,7 +308,7 @@ def run_exposure_sweep(
             camera_adapter = _make_fake_adapter()
             full_scale = 255.0
 
-        writer = ExposureSweepWriter(
+        writer = PsfSafeExposureWriter(
             output_raw,
             plan_id=plan_id,
             frames_per_capture=k,
@@ -385,7 +385,7 @@ def run_exposure_sweep(
             return results
 
         # ---- Phase 1: gain = gain_min -------------------------------------
-        print(f"\nPhase 1 — searching at gain_min={gain_min}")
+        print(f"\nPhase 1 -searching at gain_min={gain_min}")
         gain = gain_min
         exposure = exposure_start
         max_safe_exposure: float | None = None
@@ -426,13 +426,13 @@ def run_exposure_sweep(
                   f"({selection_reason})")
         else:
             print(f"\n  signal too weak at gain_min: p_signal={worst['p_signal']:.1f}")
-            print(f"  entering Phase 2 — elevated gain search")
+            print(f"  entering Phase 2 -elevated gain search")
 
             # ---- Phase 2: elevated gain --------------------------------
             found = False
             gain = gain_min + gain_step
             while gain <= gain_max:
-                print(f"\nPhase 2 — trying gain={gain}")
+                print(f"\nPhase 2 -trying gain={gain}")
                 exposure = exposure_start
                 max_safe_at_gain: float | None = None
                 while exposure >= exposure_min:
@@ -469,7 +469,7 @@ def run_exposure_sweep(
                 selection_reason = "psf_safe_gain_min_low_signal_fallback"
                 print(f"\n  WARNING: all gains safe-but-dim. "
                       f"Accepting gain_min safe exposure={safe_exposure} "
-                      f"(global signal low — expected when LCD active region "
+                      f"(global signal low -expected when LCD active region "
                       f"is small relative to sensor. Pupil scan (Phase 3.1) "
                       f"will determine the ROI.)")
 
@@ -620,7 +620,7 @@ def main() -> None:
         description="Phase 3.0.5b PSF-safe camera exposure/gain refinement",
     )
     parser.add_argument(
-        "--plan", default="plans/bishe_exposure_psf_safe_sweep.yaml",
+        "--plan", default="plans/bishe_psf_safe_exposure.yaml",
         help="Path to exposure sweep plan YAML",
     )
     parser.add_argument(
@@ -650,11 +650,11 @@ def main() -> None:
         print(f"plan not found: {plan_path}", file=sys.stderr)
         sys.exit(1)
 
-    plan = load_exposure_sweep_plan(plan_path)
+    plan = load_psf_safe_exposure_plan(plan_path)
 
     if args.dry_run:
         print("=== DRY RUN (no hardware) ===")
-        run_exposure_sweep(plan, None, None, None, dry_run=True)
+        run_psf_safe_exposure(plan, None, None, None, dry_run=True)
         print("Dry run complete.")
         return
 
@@ -689,7 +689,7 @@ def main() -> None:
               f"subpixel_axis={lcd_service.subpixel_axis}")
         print()
 
-        _, result = run_exposure_sweep(
+        _, result = run_psf_safe_exposure(
             plan, camera_service, lcd_service, tls_service,
         )
 

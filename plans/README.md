@@ -16,7 +16,7 @@ consume the raw HDF5 to produce processed results.
 |---|---|
 | `hardware_smoke_no_tls.yaml` | Hardware smoke test: camera + LCD, no TLS |
 | `hardware_smoke_with_tls.yaml` | Hardware smoke test: camera + LCD + TLS |
-| `bishe_exposure_psf_safe_sweep.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
+| `bishe_psf_safe_exposure.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
 | `bishe_pupil_scan.yaml` | Phase 3.1 procedural effective LCD pupil scan |
 
 ## Exposure safety policy
@@ -28,10 +28,10 @@ A small global saturated fraction can still mean the PSF core is saturated.
 Phase 3.0.5b introduces PSF-safe exposure selection using max-pixel headroom
 as the primary constraint.
 
-`plans/bishe_exposure_psf_safe_sweep.yaml` writes:
+`plans/bishe_psf_safe_exposure.yaml` writes:
 
 ```text
-data/raw/bishe_exposure_psf_safe_sweep.h5
+data/raw/bishe_psf_safe_exposure.h5
 outputs/exposure_calibration/camera_params_psf_safe.json
 ```
 
@@ -54,10 +54,8 @@ known bad pixels; no implicit hot-pixel exemption is allowed.
   measurably affect camera captures.
 - **Input:** `camera_params_source` from Phase 3.0.5b by default
   (`outputs/exposure_calibration/camera_params_psf_safe.json`).
-- **Coarse-only exception:** Phase 3.1 coarse localization may use previous
-  `camera_params.json` for first-pass scan only. Phase 3.1.1 fine strip scan,
-  dOTF, PSF dictionary, and PSF repeatability must use
-  `camera_params_psf_safe.json` by default.
+- **Camera params policy:** All Phase 3 captures must use
+  `camera_params_psf_safe.json`.
 - **Masks:** Generated procedurally at runtime by
   `tasks/pupil_scan_masks.py`; the plan does not list hundreds of mask files.
 - **Output raw HDF5:** `data/raw/bishe_pupil_scan.h5`.
@@ -146,3 +144,4 @@ output_filename: <string>  # basename for raw_capture.h5
 
 See `tasks/capture_plan.py` and `tasks/capture_forward_dataset.py` for full
 schema and loading logic.
+

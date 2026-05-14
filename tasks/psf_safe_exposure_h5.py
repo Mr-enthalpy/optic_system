@@ -10,7 +10,7 @@ import h5py
 import numpy as np
 
 
-class ExposureSweepWriteError(RuntimeError):
+class PsfSafeExposureWriteError(RuntimeError):
     pass
 
 
@@ -22,7 +22,7 @@ def _json_str(obj: Any) -> str:
     return json.dumps(obj, indent=2, default=str)
 
 
-class ExposureSweepWriter:
+class PsfSafeExposureWriter:
     """
     Dedicated HDF5 writer for PSF-safe camera exposure/gain sweep.
 
@@ -32,7 +32,7 @@ class ExposureSweepWriter:
     ``RawCaptureWriter`` but uses sweep-specific indexing.
     """
 
-    def __init__(self, output_path: str | Path, plan_id: str = "exposure_sweep",
+    def __init__(self, output_path: str | Path, plan_id: str = "psf_safe_exposure",
                  frames_per_capture: int = 5):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -53,7 +53,7 @@ class ExposureSweepWriter:
     def path(self) -> Path:
         return self._path
 
-    def open(self) -> ExposureSweepWriter:
+    def open(self) -> PsfSafeExposureWriter:
         if self._file is not None:
             return self
         self._file = h5py.File(str(self._path), "w")
@@ -156,14 +156,14 @@ class ExposureSweepWriter:
     ) -> None:
         _ensure_open(self._file)
         if self._closed:
-            raise ExposureSweepWriteError("file already closed")
+            raise PsfSafeExposureWriteError("file already closed")
 
         f = self._file
         row = self._n_written
 
         avg = np.asarray(frames_avg, dtype=np.float64)
         if avg.ndim != 2:
-            raise ExposureSweepWriteError(
+            raise PsfSafeExposureWriteError(
                 f"frames_avg must be 2D [H, W], got shape {avg.shape}"
             )
 
@@ -235,7 +235,7 @@ class ExposureSweepWriter:
     def close(self) -> None:
         self.finalize(completed=True)
 
-    def __enter__(self) -> ExposureSweepWriter:
+    def __enter__(self) -> PsfSafeExposureWriter:
         self.open()
         return self
 
@@ -253,7 +253,7 @@ class ExposureSweepWriter:
 
 def _ensure_open(file: h5py.File | None) -> h5py.File:
     if file is None:
-        raise ExposureSweepWriteError("file not open")
+        raise PsfSafeExposureWriteError("file not open")
     return file
 
 

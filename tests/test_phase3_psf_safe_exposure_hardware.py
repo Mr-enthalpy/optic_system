@@ -1,9 +1,9 @@
 """
-Phase 3.0.5 — Hardware exposure sweep test (opt-in).
+Phase 3.0.5b PSF-safe exposure hardware test (opt-in).
 
 Requirements:
     OPTIC_SYSTEM_RUN_PHASE3_HARDWARE_TESTS=1
-    OPTIC_SYSTEM_RUN_EXPOSURE_SWEEP_HARDWARE_TESTS=1
+    OPTIC_SYSTEM_RUN_PSF_SAFE_EXPOSURE_HARDWARE_TESTS=1
     TLS_C1_SERIAL=...  (if TLS is available)
 """
 
@@ -24,11 +24,11 @@ _REPO = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.phase3_hardware
 
 _HW_ENABLED = os.environ.get("OPTIC_SYSTEM_RUN_PHASE3_HARDWARE_TESTS") == "1"
-_SWEEP_ENABLED = os.environ.get("OPTIC_SYSTEM_RUN_EXPOSURE_SWEEP_HARDWARE_TESTS") == "1"
+_PSF_SAFE_ENABLED = os.environ.get("OPTIC_SYSTEM_RUN_PSF_SAFE_EXPOSURE_HARDWARE_TESTS") == "1"
 
-if not _HW_ENABLED or not _SWEEP_ENABLED:
+if not _HW_ENABLED or not _PSF_SAFE_ENABLED:
     pytest.skip(
-        "Phase 3 exposure sweep hardware tests are opt-in",
+        "Phase 3 PSF-safe exposure hardware tests are opt-in",
         allow_module_level=True,
     )
 
@@ -39,20 +39,20 @@ def _ensure_sys_path() -> None:
         __import__("sys").path.insert(0, root)
 
 
-def test_exposure_sweep_hardware() -> None:
+def test_psf_safe_exposure_hardware() -> None:
     _ensure_sys_path()
-    from scripts.calibrate_camera_exposure_sweep import (
-        load_exposure_sweep_plan,
-        run_exposure_sweep,
+    from scripts.calibrate_psf_safe_exposure import (
+        load_psf_safe_exposure_plan,
+        run_psf_safe_exposure,
     )
     from devices.camera_service import CameraServiceClient
     from devices.lcd_service import LCDService
 
-    plan_path = _REPO / "plans" / "bishe_exposure_psf_safe_sweep.yaml"
+    plan_path = _REPO / "plans" / "bishe_psf_safe_exposure.yaml"
     if not plan_path.exists():
         pytest.skip(f"plan not found: {plan_path}")
 
-    plan = load_exposure_sweep_plan(plan_path)
+    plan = load_psf_safe_exposure_plan(plan_path)
 
     camera_index = int(os.environ.get("OPTIC_SYSTEM_CAMERA_INDEX", "0"))
     display_index_raw = os.environ.get("OPTIC_SYSTEM_LCD_DISPLAY_INDEX", "").strip()
@@ -86,7 +86,7 @@ def test_exposure_sweep_hardware() -> None:
         reply = camera_service.open_camera(index=camera_index, disable_trigger=True)
         print(f"  camera: {reply.get('serial')} {reply['width']}x{reply['height']}")
 
-        h5_path, result = run_exposure_sweep(
+        h5_path, result = run_psf_safe_exposure(
             plan, camera_service, lcd_service, tls_service,
         )
 
@@ -151,3 +151,5 @@ def test_exposure_sweep_hardware() -> None:
         lcd_service.close()
         if tls_service:
             tls_service.close()
+
+

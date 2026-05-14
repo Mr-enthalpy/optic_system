@@ -34,7 +34,7 @@ def main() -> None:
         description="Inspect exposure sweep HDF5",
     )
     parser.add_argument(
-        "h5_path", nargs="?", default="data/raw/bishe_exposure_psf_safe_sweep.h5",
+        "h5_path", nargs="?", default="data/raw/bishe_psf_safe_exposure.h5",
         help="Path to exposure sweep HDF5",
     )
     parser.add_argument(

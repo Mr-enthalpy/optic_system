@@ -25,6 +25,8 @@ No intermediate step re-acquires hardware data directly.
 ### Capture plan
 
 - `plans/bishe_pupil_scan.yaml`
+- Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`
+  is mandatory.
 - Masks: a narrow vertical bar swept across X, a narrow horizontal bar swept
   across Y.
 - Wavelength: single wavelength, fixed.
@@ -60,6 +62,7 @@ averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
 ### Capture plan
 
 - `plans/bishe_psf_repeatability.yaml`
+- Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - Masks: 2-3 distinct masks, each repeated K times.
 - Wavelength: single wavelength, fixed.
 - Camera: burst of N frames per capture.
@@ -98,6 +101,7 @@ and/or phase is sufficient for this milestone.
 ### Capture plan
 
 - `plans/bishe_dotf_edge_perturb.yaml`
+- Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - Masks: base circular window + base circular window with perturbations at
   various edge positions.
 - Wavelength: single wavelength, fixed.
@@ -135,6 +139,7 @@ outputs/dotf/
 
 - `plans/bishe_psf_dict_single_lambda.yaml` — dictionary at one wavelength.
 - `plans/bishe_psf_dict_three_lambda.yaml` — dictionary at three wavelengths.
+- Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - Masks: gratings at various periods and orientations, checkerboards, radial
   patterns.
 - Wavelengths: 1 or 3 wavelengths.

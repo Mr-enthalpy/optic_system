@@ -15,8 +15,8 @@ provenance rule below.
 ### `outputs/exposure_calibration/`
 
 - **Phase:** 3.0.5b - PSF-safe exposure refinement
-- **Depends on:** `data/raw/bishe_exposure_psf_safe_sweep.h5` produced by
-  `scripts/calibrate_camera_exposure_sweep.py`.
+- **Depends on:** `data/raw/bishe_psf_safe_exposure.h5` produced by
+  `scripts/calibrate_psf_safe_exposure.py`.
 - **Produces:**
   - `camera_params_psf_safe.json` - exposure, gain, frame scale, per-wavelength
     max-pixel diagnostics, and PSF-safe validity flags.
@@ -33,14 +33,8 @@ provenance rule below.
 - **Bad pixels:** Current Phase 3.0.5b has no bad-pixel mask. Any full-scale
   burst pixel is unsafe. A future bad-pixel mask may exempt only explicitly
   marked known bad pixels; no implicit hot-pixel exemption is allowed.
-- **Downstream default:** Phase 3.1 coarse localization may use previous
-  camera_params.json for first-pass scan only. Phase 3.1.1 fine strip scan,
-  dOTF, PSF dictionary, and PSF repeatability must use
-  camera_params_psf_safe.json by default.
-- **Revoked coarse output:** The old
-  `outputs/exposure_calibration/camera_params.json` has been revoked and is no
-  longer a run input. Historical PR #24 data should rely on raw HDF5 camera
-  provenance instead of restoring that unsafe JSON.
+- **Downstream default:** All Phase 3 captures and analyses must use
+  `camera_params_psf_safe.json`.
 - **Validity boundary:** PSF-safe exposure only means local overexposure has
   been rejected by max-pixel headroom. It does not imply scientific calibration
   validity, optical alignment validity, or training-ready data.
@@ -61,6 +55,15 @@ provenance rule below.
 - **Script:** `scripts/analyze_pupil_scan.py`
 - **Status:** intermediate; estimates active modulation support, not
   scientific calibration validity.
+
+### `outputs/legacy_phase3_1_coarse_pupil_scan/`
+
+- **Status:** historical only; not downstream-usable.
+- **Reason:** These PR #24 artifacts were captured with the revoked
+  `camera_params.json` coarse exposure parameters and may contain
+  clipping/local saturation.
+- **Policy:** Do not use this directory as an operational input. New Phase 3
+  captures must regenerate pupil-scan outputs from PSF-safe camera parameters.
 
 ### `outputs/psf_repeatability/`
 
@@ -150,3 +153,4 @@ directories with `os.makedirs(..., exist_ok=True)`.
 
 If raw capture HDF5 files are written to `outputs/`, they should be placed in
 the same subdirectory as their downstream analysis outputs for co-location.
+

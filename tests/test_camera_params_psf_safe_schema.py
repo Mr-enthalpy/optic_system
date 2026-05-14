@@ -6,15 +6,15 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from scripts.calibrate_camera_exposure_sweep import _build_result
-from tasks.exposure_sweep_h5 import ExposureSweepWriter
+from scripts.calibrate_psf_safe_exposure import _build_result
+from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
 
 
 def _plan(tmp_path: Path) -> dict:
     return {
-        "plan_id": "bishe_exposure_psf_safe_sweep",
+        "plan_id": "bishe_psf_safe_exposure",
         "output": {
-            "raw_h5": str(tmp_path / "bishe_exposure_psf_safe_sweep.h5"),
+            "raw_h5": str(tmp_path / "bishe_psf_safe_exposure.h5"),
             "camera_params_json": str(tmp_path / "camera_params_psf_safe.json"),
         },
         "wavelengths": [{"wavelength_nm": 550.0}],
@@ -68,8 +68,8 @@ def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
     )
 
     assert result["schema_version"] == "1.0"
-    assert result["plan_id"] == "bishe_exposure_psf_safe_sweep"
-    assert result["source_raw_capture_h5"].endswith("bishe_exposure_psf_safe_sweep.h5")
+    assert result["plan_id"] == "bishe_psf_safe_exposure"
+    assert result["source_raw_capture_h5"].endswith("bishe_psf_safe_exposure.h5")
     assert result["frame_dtype_full_scale"] == 255
     assert result["global_safe_camera"] == {
         "exposure_us": 5000.0,
@@ -111,9 +111,9 @@ def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
     }
 
 
-def test_exposure_sweep_h5_psf_safe_schema_and_processing_flags(tmp_path: Path) -> None:
+def test_psf_safe_exposure_h5_psf_safe_schema_and_processing_flags(tmp_path: Path) -> None:
     h5_path = tmp_path / "sweep.h5"
-    with ExposureSweepWriter(h5_path, plan_id="bishe_exposure_psf_safe_sweep") as writer:
+    with PsfSafeExposureWriter(h5_path, plan_id="bishe_psf_safe_exposure") as writer:
         writer.set_full_scale(255)
         writer.write_plan_json(_plan(tmp_path))
         writer.append_sweep_row(

@@ -54,7 +54,6 @@ def test_phase3_pupil_scan_hardware_smoke() -> None:
     plan = {
         "plan_id": "phase3_pupil_hw_smoke",
         "camera_params_source": str(camera_params_source),
-        "require_psf_safe_camera_params": True,
         "wavelength": {"wavelength_nm": 550.0, "grating": 1, "settle_ms": 0},
         "lcd": {
             "settle_ms": 50,
