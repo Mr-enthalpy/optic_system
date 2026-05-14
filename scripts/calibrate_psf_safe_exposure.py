@@ -361,9 +361,10 @@ def _estimate_safe_bound_for_wavelength(
 @dataclass
 class _GainResult:
     gain_db: float
-    exposure_us: float | None
-    psf_safe: bool
+    exposure_us: float | None = None
+    psf_safe: bool = False
     low_signal: bool = True
+    per_wavelength_bounds: dict[str, float] = field(default_factory=dict)
     final_rows: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -501,7 +502,6 @@ def run_psf_safe_exposure(
             )
 
         all_results: list[dict] = []
-        per_wavelength_bounds: dict[str, float] = {}
         selection_reason: str | None = None
         safe_exposure: float | None = None
         safe_gain: float | None = None
@@ -643,7 +643,6 @@ def run_psf_safe_exposure(
             return rows
 
         def _estimate_global_for_gain(at_gain: float) -> _GainResult:
-            nonlocal per_wavelength_bounds
             bounds: dict[str, float] = {}
             R_upper = exposure_start
             all_safe = True
@@ -661,10 +660,9 @@ def run_psf_safe_exposure(
                 R_upper = bound
 
             if not all_safe:
-                return _GainResult(gain_db=at_gain, exposure_us=None, psf_safe=False)
+                return _GainResult(gain_db=at_gain, psf_safe=False)
 
             global_exposure = min(bounds.values()) if bounds else 0.0
-            per_wavelength_bounds = bounds
 
             rows = _final_verification_sweep(
                 at_exposure=global_exposure, at_gain=at_gain,
@@ -674,13 +672,15 @@ def run_psf_safe_exposure(
             psf_safe = all(bool(r["psf_safe"]) for r in rows)
             if not psf_safe:
                 return _GainResult(
-                    gain_db=at_gain, exposure_us=global_exposure, psf_safe=False,
+                    gain_db=at_gain, exposure_us=global_exposure,
+                    psf_safe=False, per_wavelength_bounds=bounds,
                 )
 
             low_sig = any(r["low_signal"] for r in rows)
             return _GainResult(
                 gain_db=at_gain, exposure_us=global_exposure,
-                psf_safe=True, low_signal=low_sig, final_rows=rows,
+                psf_safe=True, low_signal=low_sig,
+                per_wavelength_bounds=bounds, final_rows=rows,
             )
 
         # ---- Lexicographic gain selection ----------------------------------
@@ -690,8 +690,13 @@ def run_psf_safe_exposure(
             gain_candidates.append(g)
             g += gain_step
 
+        gain_min_result: _GainResult | None = None
+        accepted_result: _GainResult | None = None
+
         for at_gain in gain_candidates:
             result = _estimate_global_for_gain(at_gain)
+            if at_gain == gain_min and result.psf_safe:
+                gain_min_result = result
             if not result.psf_safe:
                 if at_gain == gain_min:
                     msg = (
@@ -705,8 +710,7 @@ def run_psf_safe_exposure(
                     run_status.update(error=msg, completed=False)
                     writer.finalize(completed=False, error=msg)
                     return Path(output_raw), _build_result(
-                        plan, None, None, all_results, full_scale,
-                        per_wavelength_bounds=per_wavelength_bounds,
+                        plan, None, all_results, full_scale,
                         selection_reason="no_safe_usable_setting_found",
                         error=msg,
                     )
@@ -714,6 +718,7 @@ def run_psf_safe_exposure(
                 continue
 
             if not result.low_signal:
+                accepted_result = result
                 safe_exposure = result.exposure_us
                 safe_gain = at_gain
                 selection_reason = (
@@ -731,19 +736,27 @@ def run_psf_safe_exposure(
                 print(f"  safe but low signal at gain={at_gain}; trying next ...")
 
         else:
-            safe_exposure = result.exposure_us if 'result' in dir() and result.psf_safe else None
-            safe_gain = gain_min if safe_exposure is None else result.gain_db
-            if safe_exposure is None:
-                safe_exposure = per_wavelength_bounds.get(
-                    str(wls[0]["wavelength_nm"]), exposure_min
-                ) if per_wavelength_bounds else exposure_min
-                safe_gain = gain_min
-            selection_reason = "psf_safe_gain_min_low_signal_fallback"
-            print(f"\n  WARNING: all gains safe-but-dim. "
-                  f"Accepting gain_min safe exposure={safe_exposure} "
-                  f"(global signal low -expected when LCD active region "
-                  f"is small relative to sensor. Pupil scan (Phase 3.1) "
-                  f"will determine the ROI.)")
+            if gain_min_result is not None and gain_min_result.psf_safe:
+                accepted_result = gain_min_result
+                safe_exposure = gain_min_result.exposure_us
+                safe_gain = gain_min_result.gain_db
+                selection_reason = "gain_min_psf_safe_low_signal_fallback"
+                print(f"\n  WARNING: all gains safe-but-dim. "
+                      f"Accepting gain_min safe exposure={safe_exposure} "
+                      f"(global signal low -expected when LCD active region "
+                      f"is small relative to sensor. Pupil scan (Phase 3.1) "
+                      f"will determine the ROI.)")
+            else:
+                msg = "FAIL: no PSF-safe setting found at any gain"
+                print(f"\n{msg}")
+                run_status.append_log("CRITICAL", msg)
+                run_status.update(error=msg, completed=False)
+                writer.finalize(completed=False, error=msg)
+                return Path(output_raw), _build_result(
+                    plan, None, all_results, full_scale,
+                    selection_reason="no_safe_usable_setting_found",
+                    error=msg,
+                )
 
         run_status.append_log("INFO", "PSF-safe exposure calibration complete",
                               exposure_us=safe_exposure, gain_db=safe_gain,
@@ -756,8 +769,7 @@ def run_psf_safe_exposure(
         writer.finalize(completed=True)
 
         result = _build_result(
-            plan, safe_exposure, safe_gain, all_results, full_scale,
-            per_wavelength_bounds=per_wavelength_bounds,
+            plan, accepted_result, all_results, full_scale,
             selection_reason=selection_reason,
         )
 
@@ -790,46 +802,37 @@ def run_psf_safe_exposure(
 
 def _build_result(
     plan: dict,
-    exposure_us: float | None,
-    gain_db: float | None,
+    accepted: _GainResult | None,
     all_results: list[dict],
     full_scale: float,
     selection_reason: str | None = None,
     error: str | None = None,
-    per_wavelength_bounds: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     wls = plan["wavelengths"]
 
+    exposure_us = accepted.exposure_us if accepted else None
+    gain_db = accepted.gain_db if accepted else None
+    final_rows = accepted.final_rows if accepted else []
+    bounds = accepted.per_wavelength_bounds if accepted else {}
+
     wl_metrics: dict[str, dict] = {}
-    for wl in wls:
-        wl_nm = str(wl["wavelength_nm"])
-        matching = [r for r in all_results if r["wavelength_nm"] == float(wl_nm)]
-        if exposure_us is not None and gain_db is not None:
-            selected_matching = [
-                r for r in matching
-                if "exposure_us" in r
-                and "gain_db" in r
-                and float(r["exposure_us"]) == float(exposure_us)
-                and float(r["gain_db"]) == float(gain_db)
-            ]
-            if selected_matching:
-                matching = selected_matching
-        if matching:
-            last = matching[-1]
+    for row in final_rows:
+        wl_nm = str(row.get("wavelength_nm", ""))
+        if wl_nm:
             wl_metrics[wl_nm] = {
-                "measured_at_exposure_us": float(exposure_us) if exposure_us is not None else None,
-                "measured_at_gain_db": float(gain_db) if gain_db is not None else None,
-                "peak_pixel_burst": last["peak_pixel_burst"],
-                "peak_pixel_avg": last.get("peak_pixel_avg"),
-                "peak_pixel_fraction_burst": last["peak_pixel_fraction_burst"],
-                "peak_margin_to_full_scale": last["peak_margin_to_full_scale"],
-                "p99_0_avg": last.get("p99_0_avg"),
-                "p99_9_avg": last.get("p99_9_avg"),
-                "p_signal": last["p_signal"],
-                "dynamic_range": last["dynamic_range"],
-                "psf_safe": bool(last["psf_safe"]),
-                "unsafe_reason": last.get("unsafe_reason"),
-                "low_signal": last["low_signal"],
+                "measured_at_exposure_us": row.get("exposure_us"),
+                "measured_at_gain_db": row.get("gain_db"),
+                "peak_pixel_burst": row["peak_pixel_burst"],
+                "peak_pixel_avg": row.get("peak_pixel_avg"),
+                "peak_pixel_fraction_burst": row["peak_pixel_fraction_burst"],
+                "peak_margin_to_full_scale": row["peak_margin_to_full_scale"],
+                "p99_0_avg": row.get("p99_0_avg"),
+                "p99_9_avg": row.get("p99_9_avg"),
+                "p_signal": row["p_signal"],
+                "dynamic_range": row["dynamic_range"],
+                "psf_safe": bool(row["psf_safe"]),
+                "unsafe_reason": row.get("unsafe_reason"),
+                "low_signal": row["low_signal"],
             }
 
     global_safe: dict[str, Any] = {
@@ -869,7 +872,7 @@ def _build_result(
         "per_wavelength_metrics": wl_metrics,
         "search_diagnostics": {
             "binary_search_eps_us": float(plan["camera_search"].get("binary_search_eps_us", 50.0)),
-            "per_wavelength_safe_upper_bounds": per_wavelength_bounds or {},
+            "per_wavelength_safe_upper_bounds": bounds,
         },
         "selection_reason": selection_reason,
         "validity": {

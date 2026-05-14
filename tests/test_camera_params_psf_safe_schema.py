@@ -6,7 +6,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from scripts.calibrate_psf_safe_exposure import _build_result
+from scripts.calibrate_psf_safe_exposure import _build_result, _GainResult
 from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
 
 
@@ -32,7 +32,7 @@ def _plan(tmp_path: Path) -> dict:
 
 
 def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
-    all_results = [
+    final_rows = [
         {
             "wavelength_nm": 550.0,
             "exposure_us": 5000.0,
@@ -50,9 +50,17 @@ def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
             "low_signal": False,
         },
     ]
+    accepted = _GainResult(
+        gain_db=0.0,
+        exposure_us=5000.0,
+        psf_safe=True,
+        low_signal=False,
+        per_wavelength_bounds={"550.0": 5000.0},
+        final_rows=final_rows,
+    )
 
     result = _build_result(
-        _plan(tmp_path), 5000.0, 0.0, all_results, 255,
+        _plan(tmp_path), accepted, [], 255,
     )
 
     assert result["schema_version"] == "1.0"

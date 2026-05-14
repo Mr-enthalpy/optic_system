@@ -195,6 +195,7 @@ class TestPsfSafeExposureWriter:
 
 class TestCameraParamsJSON:
     def test_psf_safety_policy_schema(self):
+        from scripts.calibrate_psf_safe_exposure import _GainResult
         plan = {
             "plan_id": "test",
             "output": {"raw_h5": "data/raw/test.h5"},
@@ -207,7 +208,7 @@ class TestCameraParamsJSON:
                 "min_dynamic_range_fraction": 0.08,
             },
         }
-        all_results = [{
+        final_rows = [{
             "wavelength_nm": 550.0,
             "exposure_us": 5000.0,
             "gain_db": 0.0,
@@ -223,8 +224,17 @@ class TestCameraParamsJSON:
             "unsafe_reason": None,
             "low_signal": False,
         }]
+        accepted = _GainResult(
+            gain_db=0.0,
+            exposure_us=5000.0,
+            psf_safe=True,
+            low_signal=False,
+            per_wavelength_bounds={"550.0": 5000.0},
+            final_rows=final_rows,
+        )
+        all_results: list = []
 
-        result = _build_result(plan, 5000.0, 0.0, all_results, 255.0, selection_reason="psf_safe")
+        result = _build_result(plan, accepted, all_results, 255.0, selection_reason="psf_safe")
 
         assert result["psf_safety_policy"]["rule"] == "all_frames_all_pixels_strictly_below_full_scale"
         assert result["psf_safety_policy"]["allow_full_scale_pixel"] is False
@@ -272,3 +282,328 @@ def test_dry_run_produces_h5_and_json(tmp_path):
 
     assert h5_path.exists()
     assert result["psf_safety_policy"]["rule"] == "all_frames_all_pixels_strictly_below_full_scale"
+
+
+class TestPerWavelengthBoundsAndFinalMetrics:
+    def test_bounds_differ_global_is_min_all_metrics_at_global(self, tmp_path):
+        from scripts.calibrate_psf_safe_exposure import _GainResult, _build_result
+
+        final_rows = [
+            {"wavelength_nm": 450.0, "exposure_us": 8000.0, "gain_db": 0.0,
+             "peak_pixel_burst": 120.0, "peak_pixel_avg": 110.0,
+             "peak_pixel_fraction_burst": 0.47, "peak_margin_to_full_scale": 135.0,
+             "p99_0_avg": 100.0, "p99_9_avg": 115.0,
+             "p_signal": 105.0, "dynamic_range": 80.0,
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+            {"wavelength_nm": 550.0, "exposure_us": 8000.0, "gain_db": 0.0,
+             "peak_pixel_burst": 125.0, "peak_pixel_avg": 112.0,
+             "peak_pixel_fraction_burst": 0.49, "peak_margin_to_full_scale": 130.0,
+             "p99_0_avg": 102.0, "p99_9_avg": 118.0,
+             "p_signal": 108.0, "dynamic_range": 85.0,
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+            {"wavelength_nm": 650.0, "exposure_us": 8000.0, "gain_db": 0.0,
+             "peak_pixel_burst": 118.0, "peak_pixel_avg": 108.0,
+             "peak_pixel_fraction_burst": 0.46, "peak_margin_to_full_scale": 137.0,
+             "p99_0_avg": 98.0, "p99_9_avg": 113.0,
+             "p_signal": 102.0, "dynamic_range": 78.0,
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+        ]
+
+        accepted = _GainResult(
+            gain_db=0.0, exposure_us=8000.0, psf_safe=True, low_signal=False,
+            per_wavelength_bounds={"450.0": 20000.0, "550.0": 12000.0, "650.0": 8000.0},
+            final_rows=final_rows,
+        )
+        all_results: list = []
+
+        plan = {
+            "plan_id": "bounds_test",
+            "output": {"raw_h5": str(tmp_path / "bounds.h5")},
+            "wavelengths": [{"wavelength_nm": 450.0}, {"wavelength_nm": 550.0}, {"wavelength_nm": 650.0}],
+            "camera_search": {"gain_db_min": 0.0, "frames_per_setting": 3, "binary_search_eps_us": 50.0},
+            "psf_safety": {},
+            "signal": {"percentile": 99.0, "min_signal_fraction_threshold": 0.05,
+                       "min_dynamic_range_fraction": 0.02},
+        }
+
+        result = _build_result(plan, accepted, all_results, 255.0)
+
+        metrics = result["per_wavelength_metrics"]
+        global_exp = result["global_safe_camera"]["exposure_us"]
+        assert global_exp == 8000.0, f"expected 8000.0, got {global_exp}"
+        for wl_str in ("450.0", "550.0", "650.0"):
+            assert wl_str in metrics
+            assert metrics[wl_str]["measured_at_exposure_us"] == 8000.0
+            assert metrics[wl_str]["measured_at_gain_db"] == 0.0
+        bounds = result["search_diagnostics"]["per_wavelength_safe_upper_bounds"]
+        assert bounds == {"450.0": 20000.0, "550.0": 12000.0, "650.0": 8000.0}
+
+    def test_search_probe_rows_not_in_metrics(self, tmp_path, monkeypatch):
+        from scripts.calibrate_psf_safe_exposure import _GainResult, _build_result
+
+        final_rows = [
+            {"wavelength_nm": 450.0, "exposure_us": 8000.0, "gain_db": 0.0,
+             "peak_pixel_burst": 100.0, "peak_pixel_avg": 90.0,
+             "peak_pixel_fraction_burst": 0.4, "peak_margin_to_full_scale": 155.0,
+             "p99_0_avg": 80.0, "p99_9_avg": 95.0,
+             "p_signal": 85.0, "dynamic_range": 70.0,
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+            {"wavelength_nm": 550.0, "exposure_us": 8000.0, "gain_db": 0.0,
+             "peak_pixel_burst": 110.0, "peak_pixel_avg": 95.0,
+             "peak_pixel_fraction_burst": 0.43, "peak_margin_to_full_scale": 145.0,
+             "p99_0_avg": 85.0, "p99_9_avg": 100.0,
+             "p_signal": 90.0, "dynamic_range": 75.0,
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+        ]
+        probe_rows = [
+            {"wavelength_nm": 450.0, "exposure_us": 20000.0, "gain_db": 0.0,
+             "peak_pixel_burst": 200.0, "peak_pixel_avg": 180.0,
+             "peak_pixel_fraction_burst": 0.8, "peak_margin_to_full_scale": 55.0,
+             "p99_0_avg": 170.0, "p99_9_avg": 190.0,
+             "p_signal": 175.0, "dynamic_range": 150.0,
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+        ]
+
+        accepted = _GainResult(
+            gain_db=0.0, exposure_us=8000.0, psf_safe=True, low_signal=False,
+            per_wavelength_bounds={"450.0": 20000.0, "550.0": 12000.0},
+            final_rows=final_rows,
+        )
+        all_results = probe_rows + final_rows
+
+        plan = {
+            "plan_id": "probes_test",
+            "output": {"raw_h5": str(tmp_path / "probes.h5")},
+            "wavelengths": [{"wavelength_nm": 450.0}, {"wavelength_nm": 550.0}],
+            "camera_search": {"gain_db_min": 0.0, "frames_per_setting": 3,
+                              "binary_search_eps_us": 50.0},
+            "psf_safety": {},
+            "signal": {"percentile": 99.0, "min_signal_fraction_threshold": 0.05,
+                       "min_dynamic_range_fraction": 0.02},
+        }
+
+        result = _build_result(plan, accepted, all_results, 255.0)
+
+        metrics = result["per_wavelength_metrics"]
+        for wl_str in ("450.0", "550.0"):
+            assert metrics[wl_str]["measured_at_exposure_us"] == 8000.0
+            assert metrics[wl_str]["peak_pixel_burst"] <= 110.0
+        assert result["search_diagnostics"]["per_wavelength_safe_upper_bounds"] == {
+            "450.0": 20000.0, "550.0": 12000.0,
+        }
+
+
+class TestElevatedGainFallback:
+    def test_gain_min_low_signal_fallback_selects_gain_min(self, tmp_path, monkeypatch):
+        from scripts.calibrate_psf_safe_exposure import run_psf_safe_exposure
+
+        class _LowSignalFakeCamera:
+            def apply_camera_params(self, exposure_us=None, gain_db=None):
+                self.exposure_us = float(exposure_us) if exposure_us else None
+                self.gain_db = float(gain_db) if gain_db else None
+
+            def acquire_burst(self, k: int):
+                burst = np.full((k, 4, 4), 50.0, dtype=np.float64)
+                avg = burst.mean(axis=0, dtype=np.float64)
+                from types import SimpleNamespace
+                return SimpleNamespace(
+                    frames_avg=avg, burst=burst,
+                    metadata={"frame_dtype_full_scale": 255},
+                )
+
+        monkeypatch.setattr(
+            "scripts.calibrate_psf_safe_exposure._make_fake_adapter",
+            lambda: _LowSignalFakeCamera(),
+        )
+
+        plan = {
+            "plan_id": "fallback_test",
+            "wavelengths": [{"wavelength_nm": 550.0}],
+            "lcd": {"mode": "all_transmissive", "settle_ms": 0, "display_index": -1},
+            "camera_search": {
+                "exposure_us_start": 50000.0, "exposure_us_min": 100.0,
+                "exposure_us_step_factor": 0.5,
+                "gain_db_min": 0.0, "gain_db_max": 18.0, "gain_db_step_db": 6.0,
+                "frames_per_setting": 3,
+                "binary_search_eps_us": 50.0,
+            },
+            "psf_safety": {"rule": "all_frames_all_pixels_strictly_below_full_scale"},
+            "signal": {"percentile": 99.0, "min_signal_fraction_threshold": 0.99,
+                       "min_dynamic_range_fraction": 0.80},
+            "output": {
+                "raw_h5": str(tmp_path / "fallback.h5"),
+                "camera_params_json": str(tmp_path / "fallback.json"),
+            },
+            "lock_file": str(tmp_path / "lock.lock"),
+        }
+
+        _h5, result = run_psf_safe_exposure(plan, None, None, None, dry_run=True)
+
+        assert result["global_safe_camera"]["gain_db"] == 0.0
+        assert result["selection_reason"] == "gain_min_psf_safe_low_signal_fallback"
+        assert result["search_diagnostics"]["per_wavelength_safe_upper_bounds"] == {"550.0": 50000.0}
+
+    def test_fallback_bounds_match_accepted_gain(self, tmp_path, monkeypatch):
+        from scripts.calibrate_psf_safe_exposure import run_psf_safe_exposure
+
+        class _LowSigMultiWlCamera:
+            def apply_camera_params(self, exposure_us=None, gain_db=None):
+                self.exposure_us = float(exposure_us) if exposure_us else None
+                self.gain_db = float(gain_db) if gain_db else None
+
+            def acquire_burst(self, k: int):
+                burst = np.full((k, 4, 4), 50.0, dtype=np.float64)
+                avg = burst.mean(axis=0, dtype=np.float64)
+                from types import SimpleNamespace
+                return SimpleNamespace(
+                    frames_avg=avg, burst=burst,
+                    metadata={"frame_dtype_full_scale": 255},
+                )
+
+        monkeypatch.setattr(
+            "scripts.calibrate_psf_safe_exposure._make_fake_adapter",
+            lambda: _LowSigMultiWlCamera(),
+        )
+
+        plan = {
+            "plan_id": "bounds_fallback_test",
+            "wavelengths": [
+                {"wavelength_nm": 450.0}, {"wavelength_nm": 550.0}, {"wavelength_nm": 650.0},
+            ],
+            "lcd": {"mode": "all_transmissive", "settle_ms": 0, "display_index": -1},
+            "camera_search": {
+                "exposure_us_start": 50000.0, "exposure_us_min": 100.0,
+                "exposure_us_step_factor": 0.5,
+                "gain_db_min": 0.0, "gain_db_max": 0.0, "gain_db_step_db": 3.0,
+                "frames_per_setting": 3,
+                "binary_search_eps_us": 50.0,
+            },
+            "psf_safety": {"rule": "all_frames_all_pixels_strictly_below_full_scale"},
+            "signal": {"percentile": 99.0, "min_signal_fraction_threshold": 0.99,
+                       "min_dynamic_range_fraction": 0.80},
+            "output": {
+                "raw_h5": str(tmp_path / "bfb.h5"),
+                "camera_params_json": str(tmp_path / "bfb.json"),
+            },
+            "lock_file": str(tmp_path / "lock.lock"),
+        }
+
+        _h5, result = run_psf_safe_exposure(plan, None, None, None, dry_run=True)
+
+        assert result["global_safe_camera"]["gain_db"] == 0.0
+        bounds = result["search_diagnostics"]["per_wavelength_safe_upper_bounds"]
+        assert len(bounds) == 3
+        for wl_str in ("450.0", "550.0", "650.0"):
+            assert wl_str in bounds
+        assert result["per_wavelength_metrics"]["450.0"]["measured_at_gain_db"] == 0.0
+
+    def test_higher_gain_accepted_when_signal_ok(self, tmp_path, monkeypatch):
+        from scripts.calibrate_psf_safe_exposure import run_psf_safe_exposure
+
+        class _GainAwareFakeCamera:
+            def apply_camera_params(self, exposure_us=None, gain_db=None):
+                self.exposure_us = float(exposure_us) if exposure_us else None
+                self.gain_db = float(gain_db) if gain_db else None
+
+            def acquire_burst(self, k: int):
+                gain = float(self.gain_db or 0)
+                rng = np.random.default_rng(42 + int(gain * 100))
+                scale = 200.0 if gain >= 3.0 else 20.0
+                burst = rng.normal(scale, 20.0, (k, 8, 8)).astype(np.float64)
+                burst = np.clip(burst, 0.0, 240.0)
+                avg = burst.mean(axis=0, dtype=np.float64)
+                from types import SimpleNamespace
+                return SimpleNamespace(
+                    frames_avg=avg, burst=burst,
+                    metadata={"frame_dtype_full_scale": 255},
+                )
+
+        monkeypatch.setattr(
+            "scripts.calibrate_psf_safe_exposure._make_fake_adapter",
+            lambda: _GainAwareFakeCamera(),
+        )
+
+        plan = {
+            "plan_id": "high_gain_ok",
+            "wavelengths": [{"wavelength_nm": 550.0}],
+            "lcd": {"mode": "all_transmissive", "settle_ms": 0, "display_index": -1},
+            "camera_search": {
+                "exposure_us_start": 50000.0, "exposure_us_min": 100.0,
+                "exposure_us_step_factor": 0.5,
+                "gain_db_min": 0.0, "gain_db_max": 18.0, "gain_db_step_db": 6.0,
+                "frames_per_setting": 3,
+                "binary_search_eps_us": 50.0,
+            },
+            "psf_safety": {"rule": "all_frames_all_pixels_strictly_below_full_scale"},
+            "signal": {"percentile": 99.0, "min_signal_fraction_threshold": 0.30,
+                       "min_dynamic_range_fraction": 0.05},
+            "output": {
+                "raw_h5": str(tmp_path / "hi_gain.h5"),
+                "camera_params_json": str(tmp_path / "hi_gain.json"),
+            },
+            "lock_file": str(tmp_path / "lock.lock"),
+        }
+
+        _h5, result = run_psf_safe_exposure(plan, None, None, None, dry_run=True)
+
+        assert result["global_safe_camera"]["gain_db"] >= 3.0
+        assert result["selection_reason"] == "elevated_gain_due_to_low_signal"
+        assert result["global_safe_camera"]["gain_elevated"] is True
+
+    def test_psf_unsafe_at_higher_gain_skips_to_next(self, tmp_path, monkeypatch):
+        from scripts.calibrate_psf_safe_exposure import run_psf_safe_exposure
+
+        gain_sequence: list[float] = []
+
+        class _UnsafeGainFakeCamera:
+            def apply_camera_params(self, exposure_us=None, gain_db=None):
+                self.exposure_us = float(exposure_us) if exposure_us else None
+                self.gain_db = float(gain_db) if gain_db else None
+
+            def acquire_burst(self, k: int):
+                gain = float(self.gain_db or 0)
+                gain_sequence.append(gain)
+                exp = float(self.exposure_us or 0)
+                rng = np.random.default_rng(42)
+                if 0.0 < gain < 12.0 and exp < 40000.0:
+                    burst = np.full((k, 8, 8), 260.0, dtype=np.float64)
+                else:
+                    burst = rng.normal(190.0, 20.0, (k, 8, 8)).astype(np.float64)
+                    burst = np.clip(burst, 0.0, 240.0)
+                avg = burst.mean(axis=0, dtype=np.float64)
+                from types import SimpleNamespace
+                return SimpleNamespace(
+                    frames_avg=avg, burst=burst,
+                    metadata={"frame_dtype_full_scale": 255},
+                )
+
+        monkeypatch.setattr(
+            "scripts.calibrate_psf_safe_exposure._make_fake_adapter",
+            lambda: _UnsafeGainFakeCamera(),
+        )
+
+        plan = {
+            "plan_id": "skip_unsafe_gain",
+            "wavelengths": [{"wavelength_nm": 550.0}],
+            "lcd": {"mode": "all_transmissive", "settle_ms": 0, "display_index": -1},
+            "camera_search": {
+                "exposure_us_start": 50000.0, "exposure_us_min": 100.0,
+                "exposure_us_step_factor": 0.5,
+                "gain_db_min": 0.0, "gain_db_max": 18.0, "gain_db_step_db": 6.0,
+                "frames_per_setting": 3,
+                "binary_search_eps_us": 50.0,
+            },
+            "psf_safety": {"rule": "all_frames_all_pixels_strictly_below_full_scale"},
+            "signal": {"percentile": 99.0, "min_signal_fraction_threshold": 0.30,
+                       "min_dynamic_range_fraction": 0.05},
+            "output": {
+                "raw_h5": str(tmp_path / "skip_unsafe.h5"),
+                "camera_params_json": str(tmp_path / "skip_unsafe.json"),
+            },
+            "lock_file": str(tmp_path / "lock.lock"),
+        }
+
+        _h5, result = run_psf_safe_exposure(plan, None, None, None, dry_run=True)
+
+        assert result["global_safe_camera"]["gain_db"] not in (6.0,)
+        assert result["selection_reason"] != "no_safe_usable_setting_found"
