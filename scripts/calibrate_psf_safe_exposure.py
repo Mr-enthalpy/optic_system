@@ -46,6 +46,35 @@ def _now_ns() -> int:
     return time.monotonic_ns()
 
 
+class OptionalRunStatus:
+    """Publish run-status files when status_dir is given, otherwise no-op."""
+
+    def __init__(self, status_dir: Path | None, run_id: str):
+        self._publisher = None
+        if status_dir is not None:
+            from diagnostics.run_status import RunStatusPublisher
+            self._publisher = RunStatusPublisher(status_dir, run_id)
+
+    def update(self, **kwargs: Any) -> None:
+        if self._publisher is not None:
+            self._publisher.update(**kwargs)
+
+    def append_log(self, level: str, message: str, **fields: Any) -> None:
+        if self._publisher is not None:
+            self._publisher.append_log(level, message, **fields)
+
+    def write_frame_preview(self, frame: np.ndarray) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.write_frame_preview(frame)
+            except Exception:
+                pass
+
+    def write_frame_stats(self, stats: dict[str, Any]) -> None:
+        if self._publisher is not None:
+            self._publisher.write_frame_stats(stats)
+
+
 # ---------------------------------------------------------------------------
 # YAML loading
 # ---------------------------------------------------------------------------
@@ -259,6 +288,8 @@ def run_psf_safe_exposure(
     tls_service,
     *,
     dry_run: bool = False,
+    status_dir: Path | None = None,
+    status_preview_every: int = 1,
 ) -> tuple[Path, dict[str, Any]]:
     _ensure_sys_path()
     from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
@@ -321,6 +352,19 @@ def run_psf_safe_exposure(
         else:
             writer.write_lcd_metadata({"display_index": -1, "subpixel_axis": 1, "mode": "fake"})
 
+        run_status = OptionalRunStatus(status_dir, run_id=plan_id)
+        run_status.update(
+            plan_id=plan_id,
+            phase="3.0.5b",
+            capture_index=0,
+            n_captures=0,
+            camera_exposure_us=float(exposure_start),
+            camera_gain_db=float(gain_min),
+            camera_frame_dtype_full_scale=int(full_scale),
+        )
+        run_status.append_log("INFO", "PSF-safe exposure calibration started",
+                              exposure_start_us=exposure_start, gain_min_db=gain_min)
+
         all_results: list[dict] = []
         selection_reason: str | None = None
         safe_exposure: float | None = None
@@ -371,6 +415,32 @@ def run_psf_safe_exposure(
                     p_signal=row["p_signal"],
                     low_signal=row["low_signal"],
                 )
+
+                # --- status publishing ---
+                trial_idx = len(all_results) + 1
+                run_status.update(
+                    capture_index=trial_idx,
+                    n_captures=trial_idx,
+                    current_wavelength_nm=wl_nm,
+                    camera_exposure_us=float(at_exposure),
+                    camera_gain_db=float(at_gain),
+                )
+                run_status.write_frame_stats({
+                    "max_pixel": row["max_pixel"],
+                    "max_pixel_burst": row["max_pixel_burst"],
+                    "max_pixel_avg": row["max_pixel_avg"],
+                    "p99_9": row["p99_9"],
+                    "saturated_pixel_count": row["saturated_pixel_count"],
+                    "saturated_fraction": row["saturated_fraction"],
+                    "p_signal": row["p_signal"],
+                    "psf_safe": row["psf_safe"],
+                    "low_signal": row["low_signal"],
+                    "frame_dtype_full_scale": int(full_scale),
+                })
+                if trial_idx % max(1, int(status_preview_every)) == 0:
+                    run_status.write_frame_preview(row["frame"])
+                # -------------------------
+
                 all_results.append(row)
 
                 wl_label = f"{wl_nm}nm"
@@ -406,6 +476,8 @@ def run_psf_safe_exposure(
                 f"add ND filter, or close aperture."
             )
             print(f"\n{msg}")
+            run_status.append_log("CRITICAL", msg)
+            run_status.update(error=msg, completed=False)
             writer.finalize(completed=False, error=msg)
             return Path(output_raw), _build_result(
                 plan, None, None, all_results, full_scale,
@@ -473,6 +545,14 @@ def run_psf_safe_exposure(
                       f"is small relative to sensor. Pupil scan (Phase 3.1) "
                       f"will determine the ROI.)")
 
+        run_status.append_log("INFO", "PSF-safe exposure calibration complete",
+                              exposure_us=safe_exposure, gain_db=safe_gain,
+                              selection_reason=selection_reason)
+        run_status.update(
+            completed=True,
+            camera_exposure_us=float(safe_exposure) if safe_exposure else None,
+            camera_gain_db=float(safe_gain) if safe_gain else None,
+        )
         writer.finalize(completed=True)
 
         result = _build_result(
@@ -487,6 +567,15 @@ def run_psf_safe_exposure(
         print(f"\ncamera_params_psf_safe.json written to {json_path}")
 
         return Path(output_raw), result
+
+    except Exception as exc:
+        run_status.append_log("CRITICAL", str(exc))
+        run_status.update(error=str(exc), completed=False)
+        try:
+            writer.finalize(completed=False, error=str(exc))
+        except Exception:
+            pass
+        raise
 
     finally:
         lock.release()
@@ -643,7 +732,17 @@ def main() -> None:
         "--tls-serial", default=None,
         help="TLS serial number (if not set, TLS from env TLS_C1_SERIAL)",
     )
+    parser.add_argument(
+        "--status-dir", default=None,
+        help="Publish run-status files to this directory",
+    )
+    parser.add_argument(
+        "--status-preview-every", type=int, default=1,
+        help="Write frame preview every N trials (default 1)",
+    )
     args = parser.parse_args()
+
+    status_dir = Path(args.status_dir) if args.status_dir else None
 
     plan_path = _repo_root() / args.plan
     if not plan_path.exists():
@@ -654,7 +753,9 @@ def main() -> None:
 
     if args.dry_run:
         print("=== DRY RUN (no hardware) ===")
-        run_psf_safe_exposure(plan, None, None, None, dry_run=True)
+        run_psf_safe_exposure(plan, None, None, None, dry_run=True,
+                              status_dir=status_dir,
+                              status_preview_every=args.status_preview_every)
         print("Dry run complete.")
         return
 
@@ -691,6 +792,8 @@ def main() -> None:
 
         _, result = run_psf_safe_exposure(
             plan, camera_service, lcd_service, tls_service,
+            status_dir=status_dir,
+            status_preview_every=args.status_preview_every,
         )
 
         gsc = result.get("global_safe_camera", {})

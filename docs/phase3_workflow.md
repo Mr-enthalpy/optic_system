@@ -37,6 +37,29 @@ All processing steps between `raw_capture.h5` and final figures are
 reproducible scripts that read from HDF5 and write results to `outputs/`.
 No intermediate step re-acquires hardware data directly.
 
+## Run-status monitor integration
+
+Long-running capture and calibration tasks support an optional `--status-dir`
+argument.  When provided, the task publishes runtime diagnostics:
+
+- `state.json` — task identity, phase, progress, completion
+- `current_mask_preview.png` or `.npy` — downsample preview of active LCD mask
+- `latest_frame_preview.png` or `.npy` — latest camera frame preview
+- `frame_stats.json` — max, p99.9, saturated fraction, dtype scale
+- `log.jsonl` — structured event log
+
+A read-only monitor reads these files:
+
+```bash
+python scripts/monitor_run_status.py --status-dir outputs/run_status/latest
+```
+
+The monitor never connects to hardware and never controls the task.  See
+`docs/readonly_monitor_gui.md`.
+
+The status directory is transient runtime diagnostics, not thesis evidence.
+`raw_capture.h5` remains the sole experimental record.
+
 ## Effective LCD pupil scan
 
 **Purpose:** Locate the LCD region that actually affects the optical system.

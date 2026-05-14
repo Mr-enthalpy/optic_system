@@ -38,6 +38,42 @@ def _now_ns() -> int:
     return time.monotonic_ns()
 
 
+class OptionalRunStatus:
+    """Publish run-status files when status_dir is given, otherwise no-op."""
+
+    def __init__(self, status_dir: Path | None, run_id: str):
+        self._publisher = None
+        if status_dir is not None:
+            from diagnostics.run_status import RunStatusPublisher
+            self._publisher = RunStatusPublisher(status_dir, run_id)
+
+    def update(self, **kwargs: Any) -> None:
+        if self._publisher is not None:
+            self._publisher.update(**kwargs)
+
+    def append_log(self, level: str, message: str, **fields: Any) -> None:
+        if self._publisher is not None:
+            self._publisher.append_log(level, message, **fields)
+
+    def write_frame_preview(self, frame: np.ndarray) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.write_frame_preview(frame)
+            except Exception:
+                pass
+
+    def write_frame_stats(self, stats: dict[str, Any]) -> None:
+        if self._publisher is not None:
+            self._publisher.write_frame_stats(stats)
+
+    def write_mask_preview(self, mask: np.ndarray) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.write_mask_preview(mask)
+            except Exception:
+                pass
+
+
 class HardwareLock:
     def __init__(self, lock_path: str | Path):
         self._lock_path = Path(lock_path)
@@ -160,6 +196,8 @@ def run_pupil_scan(
     emit_mask_files: bool = False,
     lcd_display_index: int | None = None,
     lcd_subpixel_axis: int | None = None,
+    status_dir: Path | None = None,
+    status_preview_every: int = 1,
 ) -> Path:
     _ensure_sys_path()
     from tasks.pupil_scan_h5 import PupilScanWriter
@@ -281,6 +319,24 @@ def run_pupil_scan(
             status=tls_status,
         )
 
+        run_status = OptionalRunStatus(status_dir, run_id=plan["plan_id"])
+        lcd_phy = lcd_meta.get("physical_shape")
+        run_status.update(
+            plan_id=plan["plan_id"],
+            phase="3.1",
+            n_captures=0,
+            current_wavelength_nm=float(wavelength_nm) if wavelength_nm else None,
+            camera_exposure_us=float(exposure_us),
+            camera_gain_db=float(gain_db),
+            camera_frame_dtype_full_scale=int(frame_dtype_full_scale),
+            lcd_display_index=int(lcd_meta.get("display_index", -1)),
+            lcd_physical_shape=list(lcd_phy) if lcd_phy else None,
+            lcd_logical_shape=list(lcd_meta.get("logical_shape", [])) if lcd_meta.get("logical_shape") else None,
+            lcd_subpixel_axis=int(subpixel_axis),
+        )
+        run_status.append_log("INFO", "pupil scan started",
+                              scan_modes=plan.get("scan", {}).get("scan_modes"))
+
         emit_dir = None
         if emit_mask_files:
             emit_dir = Path(plan["output"].get("output_dir", "outputs/pupil_scan")) / "emitted_masks"
@@ -288,8 +344,12 @@ def run_pupil_scan(
                 emit_dir = _repo_root() / emit_dir
             emit_dir.mkdir(parents=True, exist_ok=True)
 
+        mask_list = list(iter_pupil_scan_masks(spec))
+        total = len(mask_list)
+        run_status.update(capture_index=0, n_captures=total)
+
         n = 0
-        for mask_id, mask, meta in iter_pupil_scan_masks(spec):
+        for mask_id, mask, meta in mask_list:
             if emit_dir is not None:
                 np.save(str(emit_dir / f"{mask_id}.npy"), mask)
 
@@ -310,14 +370,39 @@ def run_pupil_scan(
                 physical_mask=mask if store_physical_masks else None,
             )
             n += 1
+
+            # --- status publishing ---
+            run_status.update(
+                capture_index=n,
+                current_mask_id=mask_id,
+            )
+            if n % max(1, int(status_preview_every)) == 0:
+                run_status.write_frame_preview(frame_avg)
+                run_status.write_mask_preview(mask)
+            run_status.write_frame_stats({
+                "max_pixel": float(frame_avg.max()),
+                "min_pixel": float(frame_avg.min()),
+                "mean_pixel": float(frame_avg.mean()),
+                "p99_9": float(np.percentile(frame_avg, 99.9)),
+                "saturated_pixel_count": int((frame_avg >= frame_dtype_full_scale).sum()),
+                "shape": list(frame_avg.shape),
+                "dtype": str(frame_avg.dtype),
+                "frame_dtype_full_scale": int(frame_dtype_full_scale),
+            })
+            # -------------------------
+
             if n % 25 == 0:
                 print(f"  captured {n} pupil-scan masks")
 
+        run_status.append_log("INFO", "pupil scan complete", n_captures=n)
+        run_status.update(completed=True)
         writer.finalize(completed=True)
         print(f"pupil scan raw HDF5 written to {output_raw}")
         return output_raw
 
     except Exception as exc:
+        run_status.append_log("CRITICAL", str(exc))
+        run_status.update(error=str(exc))
         if writer is not None:
             writer.finalize(completed=False, error=str(exc))
         raise
@@ -450,6 +535,8 @@ def main() -> None:
     parser.add_argument("--tls-serial", default=None)
     parser.add_argument("--store-physical-masks", action="store_true")
     parser.add_argument("--emit-mask-files", action="store_true")
+    parser.add_argument("--status-dir", default=None, help="Publish run-status files to this directory")
+    parser.add_argument("--status-preview-every", type=int, default=1, help="Write preview every N masks")
     args = parser.parse_args()
 
     if args.hardware and args.dry_run:
@@ -461,6 +548,7 @@ def main() -> None:
     plan = load_pupil_scan_plan(plan_path)
 
     dry_run = not args.hardware
+    status_dir = Path(args.status_dir) if args.status_dir else None
     if dry_run:
         print("=== DRY RUN (no hardware) ===")
         run_pupil_scan(
@@ -469,6 +557,8 @@ def main() -> None:
             store_physical_masks=args.store_physical_masks or None,
             emit_mask_files=args.emit_mask_files,
             lcd_subpixel_axis=args.lcd_subpixel_axis,
+            status_dir=status_dir,
+            status_preview_every=args.status_preview_every,
         )
         print("Dry run complete.")
         return
@@ -517,6 +607,8 @@ def main() -> None:
             emit_mask_files=args.emit_mask_files,
             lcd_display_index=args.lcd_display_index,
             lcd_subpixel_axis=args.lcd_subpixel_axis,
+            status_dir=status_dir,
+            status_preview_every=args.status_preview_every,
         )
     finally:
         try:
