@@ -7,6 +7,20 @@ from pathlib import Path
 from typing import Any
 
 
+RAW_MONO_ENCODING = "Raw mono"
+BAYER_RGGB_ENCODING = "Bayer RGGB -> RGB"
+BAYER_BGGR_ENCODING = "Bayer BGGR -> RGB"
+BAYER_GRBG_ENCODING = "Bayer GRBG -> RGB"
+BAYER_GBRG_ENCODING = "Bayer GBRG -> RGB"
+FRAME_PREVIEW_ENCODINGS = (
+    RAW_MONO_ENCODING,
+    BAYER_RGGB_ENCODING,
+    BAYER_BGGR_ENCODING,
+    BAYER_GRBG_ENCODING,
+    BAYER_GBRG_ENCODING,
+)
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -41,7 +55,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-log-lines",
         type=int,
-        default=100,
+        default=30,
         help="maximum recent log lines to display",
     )
     parser.add_argument(
@@ -173,44 +187,77 @@ def run_tk_gui(args: argparse.Namespace) -> int:
     state_var = tk.StringVar(value="status unavailable")
     frame_var = tk.StringVar(value="latest frame preview: unavailable")
     mask_var = tk.StringVar(value="current mask preview: unavailable")
-    logs_var = tk.StringVar(value="logs: unavailable")
+    frame_encoding_var = tk.StringVar(value=RAW_MONO_ENCODING)
 
     root.columnconfigure(0, weight=1)
-    root.columnconfigure(1, weight=2)
-    root.columnconfigure(2, weight=1)
+    root.columnconfigure(1, weight=1)
     root.rowconfigure(1, weight=1)
+    root.rowconfigure(2, weight=0)
 
     state_box = ttk.LabelFrame(root, text="Task State", padding=8)
-    state_box.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=(8, 4))
+    state_box.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=(8, 4))
     ttk.Label(state_box, textvariable=state_var, justify="left", anchor="w").pack(fill="x")
 
+    meta_box = ttk.LabelFrame(root, text="Metadata", padding=8)
+    meta_box.grid(row=0, column=1, sticky="nsew", padx=(4, 8), pady=(8, 4))
+    meta_box.rowconfigure(0, weight=1)
+    meta_box.columnconfigure(0, weight=1)
+    meta_text = tk.Text(
+        meta_box,
+        height=7,
+        wrap="none",
+        state="disabled",
+        font=("Consolas", 9),
+    )
+    meta_scroll = ttk.Scrollbar(meta_box, orient="vertical", command=meta_text.yview)
+    meta_text.configure(yscrollcommand=meta_scroll.set)
+    meta_text.grid(row=0, column=0, sticky="nsew")
+    meta_scroll.grid(row=0, column=1, sticky="ns")
+
     frame_box = ttk.LabelFrame(root, text="Latest Frame", padding=8)
-    frame_box.grid(row=1, column=1, sticky="nsew", padx=4, pady=4)
+    frame_box.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=4)
+    frame_box.rowconfigure(0, weight=1)
+    frame_box.columnconfigure(0, weight=1)
     frame_label = ttk.Label(frame_box, textvariable=frame_var, anchor="center")
-    frame_label.pack(fill="both", expand=True)
+    frame_label.grid(row=0, column=0, sticky="nsew")
+    frame_encoding_menu = ttk.Combobox(
+        frame_box,
+        textvariable=frame_encoding_var,
+        values=FRAME_PREVIEW_ENCODINGS,
+        state="readonly",
+        width=20,
+    )
+    frame_encoding_menu.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
     mask_box = ttk.LabelFrame(root, text="Current Mask", padding=8)
-    mask_box.grid(row=1, column=2, sticky="nsew", padx=(4, 8), pady=4)
+    mask_box.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=4)
     mask_label = ttk.Label(mask_box, textvariable=mask_var, anchor="center")
     mask_label.pack(fill="both", expand=True)
 
-    meta_box = ttk.LabelFrame(root, text="Metadata", padding=8)
-    meta_box.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=4)
-    meta_var = tk.StringVar(value="metadata unavailable")
-    ttk.Label(meta_box, textvariable=meta_var, justify="left", anchor="nw").pack(fill="both", expand=True)
-
     logs_box = ttk.LabelFrame(root, text="Recent Logs", padding=8)
-    logs_box.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=8, pady=(4, 8))
-    ttk.Label(logs_box, textvariable=logs_var, justify="left", anchor="nw").pack(fill="both", expand=True)
+    logs_box.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=8, pady=(4, 8))
+    logs_box.rowconfigure(0, weight=1)
+    logs_box.columnconfigure(0, weight=1)
+    logs_text = tk.Text(
+        logs_box,
+        height=8,
+        wrap="none",
+        state="disabled",
+        font=("Consolas", 9),
+    )
+    logs_scroll = ttk.Scrollbar(logs_box, orient="vertical", command=logs_text.yview)
+    logs_text.configure(yscrollcommand=logs_scroll.set)
+    logs_text.grid(row=0, column=0, sticky="nsew")
+    logs_scroll.grid(row=0, column=1, sticky="ns")
 
     photos: dict[str, Any] = {}
 
-    def refresh() -> None:
+    def refresh(*, schedule_next: bool = True) -> None:
         status = reader.read()
         stats = reader.read_frame_stats() or {}
         logs = reader.tail_log(max_lines=args.max_log_lines)
         state_var.set(_render_gui_state(status))
-        meta_var.set(_render_gui_metadata(status, stats))
+        _update_text_widget(meta_text, _render_gui_metadata(status, stats))
         _update_image_label(
             label=frame_label,
             text_var=frame_var,
@@ -218,6 +265,7 @@ def run_tk_gui(args: argparse.Namespace) -> int:
             key="frame",
             path=_preview_path(Path(args.status_dir), getattr(status, "latest_frame_preview", None)),
             fallback="latest frame preview: unavailable",
+            frame_encoding=frame_encoding_var.get(),
         )
         _update_image_label(
             label=mask_label,
@@ -227,13 +275,17 @@ def run_tk_gui(args: argparse.Namespace) -> int:
             path=_preview_path(Path(args.status_dir), getattr(status, "current_mask_preview", None)),
             fallback="current mask preview: unavailable",
         )
-        if logs:
-            logs_var.set("\n".join(_format_log_row(row) for row in logs))
-        else:
-            logs_var.set("logs: unavailable")
-        if not args.once and root.winfo_exists():
-            root.after(max(50, int(float(args.poll_interval) * 1000)), refresh)
+        _update_logs_text(logs_text, logs, max_log_lines=args.max_log_lines)
+        if schedule_next and not args.once and root.winfo_exists():
+            root.after(
+                max(50, int(float(args.poll_interval) * 1000)),
+                lambda: refresh(schedule_next=True),
+            )
 
+    frame_encoding_menu.bind(
+        "<<ComboboxSelected>>",
+        lambda _event: refresh(schedule_next=False),
+    )
     refresh()
     if args.once:
         root.update_idletasks()
@@ -241,6 +293,26 @@ def run_tk_gui(args: argparse.Namespace) -> int:
         return 0
     root.mainloop()
     return 0
+
+
+def _update_logs_text(widget: Any, logs: list[dict[str, Any]], *, max_log_lines: int) -> None:
+    if logs:
+        text = "\n".join(
+            _format_log_row(row)
+            for row in logs[-max(0, int(max_log_lines)):]
+        )
+    else:
+        text = "logs: unavailable"
+    _update_text_widget(widget, text, scroll_to_end=True)
+
+
+def _update_text_widget(widget: Any, text: str, *, scroll_to_end: bool = False) -> None:
+    widget.configure(state="normal")
+    widget.delete("1.0", "end")
+    widget.insert("1.0", text)
+    if scroll_to_end:
+        widget.see("end")
+    widget.configure(state="disabled")
 
 
 def _render_gui_state(status: Any | None) -> str:
@@ -295,16 +367,24 @@ def _update_image_label(
     key: str,
     path: Path | None,
     fallback: str,
+    frame_encoding: str | None = None,
 ) -> None:
-    if path is None or path.suffix.lower() != ".png" or not path.exists():
+    if path is None or not path.exists():
         label.configure(image="")
         photos.pop(key, None)
         text_var.set(fallback)
         return
     try:
-        import tkinter as tk
+        from PIL import ImageTk
 
-        photo = tk.PhotoImage(file=str(path))
+        image = _load_preview_image(path, frame_encoding=frame_encoding)
+        max_w, max_h = _image_label_target_size(label)
+        fit_w, fit_h = _fit_size(image.width, image.height, max_w, max_h)
+        if (fit_w, fit_h) != (image.width, image.height):
+            from PIL import Image
+            resampling = getattr(Image, "Resampling", Image).LANCZOS
+            image = image.resize((fit_w, fit_h), resampling)
+        photo = ImageTk.PhotoImage(image)
     except Exception:
         label.configure(image="")
         photos.pop(key, None)
@@ -313,6 +393,98 @@ def _update_image_label(
     photos[key] = photo
     text_var.set("")
     label.configure(image=photo)
+
+
+def _image_label_target_size(label: Any) -> tuple[int, int]:
+    width = int(getattr(label, "winfo_width")())
+    height = int(getattr(label, "winfo_height")())
+    parent = getattr(label, "master", None)
+    if parent is not None:
+        width = max(width, int(parent.winfo_width()) - 16)
+        height = max(height, int(parent.winfo_height()) - 16)
+    if width <= 1:
+        width = 512
+    if height <= 1:
+        height = 512
+    return width, height
+
+
+def _load_preview_image(path: Path, *, frame_encoding: str | None = None) -> Any:
+    from PIL import Image
+
+    if path.suffix.lower() == ".npy":
+        import numpy as np
+
+        array = np.load(str(path))
+        return _array_to_pil_image(array, frame_encoding=frame_encoding)
+    image = Image.open(path)
+    return image.convert("RGB") if image.mode not in {"L", "RGB"} else image
+
+
+def _array_to_pil_image(array: Any, *, frame_encoding: str | None = None) -> Any:
+    from PIL import Image
+
+    import numpy as np
+
+    arr = np.asarray(array)
+    if arr.ndim == 2 and frame_encoding in _BAYER_CV2_CODE_NAMES:
+        try:
+            import cv2
+
+            gray = _as_uint8_display(arr)
+            rgb = cv2.cvtColor(
+                gray,
+                getattr(cv2, _BAYER_CV2_CODE_NAMES[str(frame_encoding)]),
+            )
+            return Image.fromarray(rgb, mode="RGB")
+        except Exception:
+            return Image.fromarray(_as_uint8_display(arr), mode="L")
+    if arr.ndim == 2:
+        return Image.fromarray(_as_uint8_display(arr), mode="L")
+    if arr.ndim == 3 and arr.shape[2] in {3, 4}:
+        arr8 = _as_uint8_display(arr)
+        mode = "RGBA" if arr.shape[2] == 4 else "RGB"
+        return Image.fromarray(arr8, mode=mode)
+    squeezed = np.squeeze(arr)
+    if squeezed.ndim == 2:
+        return Image.fromarray(_as_uint8_display(squeezed), mode="L")
+    raise ValueError(f"unsupported preview array shape: {arr.shape}")
+
+
+_BAYER_CV2_CODE_NAMES = {
+    BAYER_RGGB_ENCODING: "COLOR_BayerRGGB2RGB",
+    BAYER_BGGR_ENCODING: "COLOR_BayerBGGR2RGB",
+    BAYER_GRBG_ENCODING: "COLOR_BayerGRBG2RGB",
+    BAYER_GBRG_ENCODING: "COLOR_BayerGBRG2RGB",
+}
+
+
+def _as_uint8_display(array: Any) -> Any:
+    import numpy as np
+
+    arr = np.asarray(array)
+    if arr.dtype == np.uint8:
+        return arr
+    if arr.size == 0:
+        return arr.astype(np.uint8)
+    finite = arr[np.isfinite(arr)] if np.issubdtype(arr.dtype, np.floating) else arr
+    if finite.size == 0:
+        return np.zeros(arr.shape, dtype=np.uint8)
+    mn = float(np.min(finite))
+    mx = float(np.max(finite))
+    if mx <= mn:
+        return np.zeros(arr.shape, dtype=np.uint8)
+    scaled = (arr.astype(np.float64) - mn) * (255.0 / (mx - mn))
+    return np.clip(scaled, 0, 255).astype(np.uint8)
+
+
+def _fit_size(width: int, height: int, max_width: int, max_height: int) -> tuple[int, int]:
+    width = max(1, int(width))
+    height = max(1, int(height))
+    max_width = max(1, int(max_width))
+    max_height = max(1, int(max_height))
+    scale = min(max_width / width, max_height / height, 1.0)
+    return max(1, int(width * scale)), max(1, int(height * scale))
 
 
 def _preview_path(status_dir: Path, value: str | None) -> Path | None:

@@ -429,6 +429,9 @@ If a task only writes `state.json` and `current_mask_preview`, the monitor must
 continue to work and show only those available fields.  Missing frame previews,
 frame stats, or logs are not monitor failures.
 
+Reusable monitor/diagnostics improvements discovered on the thesis branch
+may be selectively backported to master when they remain hardware-free
+and task-agnostic.
 
 
 ## Capture data rules
