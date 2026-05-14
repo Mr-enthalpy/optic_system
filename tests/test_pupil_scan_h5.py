@@ -33,7 +33,15 @@ def test_writer_creates_required_groups(tmp_path) -> None:
             exposure_us=50000.0,
             gain_db=0.0,
             frame_dtype_full_scale=255,
-            camera_params_source={"source": "camera_params_psf_safe.json", "overridden": False},
+            camera_params_source={
+                "source": "camera_params_psf_safe.json",
+                "overridden": False,
+                "camera_params": {
+                    "validity": {"psf_exposure_safe": True, "exposure_safety_valid": True},
+                    "frame_dtype_full_scale": 255,
+                    "global_safe_camera": {"exposure_us": 50000.0, "gain_db": 0.0},
+                },
+            },
         )
         writer.write_tls_metadata(wavelength_nm=550.0, grating=1, status={"connected": False})
 

@@ -26,8 +26,7 @@ No intermediate step re-acquires hardware data directly.
 
 - `plans/bishe_pupil_scan.yaml`
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`
-  is mandatory. The revoked `camera_params.json` coarse exposure file is not
-  an allowed input.
+  is mandatory.
 - Masks: a narrow vertical bar swept across X, a narrow horizontal bar swept
   across Y.
 - Wavelength: single wavelength, fixed.

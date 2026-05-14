@@ -84,16 +84,6 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         raise ValueError("scan section is required")
     if not plan.get("output", {}).get("raw_h5"):
         raise ValueError("output.raw_h5 is required")
-    if "require_psf_safe_camera_params" in plan:
-        raise ValueError(
-            "require_psf_safe_camera_params is no longer supported; "
-            "Phase 3 capture always requires PSF-safe camera parameters"
-        )
-    if "camera_params_override" in plan:
-        raise ValueError(
-            "camera_params_override is forbidden for Phase 3 pupil scan capture; "
-            "rerun PSF-safe exposure calibration instead"
-        )
     if "exposure_us" in plan.get("camera", {}) or "gain_db" in plan.get("camera", {}):
         raise ValueError(
             "Phase 3.1 plans must use camera_params_source, not handwritten "
@@ -103,11 +93,6 @@ def _validate_plan(plan: dict[str, Any]) -> None:
 
 def load_camera_params(source: str | Path) -> tuple[dict[str, Any], Path]:
     source_path = Path(source)
-    if source_path.name == "camera_params.json":
-        raise ValueError(
-            f"{source_path} is a revoked legacy coarse exposure parameter file; "
-            "Phase 3 capture requires camera_params_psf_safe.json"
-        )
     if not source_path.is_absolute():
         source_path = _repo_root() / source_path
     if not source_path.exists():

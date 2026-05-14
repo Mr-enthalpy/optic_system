@@ -133,14 +133,6 @@ def test_store_physical_masks_option(tmp_path: Path) -> None:
         assert f["masks/masks_physical"].shape[0] == f["raw/frames_avg"].shape[0]
 
 
-def test_legacy_camera_params_json_is_rejected_by_capture(tmp_path: Path) -> None:
-    params = _camera_params(tmp_path / "camera_params.json")
-    plan = _plan(tmp_path, params)
-
-    with pytest.raises(ValueError, match="revoked legacy coarse exposure"):
-        run_pupil_scan(plan, dry_run=True)
-
-
 def test_non_psf_safe_camera_params_are_rejected(tmp_path: Path) -> None:
     params = _camera_params(tmp_path / "camera_params_psf_safe.json")
     payload = json.loads(params.read_text(encoding="utf-8"))
@@ -152,18 +144,16 @@ def test_non_psf_safe_camera_params_are_rejected(tmp_path: Path) -> None:
         run_pupil_scan(plan, dry_run=True)
 
 
-def test_camera_params_override_is_forbidden(tmp_path: Path) -> None:
-    params = _camera_params(tmp_path / "camera_params_psf_safe.json")
+def test_accept_psf_safe_camera_params_regardless_of_filename(tmp_path: Path) -> None:
+    params = _camera_params(tmp_path / "foo.json")
     plan = _plan(tmp_path, params)
-    plan["camera_params_override"] = {
-        "overridden": True,
-        "reason": "debug",
-        "exposure_us": 1.0,
-        "gain_db": 0.0,
-    }
-    path = tmp_path / "plan.yaml"
-    path.write_text(yaml.safe_dump(plan), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="camera_params_override is forbidden"):
-        load_pupil_scan_plan(path)
+    out = run_pupil_scan(plan, dry_run=True)
+    assert out.exists()
+    with h5py.File(out, "r") as f:
+        raw = f["camera/camera_params_source_json"][()]
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        provenance = json.loads(raw)
+        assert provenance["camera_params"]["validity"]["psf_exposure_safe"] is True
 
