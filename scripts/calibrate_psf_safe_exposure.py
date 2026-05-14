@@ -15,6 +15,13 @@ Constraints:
     GUI/session before running.  The read-only run-status monitor may remain open.
   - Always prefers gain_min.  Only elevates gain when gain_min yields
     safe-but-unusably-dim signal.
+  - Current thesis-branch selection is discrete and lexicographic, not
+    continuous joint optimization: strict PSF safety across all wavelengths,
+    then gain_min preference, then largest usable exposure at that gain, with
+    higher gain only as a low-signal fallback.
+  - The selected camera parameters are global across wavelengths.  Per-
+    wavelength camera parameters are out of scope for Phase 3.0.5b because
+    Phase 3.1+ captures need comparable camera response conditions.
   - If even gain_min + exposure_min has any pixel at full scale in raw
     burst frames, fails immediately.  Raising gain is never used to solve
     pixel saturation.
@@ -46,6 +53,18 @@ def _ensure_sys_path() -> None:
 
 def _now_ns() -> int:
     return time.monotonic_ns()
+
+
+def _status_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _status_shape(value: Any) -> list[int] | None:
+    if value is None:
+        return None
+    return [int(v) for v in value]
 
 
 class OptionalRunStatus:
@@ -92,6 +111,13 @@ class OptionalRunStatus:
                 self._publisher.write_frame_stats(stats)
             except Exception as exc:
                 self.append_log("WARNING", "failed to write frame stats", error=str(exc))
+
+    def write_mask_preview(self, mask: np.ndarray) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.write_mask_preview(mask)
+            except Exception as exc:
+                self.append_log("WARNING", "failed to write mask preview", error=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +324,7 @@ def run_psf_safe_exposure(
     tls_service,
     *,
     dry_run: bool = False,
+    allow_wavelength_labels_without_tls: bool = False,
     status_dir: Path | None = None,
     status_preview_every: int = 1,
 ) -> tuple[Path, dict[str, Any]]:
@@ -322,14 +349,36 @@ def run_psf_safe_exposure(
     output_raw = plan["output"]["raw_h5"]
     output_json = plan["output"]["camera_params_json"]
 
+    run_status = OptionalRunStatus(status_dir, run_id=plan_id)
+
+    if not dry_run and tls_service is None and not allow_wavelength_labels_without_tls:
+        msg = (
+            "TLS service is required for hardware PSF-safe exposure calibration. "
+            "Without TLS participation, plan wavelengths are only labels and "
+            "camera_params_psf_safe.json cannot prove cross-wavelength safety. "
+            "Pass --tls-serial or set TLS_C1_SERIAL. For explicit manual external "
+            "wavelength control, rerun with --allow-wavelength-labels-without-tls."
+        )
+        run_status.append_log("CRITICAL", msg)
+        run_status.update(
+            plan_id=plan_id,
+            phase="3.0.5b",
+            completed=False,
+            error=msg,
+        )
+        raise RuntimeError(msg)
+
     lock = HardwareLock(plan.get("lock_file", "outputs/run_status/capture_hardware.lock"))
     if not dry_run:
         lock.acquire()
 
-    run_status = OptionalRunStatus(status_dir, run_id=plan_id)
     writer: PsfSafeExposureWriter | None = None
 
     try:
+        lcd_metadata: dict[str, Any]
+        current_mask_id = "all_transmissive"
+        current_mask_preview: np.ndarray | None = None
+
         if not dry_run:
             from capture.frame_capture import FrameCaptureHelper
             from devices.frame_stream import FrameStreamClient
@@ -339,7 +388,12 @@ def run_psf_safe_exposure(
             capture_helper = FrameCaptureHelper(frame_stream)
             camera_adapter = CameraCaptureAdapter(capture_helper, camera_service)
 
-            lcd_service.show_all_transmissive()
+            current_mask_preview = lcd_service.make_all_transmissive_mask()
+            lcd_service.show_mono_mask(
+                current_mask_preview,
+                mask_id=current_mask_id,
+                mode="all_transmissive",
+            )
             time.sleep(lcd_cfg.get("settle_ms", 200) / 1000.0)
 
             camera_service.start_stream()
@@ -349,9 +403,18 @@ def run_psf_safe_exposure(
                 or plan.get("camera", {}).get("full_scale")
                 or infer_full_scale(first_frame.frames_avg)
             )
+            lcd_metadata = lcd_service.get_metadata()
         else:
             camera_adapter = _make_fake_adapter()
             full_scale = 255.0
+            lcd_metadata = {
+                "display_index": -1,
+                "subpixel_axis": 1,
+                "logical_shape": (8, 8),
+                "physical_shape": (8, 24),
+                "mode": "fake",
+            }
+            current_mask_preview = np.full((8, 24), 255, dtype=np.uint8)
 
         writer = PsfSafeExposureWriter(
             output_raw,
@@ -361,131 +424,212 @@ def run_psf_safe_exposure(
         writer.open()
         writer.set_full_scale(int(full_scale))
         writer.write_plan_json(plan)
-        if not dry_run:
-            writer.write_lcd_metadata(lcd_service.get_metadata())
-        else:
-            writer.write_lcd_metadata({"display_index": -1, "subpixel_axis": 1, "mode": "fake"})
+        writer.write_lcd_metadata(lcd_metadata)
 
         run_status.update(
             plan_id=plan_id,
             phase="3.0.5b",
             capture_index=0,
             n_captures=0,
+            current_mask_id=current_mask_id,
+            lcd_display_index=_status_int(lcd_metadata.get("display_index")),
+            lcd_physical_shape=_status_shape(lcd_metadata.get("physical_shape")),
+            lcd_logical_shape=_status_shape(lcd_metadata.get("logical_shape")),
+            lcd_subpixel_axis=_status_int(lcd_metadata.get("subpixel_axis")),
             camera_exposure_us=float(exposure_start),
             camera_gain_db=float(gain_min),
             camera_frame_dtype_full_scale=int(full_scale),
         )
+        if current_mask_preview is not None:
+            run_status.write_mask_preview(current_mask_preview)
         run_status.append_log("INFO", "PSF-safe exposure calibration started",
                               exposure_start_us=exposure_start, gain_min_db=gain_min)
+        if not dry_run and tls_service is None and allow_wavelength_labels_without_tls:
+            run_status.append_log(
+                "WARNING",
+                "Dangerous override enabled: TLS service not configured; plan wavelengths are labels only and hardware wavelength will not change",
+            )
 
         all_results: list[dict] = []
         selection_reason: str | None = None
         safe_exposure: float | None = None
         safe_gain: float | None = None
 
-        def _sweep_wavelengths(at_exposure: float, at_gain: float) -> list[dict]:
-            results = []
-            camera_adapter.apply_camera_params(exposure_us=at_exposure, gain_db=at_gain)
-            for wl in wls:
-                wl_nm = float(wl["wavelength_nm"])
-                if not dry_run and tls_service is not None:
-                    grating = wl.get("grating")
-                    if grating is not None:
-                        tls_service.set_grating(int(grating))
-                    tls_service.set_wavelength_nm(wl_nm)
-                    tls_service.move(timeout_s=60.0)
-                    tls_service.wait_until_idle(timeout_s=60.0)
-                    settle = wl.get("settle_ms", 1000)
-                    if settle > 0:
-                        time.sleep(settle / 1000.0)
+        def _exposure_candidates(at_gain: float) -> list[tuple[float, float]]:
+            candidates = []
+            exposure = exposure_start
+            while exposure >= exposure_min:
+                candidates.append((float(exposure), float(at_gain)))
+                exposure *= step_factor
+            return candidates
 
-                row = _acquire_and_evaluate(
-                    camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg,
-                )
-                row["wavelength_nm"] = wl_nm
-                row["exposure_us"] = at_exposure
-                row["gain_db"] = at_gain
-                results.append(row)
+        def _candidate_results(candidate: tuple[float, float]) -> list[dict]:
+            exposure_us, gain_db = candidate
+            return [
+                r for r in all_results
+                if float(r["exposure_us"]) == exposure_us
+                and float(r["gain_db"]) == gain_db
+            ]
 
-                writer.append_sweep_row(
-                    wavelength_nm=wl_nm,
-                    exposure_us=at_exposure,
-                    gain_db=at_gain,
-                    frames_avg=row["frame"],
-                    peak_pixel_burst=row["peak_pixel_burst"],
-                    peak_pixel_avg=row["peak_pixel_avg"],
-                    peak_pixel_fraction_burst=row["peak_pixel_fraction_burst"],
-                    peak_margin_to_full_scale=row["peak_margin_to_full_scale"],
-                    p99_0_avg=row["p99_0_avg"],
-                    p99_9_avg=row["p99_9_avg"],
-                    unsafe_reason=row["unsafe_reason"],
-                    psf_safe=row["psf_safe"],
-                    p_signal=row["p_signal"],
-                    dynamic_range=row["dynamic_range"],
-                    low_signal=row["low_signal"],
-                )
+        def _candidate_worst_signal(candidate: tuple[float, float]) -> dict:
+            return _worst_signal_wavelength(_candidate_results(candidate))
 
-                # --- status publishing ---
-                trial_idx = len(all_results) + 1
+        def _candidate_is_globally_safe(candidate: tuple[float, float]) -> bool:
+            rows = _candidate_results(candidate)
+            tested_wls = {float(r["wavelength_nm"]) for r in rows}
+            expected_wls = {float(w["wavelength_nm"]) for w in wls}
+            return tested_wls == expected_wls and all(bool(r["psf_safe"]) for r in rows)
+
+        def _first_safe_candidate(
+            candidates: list[tuple[float, float]],
+        ) -> tuple[float, float] | None:
+            for candidate in candidates:
+                if _candidate_is_globally_safe(candidate):
+                    return candidate
+            return None
+
+        def _set_wavelength_once(wl: dict[str, Any]) -> float:
+            wl_nm = float(wl["wavelength_nm"])
+            grating = wl.get("grating")
+            if not dry_run and tls_service is not None:
                 run_status.update(
-                    capture_index=trial_idx,
-                    n_captures=trial_idx,
-                    current_wavelength_nm=wl_nm,
-                    camera_exposure_us=float(at_exposure),
-                    camera_gain_db=float(at_gain),
+                    target_wavelength_nm=wl_nm,
+                    tls_grating=int(grating) if grating is not None else None,
+                    tls_moving=True,
                 )
-                run_status.write_frame_stats({
-                    "peak_pixel_burst": row["peak_pixel_burst"],
-                    "peak_pixel_avg": row["peak_pixel_avg"],
-                    "peak_pixel_fraction_burst": row["peak_pixel_fraction_burst"],
-                    "peak_margin_to_full_scale": row["peak_margin_to_full_scale"],
-                    "p99_9_avg": row["p99_9_avg"],
-                    "p_signal": row["p_signal"],
-                    "dynamic_range": row["dynamic_range"],
-                    "psf_safe": row["psf_safe"],
-                    "unsafe_reason": row["unsafe_reason"],
-                    "frame_dtype_full_scale": int(full_scale),
-                })
-                if trial_idx % max(1, int(status_preview_every)) == 0:
-                    run_status.write_frame_preview(row["frame"])
-                run_status.append_log(
-                    "INFO", "exposure trial evaluated",
-                    wavelength_nm=wl_nm,
-                    exposure_us=at_exposure,
-                    gain_db=at_gain,
-                    psf_safe=row["psf_safe"],
-                    peak_pixel_burst=row["peak_pixel_burst"],
+                if grating is not None:
+                    tls_service.set_grating(int(grating))
+                tls_service.set_wavelength_nm(wl_nm)
+                tls_service.move(timeout_s=60.0)
+                tls_status = tls_service.wait_until_idle(timeout_s=60.0)
+                run_status.update(
+                    current_wavelength_nm=tls_status.current_wavelength_nm or wl_nm,
+                    target_wavelength_nm=tls_status.target_wavelength_nm or wl_nm,
+                    tls_grating=tls_status.grating if tls_status.grating is not None else (
+                        int(grating) if grating is not None else None
+                    ),
+                    tls_moving=False,
                 )
-                # -------------------------
+                settle = wl.get("settle_ms", 1000)
+                if settle > 0:
+                    time.sleep(settle / 1000.0)
+            else:
+                run_status.update(current_wavelength_nm=wl_nm)
+            return wl_nm
 
-                all_results.append(row)
+        def _record_candidate_row(
+            *,
+            wl_nm: float,
+            at_exposure: float,
+            at_gain: float,
+            row: dict[str, Any],
+            total_trials: int,
+        ) -> None:
+            row["wavelength_nm"] = wl_nm
+            row["exposure_us"] = at_exposure
+            row["gain_db"] = at_gain
 
-                wl_label = f"{wl_nm}nm"
-                safe_label = "SAFE" if row["psf_safe"] else f"UNSAFE: {row.get('unsafe_reason', 'unknown')}"
-                sig_label = "LO" if row["low_signal"] else "ok"
-                print(f"  exp={at_exposure:8.1f}  gain={at_gain:5.1f}  "
-                      f"wl={wl_label:>7s}  peak_burst={row['peak_pixel_burst']:6.1f}  "
-                      f"peak_avg={row['peak_pixel_avg'] or 0:6.1f}  "
-                      f"peak_frac={row['peak_pixel_fraction_burst']:.4f}  "
-                      f"margin={row['peak_margin_to_full_scale']:6.1f}  "
-                      f"p_sig={row['p_signal']:6.1f}  [{safe_label}] [{sig_label}]")
-            return results
+            writer.append_sweep_row(
+                wavelength_nm=wl_nm,
+                exposure_us=at_exposure,
+                gain_db=at_gain,
+                frames_avg=row["frame"],
+                peak_pixel_burst=row["peak_pixel_burst"],
+                peak_pixel_avg=row["peak_pixel_avg"],
+                peak_pixel_fraction_burst=row["peak_pixel_fraction_burst"],
+                peak_margin_to_full_scale=row["peak_margin_to_full_scale"],
+                p99_0_avg=row["p99_0_avg"],
+                p99_9_avg=row["p99_9_avg"],
+                unsafe_reason=row["unsafe_reason"],
+                psf_safe=row["psf_safe"],
+                p_signal=row["p_signal"],
+                dynamic_range=row["dynamic_range"],
+                low_signal=row["low_signal"],
+            )
+
+            trial_idx = len(all_results) + 1
+            run_status.update(
+                capture_index=trial_idx,
+                n_captures=total_trials,
+                current_wavelength_nm=wl_nm,
+                camera_exposure_us=float(at_exposure),
+                camera_gain_db=float(at_gain),
+            )
+            run_status.write_frame_stats({
+                "peak_pixel_burst": row["peak_pixel_burst"],
+                "peak_pixel_avg": row["peak_pixel_avg"],
+                "peak_pixel_fraction_burst": row["peak_pixel_fraction_burst"],
+                "peak_margin_to_full_scale": row["peak_margin_to_full_scale"],
+                "p99_9_avg": row["p99_9_avg"],
+                "p_signal": row["p_signal"],
+                "dynamic_range": row["dynamic_range"],
+                "psf_safe": row["psf_safe"],
+                "unsafe_reason": row["unsafe_reason"],
+                "frame_dtype_full_scale": int(full_scale),
+            })
+            if trial_idx % max(1, int(status_preview_every)) == 0:
+                run_status.write_frame_preview(row["frame"])
+            run_status.append_log(
+                "INFO", "exposure trial evaluated",
+                wavelength_nm=wl_nm,
+                exposure_us=at_exposure,
+                gain_db=at_gain,
+                psf_safe=row["psf_safe"],
+                peak_pixel_burst=row["peak_pixel_burst"],
+            )
+
+            all_results.append(row)
+
+            wl_label = f"{wl_nm}nm"
+            safe_label = "SAFE" if row["psf_safe"] else f"UNSAFE: {row.get('unsafe_reason', 'unknown')}"
+            sig_label = "LO" if row["low_signal"] else "ok"
+            print(f"  exp={at_exposure:8.1f}  gain={at_gain:5.1f}  "
+                  f"wl={wl_label:>7s}  peak_burst={row['peak_pixel_burst']:6.1f}  "
+                  f"peak_avg={row['peak_pixel_avg'] or 0:6.1f}  "
+                  f"peak_frac={row['peak_pixel_fraction_burst']:.4f}  "
+                  f"margin={row['peak_margin_to_full_scale']:6.1f}  "
+                  f"p_sig={row['p_signal']:6.1f}  [{safe_label}] [{sig_label}]")
+
+        def _evaluate_candidates(
+            candidates: list[tuple[float, float]],
+            *,
+            phase_label: str,
+        ) -> None:
+            total_trials = len(all_results) + len(candidates) * len(wls)
+            print(f"\n{phase_label}")
+            # Hardware scheduling invariant:
+            # TLS/monochromator motion is slow, expensive, and state-sensitive.
+            # Keep move/wait outside the exposure/gain loop: for one search
+            # pass, move the TLS once per planned wavelength, then evaluate all
+            # cheap camera candidates under that fixed wavelength.
+            for wl in wls:
+                wl_nm = _set_wavelength_once(wl)
+                print(f"\n  wavelength={wl_nm} nm")
+                for at_exposure, at_gain in candidates:
+                    camera_adapter.apply_camera_params(
+                        exposure_us=at_exposure,
+                        gain_db=at_gain,
+                    )
+                    row = _acquire_and_evaluate(
+                        camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg,
+                    )
+                    _record_candidate_row(
+                        wl_nm=wl_nm,
+                        at_exposure=at_exposure,
+                        at_gain=at_gain,
+                        row=row,
+                        total_trials=total_trials,
+                    )
 
         # ---- Phase 1: gain = gain_min -------------------------------------
-        print(f"\nPhase 1 -searching at gain_min={gain_min}")
-        gain = gain_min
-        exposure = exposure_start
-        max_safe_exposure: float | None = None
+        phase1_candidates = _exposure_candidates(gain_min)
+        _evaluate_candidates(
+            phase1_candidates,
+            phase_label=f"Phase 1 - searching at gain_min={gain_min}",
+        )
+        phase1_safe = _first_safe_candidate(phase1_candidates)
 
-        while exposure >= exposure_min:
-            print(f"\n  trying exposure={exposure}")
-            results = _sweep_wavelengths(exposure, gain)
-            if _all_wavelengths_safe(results):
-                max_safe_exposure = exposure
-                break
-            exposure *= step_factor
-
-        if max_safe_exposure is None:
+        if phase1_safe is None:
             msg = (
                 f"FAIL: even min exposure ({exposure_min} us) at gain_min "
                 f"({gain_min} dB) has at least one pixel reaching full scale "
@@ -502,12 +646,11 @@ def run_psf_safe_exposure(
                 error=msg,
             )
 
-        worst = _worst_signal_wavelength([r for r in all_results
-                                           if r["exposure_us"] == max_safe_exposure
-                                           and r["gain_db"] == gain])
+        max_safe_exposure, phase1_gain = phase1_safe
+        worst = _candidate_worst_signal(phase1_safe)
         if not worst["low_signal"]:
             safe_exposure = max_safe_exposure
-            safe_gain = gain
+            safe_gain = phase1_gain
             selection_reason = "all_burst_pixels_below_full_scale"
             print(f"\n  ACCEPT: exposure={safe_exposure} gain={safe_gain} "
                   f"({selection_reason})")
@@ -515,40 +658,27 @@ def run_psf_safe_exposure(
             print(f"\n  signal too weak at gain_min: p_signal={worst['p_signal']:.1f}")
             print(f"  entering Phase 2 -elevated gain search")
 
-            # ---- Phase 2: elevated gain --------------------------------
-            found = False
+            phase2_candidates: list[tuple[float, float]] = []
             gain = gain_min + gain_step
             while gain <= gain_max:
-                print(f"\nPhase 2 -trying gain={gain}")
-                exposure = exposure_start
-                max_safe_at_gain: float | None = None
-                while exposure >= exposure_min:
-                    results = _sweep_wavelengths(exposure, gain)
-                    if _all_wavelengths_safe(results):
-                        max_safe_at_gain = exposure
-                        break
-                    exposure *= step_factor
-
-                if max_safe_at_gain is not None:
-                    worst2 = _worst_signal_wavelength(
-                        [r for r in all_results
-                         if r["exposure_us"] == max_safe_at_gain
-                         and r["gain_db"] == gain]
-                    )
-                    if not worst2["low_signal"]:
-                        safe_exposure = max_safe_at_gain
-                        safe_gain = gain
-                        selection_reason = "elevated_gain_due_to_low_signal"
-                        print(f"  ACCEPT: exposure={safe_exposure} gain={safe_gain} "
-                              f"({selection_reason})")
-                        found = True
-                        break
-                    else:
-                        print(f"  safe but still low signal at gain={gain}")
-                else:
-                    print(f"  full-scale pixel encountered even at min exposure at gain={gain}")
-
+                phase2_candidates.extend(_exposure_candidates(gain))
                 gain += gain_step
+            _evaluate_candidates(phase2_candidates, phase_label="Phase 2 - elevated gain search")
+
+            found = False
+            for candidate in phase2_candidates:
+                if not _candidate_is_globally_safe(candidate):
+                    continue
+                worst2 = _candidate_worst_signal(candidate)
+                if worst2["low_signal"]:
+                    print(f"  safe but still low signal at gain={candidate[1]}")
+                    continue
+                safe_exposure, safe_gain = candidate
+                selection_reason = "elevated_gain_due_to_low_signal"
+                print(f"  ACCEPT: exposure={safe_exposure} gain={safe_gain} "
+                      f"({selection_reason})")
+                found = True
+                break
 
             if not found:
                 safe_exposure = max_safe_exposure
@@ -730,6 +860,15 @@ def main() -> None:
         help="TLS serial number (if not set, TLS from env TLS_C1_SERIAL)",
     )
     parser.add_argument(
+        "--allow-wavelength-labels-without-tls",
+        action="store_true",
+        help=(
+            "Dangerous hardware override: allow plan wavelengths to be treated "
+            "as labels when TLS is not configured. Use only for manual external "
+            "wavelength control or fixed single-wavelength tests."
+        ),
+    )
+    parser.add_argument(
         "--status-dir", default=None,
         help="Publish run-status files to this directory",
     )
@@ -757,16 +896,8 @@ def main() -> None:
         return
 
     _ensure_sys_path()
-    from devices.camera_service import CameraServiceClient
-    from devices.lcd_service import LCDService
 
     print("Connecting hardware ...")
-    camera_service = CameraServiceClient(timeout_ms=5000, auto_ensure=True)
-    lcd_service = LCDService(
-        display_index=args.lcd_display_index,
-        subpixel_axis=args.lcd_subpixel_axis,
-    )
-
     tls_service = None
     tls_serial = args.tls_serial or os.environ.get("TLS_C1_SERIAL")
     if tls_serial:
@@ -779,6 +910,27 @@ def main() -> None:
             print("  TLS not available (tls_c1 not installed)")
         except Exception as e:
             print(f"  TLS connection failed: {e}")
+    else:
+        print("  TLS disabled: pass --tls-serial or set TLS_C1_SERIAL to move wavelength hardware")
+
+    if tls_service is None and not args.allow_wavelength_labels_without_tls:
+        print(
+            "ERROR: TLS service is required for hardware PSF-safe exposure calibration. "
+            "Use --tls-serial or set TLS_C1_SERIAL. For explicit manual external "
+            "wavelength control, rerun with --allow-wavelength-labels-without-tls.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    _ensure_sys_path()
+    from devices.camera_service import CameraServiceClient
+    from devices.lcd_service import LCDService
+
+    camera_service = CameraServiceClient(timeout_ms=5000, auto_ensure=True)
+    lcd_service = LCDService(
+        display_index=args.lcd_display_index,
+        subpixel_axis=args.lcd_subpixel_axis,
+    )
 
     try:
         reply = camera_service.open_camera(index=args.camera_index, disable_trigger=True)
@@ -789,6 +941,7 @@ def main() -> None:
 
         _, result = run_psf_safe_exposure(
             plan, camera_service, lcd_service, tls_service,
+            allow_wavelength_labels_without_tls=args.allow_wavelength_labels_without_tls,
             status_dir=status_dir,
             status_preview_every=args.status_preview_every,
         )

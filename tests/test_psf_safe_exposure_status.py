@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
 
 from scripts.calibrate_psf_safe_exposure import run_psf_safe_exposure
 
@@ -102,3 +106,160 @@ def test_dry_run_writes_frame_stats(tmp_path: Path) -> None:
     assert "saturated_fraction" not in stats
     assert "saturated_pixel_count" not in stats
     assert "max_pixel" not in stats
+
+
+def test_hardware_mode_without_tls_fails_by_default(tmp_path: Path) -> None:
+    plan = _psf_safe_plan(
+        tmp_path,
+        wavelengths=[
+            {"wavelength_nm": 450.0},
+            {"wavelength_nm": 550.0},
+        ],
+    )
+    status_dir = tmp_path / "status"
+
+    with pytest.raises(RuntimeError, match="TLS service is required"):
+        run_psf_safe_exposure(
+            plan,
+            camera_service=None,
+            lcd_service=None,
+            tls_service=None,
+            dry_run=False,
+            status_dir=status_dir,
+        )
+
+    state = json.loads((status_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["completed"] is False
+    assert "cannot prove cross-wavelength safety" in state["error"]
+
+
+def test_tls_moves_once_per_wavelength_not_per_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wavelengths = [
+        {"wavelength_nm": 450.0, "grating": 1, "settle_ms": 0},
+        {"wavelength_nm": 550.0, "grating": 1, "settle_ms": 0},
+        {"wavelength_nm": 650.0, "grating": 1, "settle_ms": 0},
+    ]
+    plan = _psf_safe_plan(tmp_path, wavelengths=wavelengths)
+    plan["camera_search"].update({
+        "exposure_us_start": 10000.0,
+        "exposure_us_min": 2500.0,
+        "exposure_us_step_factor": 0.5,
+        "gain_db_min": 0.0,
+        "gain_db_max": 0.0,
+        "gain_db_step_db": 6.0,
+        "frames_per_setting": 2,
+    })
+
+    class FakeFrameStreamClient:
+        def __init__(self, recv_timeout_ms: int):
+            self.recv_timeout_ms = recv_timeout_ms
+
+    class FakeFrameCaptureHelper:
+        def __init__(self, frame_stream):
+            self.frame_stream = frame_stream
+
+    class FakeCameraService:
+        def __init__(self):
+            self.apply_params_call_count = 0
+            self.started = False
+
+        def start_stream(self):
+            self.started = True
+
+        def stop_stream(self):
+            self.started = False
+
+    class FakeCameraAdapter:
+        def __init__(self, capture_helper, camera_service):
+            self._camera = camera_service
+
+        def apply_camera_params(self, exposure_us=None, gain_db=None):
+            self._camera.apply_params_call_count += 1
+
+        def acquire_burst(self, k: int):
+            frame = np.linspace(10.0, 100.0, 16, dtype=np.float64).reshape(4, 4)
+            burst = np.stack([frame for _ in range(k)], axis=0)
+            return SimpleNamespace(
+                frames_avg=frame,
+                burst=burst,
+                metadata={"frame_dtype_full_scale": 255},
+            )
+
+    class FakeLCD:
+        def make_all_transmissive_mask(self):
+            return np.full((4, 12), 255, dtype=np.uint8)
+
+        def show_mono_mask(self, mask, *, mask_id=None, mode="mono_mask"):
+            return np.zeros((4, 4, 3), dtype=np.uint8)
+
+        def get_metadata(self):
+            return {
+                "display_index": 1,
+                "logical_shape": (4, 4),
+                "physical_shape": (4, 12),
+                "subpixel_axis": 1,
+            }
+
+    class FakeTLS:
+        def __init__(self):
+            self.move_call_count = 0
+            self.wait_call_count = 0
+            self.set_wavelength_calls: list[float] = []
+            self.grating = None
+            self.target = None
+
+        def set_grating(self, grating: int):
+            self.grating = int(grating)
+
+        def set_wavelength_nm(self, wavelength_nm: float):
+            self.target = float(wavelength_nm)
+            self.set_wavelength_calls.append(self.target)
+
+        def move(self, timeout_s: float = 60.0):
+            self.move_call_count += 1
+            return self.get_status()
+
+        def wait_until_idle(self, timeout_s: float = 60.0):
+            self.wait_call_count += 1
+            return self.get_status()
+
+        def get_status(self):
+            return SimpleNamespace(
+                current_wavelength_nm=self.target,
+                target_wavelength_nm=self.target,
+                grating=self.grating,
+                moving=False,
+            )
+
+    monkeypatch.setattr(
+        "devices.frame_stream.FrameStreamClient",
+        FakeFrameStreamClient,
+    )
+    monkeypatch.setattr(
+        "capture.frame_capture.FrameCaptureHelper",
+        FakeFrameCaptureHelper,
+    )
+    monkeypatch.setattr(
+        "tasks.capture_forward_dataset.CameraCaptureAdapter",
+        FakeCameraAdapter,
+    )
+
+    fake_camera = FakeCameraService()
+    fake_tls = FakeTLS()
+
+    run_psf_safe_exposure(
+        plan,
+        camera_service=fake_camera,
+        lcd_service=FakeLCD(),
+        tls_service=fake_tls,
+        dry_run=False,
+    )
+
+    exposure_candidates = [10000.0, 5000.0, 2500.0]
+    assert fake_tls.move_call_count == len(wavelengths)
+    assert fake_tls.wait_call_count == len(wavelengths)
+    assert fake_tls.set_wavelength_calls == [450.0, 550.0, 650.0]
+    assert fake_camera.apply_params_call_count == len(wavelengths) * len(exposure_candidates)

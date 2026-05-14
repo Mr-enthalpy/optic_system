@@ -169,3 +169,16 @@ def test_no_gui_once_mode_runs_against_temp_status_dir(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "run_id: run_008" in result.stdout
     assert "[INFO] status ready" in result.stdout
+
+
+def test_fit_size_downsamples_large_preview_without_crop() -> None:
+    from scripts.monitor_run_status import _fit_size
+
+    assert _fit_size(768, 642, 384, 321) == (384, 321)
+    assert _fit_size(2048, 2448, 512, 512) == (428, 512)
+
+
+def test_fit_size_does_not_upscale_small_preview() -> None:
+    from scripts.monitor_run_status import _fit_size
+
+    assert _fit_size(120, 80, 512, 512) == (120, 80)

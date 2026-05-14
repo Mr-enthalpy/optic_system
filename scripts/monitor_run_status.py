@@ -41,7 +41,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-log-lines",
         type=int,
-        default=100,
+        default=30,
         help="maximum recent log lines to display",
     )
     parser.add_argument(
@@ -173,35 +173,57 @@ def run_tk_gui(args: argparse.Namespace) -> int:
     state_var = tk.StringVar(value="status unavailable")
     frame_var = tk.StringVar(value="latest frame preview: unavailable")
     mask_var = tk.StringVar(value="current mask preview: unavailable")
-    logs_var = tk.StringVar(value="logs: unavailable")
 
     root.columnconfigure(0, weight=1)
-    root.columnconfigure(1, weight=2)
-    root.columnconfigure(2, weight=1)
+    root.columnconfigure(1, weight=1)
     root.rowconfigure(1, weight=1)
+    root.rowconfigure(2, weight=0)
 
     state_box = ttk.LabelFrame(root, text="Task State", padding=8)
-    state_box.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=(8, 4))
+    state_box.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=(8, 4))
     ttk.Label(state_box, textvariable=state_var, justify="left", anchor="w").pack(fill="x")
 
+    meta_box = ttk.LabelFrame(root, text="Metadata", padding=8)
+    meta_box.grid(row=0, column=1, sticky="nsew", padx=(4, 8), pady=(8, 4))
+    meta_box.rowconfigure(0, weight=1)
+    meta_box.columnconfigure(0, weight=1)
+    meta_text = tk.Text(
+        meta_box,
+        height=7,
+        wrap="none",
+        state="disabled",
+        font=("Consolas", 9),
+    )
+    meta_scroll = ttk.Scrollbar(meta_box, orient="vertical", command=meta_text.yview)
+    meta_text.configure(yscrollcommand=meta_scroll.set)
+    meta_text.grid(row=0, column=0, sticky="nsew")
+    meta_scroll.grid(row=0, column=1, sticky="ns")
+
     frame_box = ttk.LabelFrame(root, text="Latest Frame", padding=8)
-    frame_box.grid(row=1, column=1, sticky="nsew", padx=4, pady=4)
+    frame_box.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=4)
     frame_label = ttk.Label(frame_box, textvariable=frame_var, anchor="center")
     frame_label.pack(fill="both", expand=True)
 
     mask_box = ttk.LabelFrame(root, text="Current Mask", padding=8)
-    mask_box.grid(row=1, column=2, sticky="nsew", padx=(4, 8), pady=4)
+    mask_box.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=4)
     mask_label = ttk.Label(mask_box, textvariable=mask_var, anchor="center")
     mask_label.pack(fill="both", expand=True)
 
-    meta_box = ttk.LabelFrame(root, text="Metadata", padding=8)
-    meta_box.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=4)
-    meta_var = tk.StringVar(value="metadata unavailable")
-    ttk.Label(meta_box, textvariable=meta_var, justify="left", anchor="nw").pack(fill="both", expand=True)
-
     logs_box = ttk.LabelFrame(root, text="Recent Logs", padding=8)
-    logs_box.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=8, pady=(4, 8))
-    ttk.Label(logs_box, textvariable=logs_var, justify="left", anchor="nw").pack(fill="both", expand=True)
+    logs_box.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=8, pady=(4, 8))
+    logs_box.rowconfigure(0, weight=1)
+    logs_box.columnconfigure(0, weight=1)
+    logs_text = tk.Text(
+        logs_box,
+        height=8,
+        wrap="none",
+        state="disabled",
+        font=("Consolas", 9),
+    )
+    logs_scroll = ttk.Scrollbar(logs_box, orient="vertical", command=logs_text.yview)
+    logs_text.configure(yscrollcommand=logs_scroll.set)
+    logs_text.grid(row=0, column=0, sticky="nsew")
+    logs_scroll.grid(row=0, column=1, sticky="ns")
 
     photos: dict[str, Any] = {}
 
@@ -210,7 +232,7 @@ def run_tk_gui(args: argparse.Namespace) -> int:
         stats = reader.read_frame_stats() or {}
         logs = reader.tail_log(max_lines=args.max_log_lines)
         state_var.set(_render_gui_state(status))
-        meta_var.set(_render_gui_metadata(status, stats))
+        _update_text_widget(meta_text, _render_gui_metadata(status, stats))
         _update_image_label(
             label=frame_label,
             text_var=frame_var,
@@ -227,10 +249,7 @@ def run_tk_gui(args: argparse.Namespace) -> int:
             path=_preview_path(Path(args.status_dir), getattr(status, "current_mask_preview", None)),
             fallback="current mask preview: unavailable",
         )
-        if logs:
-            logs_var.set("\n".join(_format_log_row(row) for row in logs))
-        else:
-            logs_var.set("logs: unavailable")
+        _update_logs_text(logs_text, logs, max_log_lines=args.max_log_lines)
         if not args.once and root.winfo_exists():
             root.after(max(50, int(float(args.poll_interval) * 1000)), refresh)
 
@@ -241,6 +260,26 @@ def run_tk_gui(args: argparse.Namespace) -> int:
         return 0
     root.mainloop()
     return 0
+
+
+def _update_logs_text(widget: Any, logs: list[dict[str, Any]], *, max_log_lines: int) -> None:
+    if logs:
+        text = "\n".join(
+            _format_log_row(row)
+            for row in logs[-max(0, int(max_log_lines)):]
+        )
+    else:
+        text = "logs: unavailable"
+    _update_text_widget(widget, text, scroll_to_end=True)
+
+
+def _update_text_widget(widget: Any, text: str, *, scroll_to_end: bool = False) -> None:
+    widget.configure(state="normal")
+    widget.delete("1.0", "end")
+    widget.insert("1.0", text)
+    if scroll_to_end:
+        widget.see("end")
+    widget.configure(state="disabled")
 
 
 def _render_gui_state(status: Any | None) -> str:
@@ -302,9 +341,15 @@ def _update_image_label(
         text_var.set(fallback)
         return
     try:
-        import tkinter as tk
+        from PIL import Image, ImageTk
 
-        photo = tk.PhotoImage(file=str(path))
+        image = Image.open(path)
+        max_w, max_h = _image_label_target_size(label)
+        fit_w, fit_h = _fit_size(image.width, image.height, max_w, max_h)
+        if (fit_w, fit_h) != (image.width, image.height):
+            resampling = getattr(Image, "Resampling", Image).LANCZOS
+            image = image.resize((fit_w, fit_h), resampling)
+        photo = ImageTk.PhotoImage(image)
     except Exception:
         label.configure(image="")
         photos.pop(key, None)
@@ -313,6 +358,29 @@ def _update_image_label(
     photos[key] = photo
     text_var.set("")
     label.configure(image=photo)
+
+
+def _image_label_target_size(label: Any) -> tuple[int, int]:
+    width = int(getattr(label, "winfo_width")())
+    height = int(getattr(label, "winfo_height")())
+    parent = getattr(label, "master", None)
+    if parent is not None:
+        width = max(width, int(parent.winfo_width()) - 16)
+        height = max(height, int(parent.winfo_height()) - 16)
+    if width <= 1:
+        width = 512
+    if height <= 1:
+        height = 512
+    return width, height
+
+
+def _fit_size(width: int, height: int, max_width: int, max_height: int) -> tuple[int, int]:
+    width = max(1, int(width))
+    height = max(1, int(height))
+    max_width = max(1, int(max_width))
+    max_height = max(1, int(max_height))
+    scale = min(max_width / width, max_height / height, 1.0)
+    return max(1, int(width * scale)), max(1, int(height * scale))
 
 
 def _preview_path(status_dir: Path, value: str | None) -> Path | None:
