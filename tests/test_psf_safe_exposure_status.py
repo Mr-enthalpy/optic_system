@@ -72,6 +72,8 @@ def test_dry_run_writes_log_jsonl(tmp_path: Path) -> None:
 
 
 def test_dry_run_status_marks_failed_when_no_safe_setting(tmp_path: Path) -> None:
+    """FakeCamera with exposure_us_start=10000, gain_db_min=0 saturates all
+    wavelengths at gain_min; the sweep finds no safe setting."""
     plan = _psf_safe_plan(tmp_path)
     status_dir = tmp_path / "status"
 

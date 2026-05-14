@@ -11,7 +11,8 @@ Outputs:
   outputs/exposure_calibration/camera_params_psf_safe.json
 
 Constraints:
-  - Requires exclusive hardware access.  Close the monitor GUI first.
+  - Requires exclusive hardware access.  Close any hardware-owning
+    GUI/session before running.  The read-only run-status monitor may remain open.
   - Always prefers gain_min.  Only elevates gain when gain_min yields
     safe-but-unusably-dim signal.
   - If even gain_min + exposure_min violates max-pixel headroom, fails
@@ -221,9 +222,8 @@ class HardwareLock:
         if self._lock_path.exists():
             raise RuntimeError(
                 f"Hardware lock file exists: {self._lock_path}\n"
-                "Another capture task may be running, or the monitor GUI "
-                "is still open.  Close the monitor GUI and delete the "
-                "lock file if it is stale."
+                "Another capture task may be running.  Close that task "
+                "and delete the lock file if it is stale."
             )
         self._lock_path.write_text(f"pid={os.getpid()}\nacquired_ns={_now_ns()}\n")
         self._acquired = True
@@ -459,6 +459,14 @@ def run_psf_safe_exposure(
                 })
                 if trial_idx % max(1, int(status_preview_every)) == 0:
                     run_status.write_frame_preview(row["frame"])
+                run_status.append_log(
+                    "INFO", "exposure trial evaluated",
+                    wavelength_nm=wl_nm,
+                    exposure_us=at_exposure,
+                    gain_db=at_gain,
+                    psf_safe=row["psf_safe"],
+                    max_pixel_burst=row["max_pixel_burst"],
+                )
                 # -------------------------
 
                 all_results.append(row)

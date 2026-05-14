@@ -3,7 +3,8 @@
 Phase 3.1 - procedural effective LCD pupil scan capture.
 
 Hardware mode requires exclusive camera/LCD access:
-    Close monitor GUI before running pupil scan.
+    Close any hardware-owning GUI/session before running.
+    The read-only run-status monitor may remain open.
 
 Dry-run mode is the default unless --hardware is passed. It uses no camera,
 LCD, TLS, vendor SDK, or sidecar imports and writes a structurally valid raw
@@ -102,7 +103,9 @@ class HardwareLock:
             raise RuntimeError(
                 f"Hardware lock file exists: {self._lock_path}\n"
                 "Phase 3.1 pupil scan requires exclusive camera/LCD access. "
-                "Close monitor GUI before starting. If the lock is stale, "
+                "A hardware-owning task may still be running. "
+                "The read-only run-status monitor may remain open. "
+                "If the lock is stale, "
                 "delete it manually after confirming no capture is running."
             )
         self._lock_path.write_text(
@@ -242,7 +245,7 @@ def run_pupil_scan(
 
     if not dry_run:
         print("Phase 3.1 pupil scan requires exclusive camera/LCD access.")
-        print("Close monitor GUI before starting.")
+        print("Close any hardware-owning GUI/session before starting.")
         lock.acquire()
 
     try:

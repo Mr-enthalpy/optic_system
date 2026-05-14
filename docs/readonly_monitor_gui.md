@@ -80,3 +80,14 @@ This monitor is infrastructure only. Capture and calibration tasks must
 explicitly publish richer diagnostics by calling `write_frame_preview(...)`,
 `write_frame_stats(...)`, and `append_log(...)`. Phase 3.1 task integration
 should add those calls where live diagnostics are useful.
+
+## Dependencies
+
+Mask and frame previews are written as PNG images using `cv2` (OpenCV).
+If `cv2` is not installed in the experiment environment, previews fall
+back to `.npy` format.  The terminal monitor (`--no-gui`) can read `.npy`;
+the tkinter GUI shows the preview as unavailable.  Install `opencv-python`
+in the experiment venv for full GUI preview support.
+
+Previews are downsampled to a maximum side of 768 pixels before writing.
+Raw HDF5 data is unaffected — this is status-dir policy only.
