@@ -418,6 +418,7 @@ def _load_preview_image(path: Path, *, frame_encoding: str | None = None) -> Any
         array = np.load(str(path))
         return _array_to_pil_image(array, frame_encoding=frame_encoding)
     image = Image.open(path)
+    image.load()
     return image.convert("RGB") if image.mode not in {"L", "RGB"} else image
 
 

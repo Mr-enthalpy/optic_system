@@ -99,6 +99,18 @@ def test_dry_run_status_marks_failed_when_no_safe_setting(tmp_path: Path, monkey
     state = json.loads((status_dir / "state.json").read_text(encoding="utf-8"))
     assert state["completed"] is False
     assert state["error"] is not None
+    assert state["latest_frame_preview"] is not None
+    assert (status_dir / state["latest_frame_preview"]).exists()
+    assert state["frame_stats"] == "frame_stats.json"
+    stats = json.loads((status_dir / "frame_stats.json").read_text(encoding="utf-8"))
+    assert stats["preview_kind"] == "bound_search"
+    assert stats["psf_safe"] is False
+
+    import h5py
+
+    with h5py.File(plan["output"]["raw_h5"], "r") as f:
+        assert f["sweep/exposure_us"].shape[0] >= 1
+        assert bool(f["sweep/psf_safe"][0]) is False
 
 
 def test_dry_run_no_status_dir_produces_no_files(tmp_path: Path) -> None:

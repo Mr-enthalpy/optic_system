@@ -330,19 +330,26 @@ def _estimate_safe_bound_for_wavelength(
     gain_db: float,
     eps_absolute: float = 50.0,
     max_iter: int = 30,
+    on_probe: Any | None = None,
 ) -> tuple[float, dict[str, Any]]:
     R = float(R)
     L = float(L)
 
     camera_adapter.apply_camera_params(exposure_us=R, gain_db=gain_db)
     row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
+    if on_probe is not None:
+        on_probe(R, row)
     if row["psf_safe"]:
         return R, row
 
     camera_adapter.apply_camera_params(exposure_us=L, gain_db=gain_db)
     row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
+    if on_probe is not None:
+        on_probe(L, row)
     if not row["psf_safe"]:
         return L, row
+    safe_bound = L
+    safe_row = row
 
     for _ in range(max_iter):
         if R - L < eps_absolute:
@@ -350,12 +357,16 @@ def _estimate_safe_bound_for_wavelength(
         mid = (L + R) / 2.0
         camera_adapter.apply_camera_params(exposure_us=mid, gain_db=gain_db)
         row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
+        if on_probe is not None:
+            on_probe(mid, row)
         if row["psf_safe"]:
             L = mid
+            safe_bound = mid
+            safe_row = row
         else:
             R = mid
 
-    return L, row
+    return safe_bound, safe_row
 
 
 @dataclass
@@ -429,6 +440,7 @@ def run_psf_safe_exposure(
         lcd_metadata: dict[str, Any]
         current_mask_id = "all_transmissive"
         current_mask_preview: np.ndarray | None = None
+        initial_frame_preview: np.ndarray | None = None
 
         if not dry_run:
             from capture.frame_capture import FrameCaptureHelper
@@ -449,6 +461,7 @@ def run_psf_safe_exposure(
 
             camera_service.start_stream()
             first_frame = camera_adapter.acquire_burst(1)
+            initial_frame_preview = np.asarray(first_frame.frames_avg)
             full_scale = float(
                 first_frame.metadata.get("frame_dtype_full_scale")
                 or plan.get("camera", {}).get("full_scale")
@@ -466,6 +479,7 @@ def run_psf_safe_exposure(
                 "mode": "fake",
             }
             current_mask_preview = np.full((8, 24), 255, dtype=np.uint8)
+            initial_frame_preview = np.zeros((8, 8), dtype=np.uint8)
 
         writer = PsfSafeExposureWriter(
             output_raw,
@@ -493,6 +507,14 @@ def run_psf_safe_exposure(
         )
         if current_mask_preview is not None:
             run_status.write_mask_preview(current_mask_preview)
+        if initial_frame_preview is not None:
+            run_status.write_frame_preview(initial_frame_preview)
+            run_status.write_frame_stats({
+                "preview_kind": "initial_camera_frame",
+                "peak_pixel_avg": float(np.max(initial_frame_preview)),
+                "frame_dtype_full_scale": int(full_scale),
+                "shape": list(np.asarray(initial_frame_preview).shape),
+            })
         run_status.append_log("INFO", "PSF-safe exposure calibration started",
                               exposure_start_us=exposure_start, gain_min_db=gain_min)
         if not dry_run and tls_service is None and allow_wavelength_labels_without_tls:
@@ -542,7 +564,8 @@ def run_psf_safe_exposure(
             at_exposure: float,
             at_gain: float,
             row: dict[str, Any],
-            total_trials: int,
+            total_trials: int | None,
+            phase_label: str = "search",
         ) -> None:
             row["wavelength_nm"] = wl_nm
             row["exposure_us"] = at_exposure
@@ -575,6 +598,10 @@ def run_psf_safe_exposure(
                 camera_gain_db=float(at_gain),
             )
             run_status.write_frame_stats({
+                "preview_kind": phase_label,
+                "wavelength_nm": wl_nm,
+                "exposure_us": at_exposure,
+                "gain_db": at_gain,
                 "peak_pixel_burst": row["peak_pixel_burst"],
                 "peak_pixel_avg": row["peak_pixel_avg"],
                 "peak_pixel_fraction_burst": row["peak_pixel_fraction_burst"],
@@ -585,11 +612,17 @@ def run_psf_safe_exposure(
                 "psf_safe": row["psf_safe"],
                 "unsafe_reason": row["unsafe_reason"],
                 "frame_dtype_full_scale": int(full_scale),
+                "shape": list(np.asarray(row["frame"]).shape),
             })
-            if trial_idx % max(1, int(status_preview_every)) == 0:
+            should_write_preview = (
+                trial_idx % max(1, int(status_preview_every)) == 0
+                or not bool(row["psf_safe"])
+            )
+            if should_write_preview:
                 run_status.write_frame_preview(row["frame"])
             run_status.append_log(
                 "INFO", "exposure trial evaluated",
+                phase=phase_label,
                 wavelength_nm=wl_nm,
                 exposure_us=at_exposure,
                 gain_db=at_gain,
@@ -611,12 +644,24 @@ def run_psf_safe_exposure(
 
         def _estimate_bound_for_wl(wl: dict[str, Any], R_upper: float, at_gain: float) -> tuple[float, dict]:
             wl_nm = _set_wavelength_once(wl)
+
+            def _record_probe(at_exposure: float, row: dict[str, Any]) -> None:
+                _record_candidate_row(
+                    wl_nm=wl_nm,
+                    at_exposure=at_exposure,
+                    at_gain=at_gain,
+                    row=row,
+                    total_trials=None,
+                    phase_label="bound_search",
+                )
+
             bound, row = _estimate_safe_bound_for_wavelength(
                 camera_adapter,
                 k=k, full_scale=full_scale,
                 diagnostics_cfg=diagnostics_cfg, sig_cfg=sig_cfg,
                 L=exposure_min, R=R_upper, gain_db=at_gain,
                 eps_absolute=binary_search_eps,
+                on_probe=_record_probe,
             )
             return bound, row
 
@@ -638,6 +683,7 @@ def run_psf_safe_exposure(
                     at_gain=at_gain,
                     row=row,
                     total_trials=total_trials,
+                    phase_label=phase_label,
                 )
                 rows.append(row)
             return rows

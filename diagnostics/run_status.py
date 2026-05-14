@@ -250,7 +250,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
             f.write("\n")
-        os.replace(tmp_name, path)
+        _replace_with_retry(tmp_name, path)
     finally:
         try:
             os.unlink(tmp_name)
@@ -269,7 +269,7 @@ def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
     try:
         with open(tmp_name, "wb") as f:
             np.save(f, array)
-        os.replace(tmp_name, path)
+        _replace_with_retry(tmp_name, path)
     finally:
         try:
             os.unlink(tmp_name)
@@ -293,12 +293,23 @@ def _atomic_write_image(path: Path, image: np.ndarray) -> None:
     try:
         if not cv2.imwrite(tmp_name, image):
             raise RuntimeError(f"failed to write image preview: {path}")
-        os.replace(tmp_name, path)
+        _replace_with_retry(tmp_name, path)
     finally:
         try:
             os.unlink(tmp_name)
         except FileNotFoundError:
             pass
+
+
+def _replace_with_retry(src: str, dst: Path, *, attempts: int = 5) -> None:
+    for attempt in range(max(1, int(attempts))):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt >= attempts - 1:
+                raise
+            time.sleep(0.02 * (attempt + 1))
 
 
 def _read_image(path: Path) -> np.ndarray | None:

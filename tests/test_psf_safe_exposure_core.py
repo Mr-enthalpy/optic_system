@@ -17,6 +17,7 @@ from scripts.calibrate_psf_safe_exposure import (
     compute_peak_safety_metrics,
     compute_signal_metrics,
     infer_full_scale,
+    _estimate_safe_bound_for_wavelength,
     _all_wavelengths_safe,
     _worst_signal_wavelength,
     _build_result,
@@ -120,6 +121,41 @@ class TestAllWavelengthsSafe:
         ]
         worst = _worst_signal_wavelength(results)
         assert worst["p_signal"] == 20.0
+
+
+def test_binary_search_returns_last_safe_row_not_last_probe():
+    class FakeCamera:
+        def __init__(self):
+            self.exposure_us = 0.0
+
+        def apply_camera_params(self, exposure_us=None, gain_db=None):
+            self.exposure_us = float(exposure_us)
+
+        def acquire_burst(self, k: int):
+            value = 100.0 if self.exposure_us <= 500.0 else 255.0
+            burst = np.full((k, 4, 4), value, dtype=np.float64)
+            from types import SimpleNamespace
+
+            return SimpleNamespace(frames_avg=burst.mean(axis=0), burst=burst)
+
+    bound, row = _estimate_safe_bound_for_wavelength(
+        FakeCamera(),
+        k=2,
+        full_scale=255.0,
+        diagnostics_cfg={},
+        sig_cfg={
+            "percentile": 99.0,
+            "min_signal_fraction_threshold": 0.01,
+            "min_dynamic_range_fraction": 0.0,
+        },
+        L=100.0,
+        R=1000.0,
+        gain_db=0.0,
+        eps_absolute=10.0,
+    )
+
+    assert bound <= 500.0
+    assert row["psf_safe"] is True
 
 
 class TestPsfSafeExposureWriter:
