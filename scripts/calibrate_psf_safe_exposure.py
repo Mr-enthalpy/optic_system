@@ -57,11 +57,17 @@ class OptionalRunStatus:
 
     def update(self, **kwargs: Any) -> None:
         if self._publisher is not None:
-            self._publisher.update(**kwargs)
+            try:
+                self._publisher.update(**kwargs)
+            except Exception:
+                pass
 
     def append_log(self, level: str, message: str, **fields: Any) -> None:
         if self._publisher is not None:
-            self._publisher.append_log(level, message, **fields)
+            try:
+                self._publisher.append_log(level, message, **fields)
+            except Exception:
+                pass
 
     def write_frame_preview(self, frame: np.ndarray) -> None:
         if self._publisher is not None:
@@ -72,7 +78,10 @@ class OptionalRunStatus:
 
     def write_frame_stats(self, stats: dict[str, Any]) -> None:
         if self._publisher is not None:
-            self._publisher.write_frame_stats(stats)
+            try:
+                self._publisher.write_frame_stats(stats)
+            except Exception as exc:
+                self.append_log("WARNING", "failed to write frame stats", error=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -293,9 +302,6 @@ def run_psf_safe_exposure(
 ) -> tuple[Path, dict[str, Any]]:
     _ensure_sys_path()
     from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
-    from tasks.capture_forward_dataset import CameraCaptureAdapter
-    from capture.frame_capture import FrameCaptureHelper
-    from devices.frame_stream import FrameStreamClient
 
     plan_id = plan["plan_id"]
     wls = plan["wavelengths"]
@@ -324,6 +330,10 @@ def run_psf_safe_exposure(
 
     try:
         if not dry_run:
+            from capture.frame_capture import FrameCaptureHelper
+            from devices.frame_stream import FrameStreamClient
+            from tasks.capture_forward_dataset import CameraCaptureAdapter
+
             frame_stream = FrameStreamClient(recv_timeout_ms=5000)
             capture_helper = FrameCaptureHelper(frame_stream)
             camera_adapter = CameraCaptureAdapter(capture_helper, camera_service)

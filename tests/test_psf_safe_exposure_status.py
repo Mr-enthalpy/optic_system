@@ -71,7 +71,7 @@ def test_dry_run_writes_log_jsonl(tmp_path: Path) -> None:
     assert len(logs) >= 1
 
 
-def test_dry_run_status_marks_completed(tmp_path: Path) -> None:
+def test_dry_run_status_marks_failed_when_no_safe_setting(tmp_path: Path) -> None:
     plan = _psf_safe_plan(tmp_path)
     status_dir = tmp_path / "status"
 

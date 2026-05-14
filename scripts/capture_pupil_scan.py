@@ -49,11 +49,17 @@ class OptionalRunStatus:
 
     def update(self, **kwargs: Any) -> None:
         if self._publisher is not None:
-            self._publisher.update(**kwargs)
+            try:
+                self._publisher.update(**kwargs)
+            except Exception:
+                pass
 
     def append_log(self, level: str, message: str, **fields: Any) -> None:
         if self._publisher is not None:
-            self._publisher.append_log(level, message, **fields)
+            try:
+                self._publisher.append_log(level, message, **fields)
+            except Exception:
+                pass
 
     def write_frame_preview(self, frame: np.ndarray) -> None:
         if self._publisher is not None:
@@ -64,7 +70,10 @@ class OptionalRunStatus:
 
     def write_frame_stats(self, stats: dict[str, Any]) -> None:
         if self._publisher is not None:
-            self._publisher.write_frame_stats(stats)
+            try:
+                self._publisher.write_frame_stats(stats)
+            except Exception as exc:
+                self.append_log("WARNING", "failed to write frame stats", error=str(exc))
 
     def write_mask_preview(self, mask: np.ndarray) -> None:
         if self._publisher is not None:
@@ -352,6 +361,15 @@ def run_pupil_scan(
             if emit_dir is not None:
                 np.save(str(emit_dir / f"{mask_id}.npy"), mask)
 
+            # --- status: mask identity before LCD show ---
+            run_status.update(
+                capture_index=n + 1,
+                current_mask_id=mask_id,
+            )
+            if (n + 1) % max(1, int(status_preview_every)) == 0:
+                run_status.write_mask_preview(mask)
+            # ---------------------------------------------
+
             if dry_run:
                 frame_avg = _synthetic_pupil_frame(meta, physical_shape)
             else:
@@ -362,22 +380,9 @@ def run_pupil_scan(
                 capture = capture_adapter.acquire_burst(frames_per_capture)
                 frame_avg = capture.frames_avg
 
-            writer.append_capture(
-                mask_id=mask_id,
-                mask_metadata=meta,
-                frames_avg=frame_avg,
-                physical_mask=mask if store_physical_masks else None,
-            )
-            n += 1
-
-            # --- status publishing ---
-            run_status.update(
-                capture_index=n,
-                current_mask_id=mask_id,
-            )
-            if n % max(1, int(status_preview_every)) == 0:
+            # --- status: frame preview after capture ---
+            if (n + 1) % max(1, int(status_preview_every)) == 0:
                 run_status.write_frame_preview(frame_avg)
-                run_status.write_mask_preview(mask)
             run_status.write_frame_stats({
                 "max_pixel": float(frame_avg.max()),
                 "min_pixel": float(frame_avg.min()),
@@ -388,7 +393,15 @@ def run_pupil_scan(
                 "dtype": str(frame_avg.dtype),
                 "frame_dtype_full_scale": int(frame_dtype_full_scale),
             })
-            # -------------------------
+            # ---------------------------------------------
+
+            writer.append_capture(
+                mask_id=mask_id,
+                mask_metadata=meta,
+                frames_avg=frame_avg,
+                physical_mask=mask if store_physical_masks else None,
+            )
+            n += 1
 
             if n % 25 == 0:
                 print(f"  captured {n} pupil-scan masks")
