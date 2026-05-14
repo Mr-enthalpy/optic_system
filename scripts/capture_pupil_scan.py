@@ -59,8 +59,8 @@ class OptionalRunStatus:
         if self._publisher is not None:
             try:
                 self._publisher.write_frame_preview(frame)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.append_log("WARNING", "failed to write frame preview", error=str(exc))
 
     def write_frame_stats(self, stats: dict[str, Any]) -> None:
         if self._publisher is not None:
@@ -70,8 +70,8 @@ class OptionalRunStatus:
         if self._publisher is not None:
             try:
                 self._publisher.write_mask_preview(mask)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.append_log("WARNING", "failed to write mask preview", error=str(exc))
 
 
 class HardwareLock:
@@ -221,6 +221,7 @@ def run_pupil_scan(
 
     lock = HardwareLock(plan.get("lock_file", "outputs/run_status/capture_hardware.lock"))
     writer: PupilScanWriter | None = None
+    run_status = OptionalRunStatus(status_dir, run_id=plan["plan_id"])
 
     if not dry_run:
         print("Phase 3.1 pupil scan requires exclusive camera/LCD access.")
@@ -319,8 +320,6 @@ def run_pupil_scan(
             status=tls_status,
         )
 
-        run_status = OptionalRunStatus(status_dir, run_id=plan["plan_id"])
-        lcd_phy = lcd_meta.get("physical_shape")
         run_status.update(
             plan_id=plan["plan_id"],
             phase="3.1",
@@ -330,7 +329,7 @@ def run_pupil_scan(
             camera_gain_db=float(gain_db),
             camera_frame_dtype_full_scale=int(frame_dtype_full_scale),
             lcd_display_index=int(lcd_meta.get("display_index", -1)),
-            lcd_physical_shape=list(lcd_phy) if lcd_phy else None,
+            lcd_physical_shape=list(lcd_phy) if (lcd_phy := lcd_meta.get("physical_shape")) else None,
             lcd_logical_shape=list(lcd_meta.get("logical_shape", [])) if lcd_meta.get("logical_shape") else None,
             lcd_subpixel_axis=int(subpixel_axis),
         )
@@ -402,7 +401,7 @@ def run_pupil_scan(
 
     except Exception as exc:
         run_status.append_log("CRITICAL", str(exc))
-        run_status.update(error=str(exc))
+        run_status.update(error=str(exc), completed=False)
         if writer is not None:
             writer.finalize(completed=False, error=str(exc))
         raise

@@ -67,8 +67,8 @@ class OptionalRunStatus:
         if self._publisher is not None:
             try:
                 self._publisher.write_frame_preview(frame)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.append_log("WARNING", "failed to write frame preview", error=str(exc))
 
     def write_frame_stats(self, stats: dict[str, Any]) -> None:
         if self._publisher is not None:
@@ -319,6 +319,9 @@ def run_psf_safe_exposure(
     if not dry_run:
         lock.acquire()
 
+    run_status = OptionalRunStatus(status_dir, run_id=plan_id)
+    writer: PsfSafeExposureWriter | None = None
+
     try:
         if not dry_run:
             frame_stream = FrameStreamClient(recv_timeout_ms=5000)
@@ -352,7 +355,6 @@ def run_psf_safe_exposure(
         else:
             writer.write_lcd_metadata({"display_index": -1, "subpixel_axis": 1, "mode": "fake"})
 
-        run_status = OptionalRunStatus(status_dir, run_id=plan_id)
         run_status.update(
             plan_id=plan_id,
             phase="3.0.5b",
@@ -571,10 +573,11 @@ def run_psf_safe_exposure(
     except Exception as exc:
         run_status.append_log("CRITICAL", str(exc))
         run_status.update(error=str(exc), completed=False)
-        try:
-            writer.finalize(completed=False, error=str(exc))
-        except Exception:
-            pass
+        if writer is not None:
+            try:
+                writer.finalize(completed=False, error=str(exc))
+            except Exception:
+                pass
         raise
 
     finally:

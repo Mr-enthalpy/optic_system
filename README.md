@@ -546,9 +546,8 @@ When `tls_c1` is not installed, `--enable-tls` exits with a clear error
 describing the missing dependency.  Omitting `--enable-tls` starts the
 GUI without any TLS requirement.
 
-`app/monitor_gui.py` is a read-only experiment monitor. It does not own the
-hardware lifecycle and is safe to open or close while a capture task keeps
-running.
+`scripts/monitor_run_status.py` is a read-only experiment monitor. It reads
+task-published run-status files and does not connect to hardware.
 
 Example monitor usage:
 
@@ -556,10 +555,10 @@ Example monitor usage:
 python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --hardware \
   --status-dir outputs/run_status/repeatability_001
 
-python app/monitor_gui.py --status-dir outputs/run_status/repeatability_001
+python scripts/monitor_run_status.py --status-dir outputs/run_status/repeatability_001
 ```
 
-See `docs/monitor_gui.md` for monitor behavior and troubleshooting.
+See `docs/readonly_monitor_gui.md` for monitor behavior and limitations.
 
 ## Current status
 
