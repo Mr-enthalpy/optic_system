@@ -136,9 +136,9 @@ def render_terminal_snapshot(reader: Any, *, max_log_lines: int) -> str:
             f"gain={_fmt_db(status.camera_gain_db)} "
             f"roi={_fmt(status.camera_roi)} "
             f"seq={_fmt(status.camera_frame_seq)} "
-            f"max={_first_present(stats.get('max_pixel'), status.camera_max_pixel)} "
-            f"p99.9={_fmt(stats.get('p99_9'))} "
-            f"sat_frac={_fmt(stats.get('saturated_fraction'))}"
+            f"max={_first_present(stats.get('peak_pixel_burst'), status.camera_max_pixel)} "
+            f"p99.9={_fmt(stats.get('p99_9_avg'))} "
+            f"margin={_fmt(stats.get('peak_margin_to_full_scale'))}"
         ),
         f"camera dtype full scale: {_first_present(stats.get('frame_dtype_full_scale'), status.camera_frame_dtype_full_scale)}",
         f"latest frame preview: {frame_state}",
@@ -279,9 +279,9 @@ def _render_gui_metadata(status: Any | None, stats: dict[str, Any]) -> str:
             f"camera gain: {_fmt_db(status.camera_gain_db)}",
             f"camera ROI: {_fmt(status.camera_roi)}",
             f"camera seq: {_fmt(status.camera_frame_seq)}",
-            f"camera max: {_first_present(stats.get('max_pixel'), status.camera_max_pixel)}",
-            f"p99.9: {_fmt(stats.get('p99_9'))}",
-            f"saturated fraction: {_fmt(stats.get('saturated_fraction'))}",
+            f"camera max: {_first_present(stats.get('peak_pixel_burst'), status.camera_max_pixel)}",
+            f"p99.9: {_fmt(stats.get('p99_9_avg'))}",
+            f"peak margin: {_fmt(stats.get('peak_margin_to_full_scale'))}",
             f"dtype full scale: {_first_present(stats.get('frame_dtype_full_scale'), status.camera_frame_dtype_full_scale)}",
         ]
     )

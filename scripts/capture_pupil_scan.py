@@ -181,6 +181,24 @@ def _validate_camera_params(
         raise ValueError(f"{source_path}: global_safe_camera.gain_db is required")
     if params.get("frame_dtype_full_scale") is None:
         raise ValueError(f"{source_path}: frame_dtype_full_scale is required")
+    psf_policy = params.get("psf_safety_policy", {})
+    if psf_policy.get("rule") != "all_frames_all_pixels_strictly_below_full_scale":
+        raise ValueError(
+            f"{source_path}: psf_safety_policy.rule must be "
+            "'all_frames_all_pixels_strictly_below_full_scale'"
+        )
+    if psf_policy.get("allow_full_scale_pixel") is not False:
+        raise ValueError(
+            f"{source_path}: psf_safety_policy.allow_full_scale_pixel must be False"
+        )
+    if psf_policy.get("evaluated_on") != "raw_burst_frames":
+        raise ValueError(
+            f"{source_path}: psf_safety_policy.evaluated_on must be 'raw_burst_frames'"
+        )
+    if psf_policy.get("allow_non_finite_pixel") is not False:
+        raise ValueError(
+            f"{source_path}: psf_safety_policy.allow_non_finite_pixel must be False"
+        )
 
 
 def resolve_camera_settings(
@@ -399,7 +417,7 @@ def run_pupil_scan(
                 "min_pixel": float(frame_avg.min()),
                 "mean_pixel": float(frame_avg.mean()),
                 "p99_9": float(np.percentile(frame_avg, 99.9)),
-                "saturated_pixel_count": int((frame_avg >= frame_dtype_full_scale).sum()),
+                "peak_pixel": float(frame_avg.max()),
                 "shape": list(frame_avg.shape),
                 "dtype": str(frame_avg.dtype),
                 "frame_dtype_full_scale": int(frame_dtype_full_scale),

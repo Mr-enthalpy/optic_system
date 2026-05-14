@@ -26,12 +26,7 @@ def _psf_safe_plan(tmp_path: Path, *, wavelengths=None) -> dict:
             "gain_db_step_db": 6.0,
             "frames_per_setting": 3,
         },
-        "saturation": {
-            "percentile": 99.9,
-            "max_pixel_fraction_threshold": 0.90,
-            "hard_max_pixel_fraction_threshold": 0.98,
-            "saturated_pixel_count_threshold": 0,
-        },
+        "psf_safety": {"rule": "all_frames_all_pixels_strictly_below_full_scale"},
         "signal": {
             "percentile": 99.0,
             "min_signal_fraction_threshold": 0.05,
@@ -101,6 +96,9 @@ def test_dry_run_writes_frame_stats(tmp_path: Path) -> None:
 
     assert (status_dir / "frame_stats.json").exists()
     stats = json.loads((status_dir / "frame_stats.json").read_text(encoding="utf-8"))
-    assert "max_pixel" in stats
+    assert "peak_pixel_burst" in stats
     assert "p_signal" in stats
     assert "psf_safe" in stats
+    assert "saturated_fraction" not in stats
+    assert "saturated_pixel_count" not in stats
+    assert "max_pixel" not in stats

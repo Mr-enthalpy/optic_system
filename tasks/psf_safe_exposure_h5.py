@@ -26,10 +26,9 @@ class PsfSafeExposureWriter:
     """
     Dedicated HDF5 writer for PSF-safe camera exposure/gain sweep.
 
-    Records wavelength x exposure x gain test rows with max-pixel headroom
-    metrics.  Global saturated fraction is diagnostic only. Follows the same
-    provenance principles as
-    ``RawCaptureWriter`` but uses sweep-specific indexing.
+    Records wavelength x exposure x gain test rows with strict peak-pixel
+    PSF safety metrics.  A setting is PSF-safe only when every raw burst
+    frame pixel is strictly below the dtype full scale.
     """
 
     def __init__(self, output_path: str | Path, plan_id: str = "psf_safe_exposure",
@@ -80,32 +79,30 @@ class PsfSafeExposureWriter:
             compression_opts=4,
         )
 
+        string_dtype = h5py.string_dtype()
         sweep = f.require_group("sweep")
         sweep.create_dataset("exposure_us", shape=(0,), maxshape=(None,), dtype=np.float64)
         sweep.create_dataset("gain_db", shape=(0,), maxshape=(None,), dtype=np.float64)
         sweep.create_dataset("wavelength_nm", shape=(0,), maxshape=(None,), dtype=np.float64)
-        sweep.create_dataset("max_pixel", shape=(0,), maxshape=(None,), dtype=np.float64)
-        sweep.create_dataset("max_pixel_avg", shape=(0,), maxshape=(None,), dtype=np.float64)
-        sweep.create_dataset("max_pixel_burst", shape=(0,), maxshape=(None,), dtype=np.float64)
-        sweep.create_dataset("p99_9", shape=(0,), maxshape=(None,), dtype=np.float64)
-        sweep.create_dataset("saturated_pixel_count", shape=(0,), maxshape=(None,), dtype=np.int64)
-        sweep.create_dataset("saturated_pixel_count_avg", shape=(0,), maxshape=(None,), dtype=np.int64)
-        sweep.create_dataset("saturated_pixel_count_burst", shape=(0,), maxshape=(None,), dtype=np.int64)
-        sweep.create_dataset("saturated_fraction", shape=(0,), maxshape=(None,), dtype=np.float64)
-        sweep.create_dataset("saturated_fraction_avg", shape=(0,), maxshape=(None,), dtype=np.float64)
-        sweep.create_dataset("saturated_fraction_burst", shape=(0,), maxshape=(None,), dtype=np.float64)
+        sweep.create_dataset("peak_pixel_burst", shape=(0,), maxshape=(None,), dtype=np.float64)
+        sweep.create_dataset("peak_pixel_avg", shape=(0,), maxshape=(None,), dtype=np.float64)
+        sweep.create_dataset("peak_pixel_fraction_burst", shape=(0,), maxshape=(None,), dtype=np.float64)
+        sweep.create_dataset("peak_margin_to_full_scale", shape=(0,), maxshape=(None,), dtype=np.float64)
+        sweep.create_dataset("p99_0_avg", shape=(0,), maxshape=(None,), dtype=np.float64)
+        sweep.create_dataset("p99_9_avg", shape=(0,), maxshape=(None,), dtype=np.float64)
+        sweep.create_dataset("unsafe_reason", shape=(0,), maxshape=(None,), dtype=string_dtype)
         sweep.create_dataset("psf_safe", shape=(0,), maxshape=(None,), dtype=bool)
-        sweep.create_dataset("safe", shape=(0,), maxshape=(None,), dtype=bool)
         sweep.create_dataset("p_signal", shape=(0,), maxshape=(None,), dtype=np.float64)
+        sweep.create_dataset("dynamic_range", shape=(0,), maxshape=(None,), dtype=np.float64)
         sweep.create_dataset("low_signal", shape=(0,), maxshape=(None,), dtype=bool)
         sweep.create_dataset("frame_dtype_full_scale", data=self._full_scale)
         sweep.attrs["frame_dtype_full_scale"] = self._full_scale
 
         lcd_grp = f.require_group("lcd")
-        lcd_grp.create_dataset("metadata_json", shape=(1,), dtype=h5py.string_dtype())
+        lcd_grp.create_dataset("metadata_json", shape=(1,), dtype=string_dtype)
 
         cap_grp = f.require_group("capture")
-        cap_grp.create_dataset("plan_json", shape=(1,), dtype=h5py.string_dtype())
+        cap_grp.create_dataset("plan_json", shape=(1,), dtype=string_dtype)
         cap_grp.create_dataset("plan_id", data=self._plan_id)
 
         pf = {
@@ -139,20 +136,17 @@ class PsfSafeExposureWriter:
         exposure_us: float,
         gain_db: float,
         frames_avg: np.ndarray,
-        max_pixel: float,
-        p99_9: float,
-        saturated_pixel_count: int,
-        saturated_fraction: float,
-        safe: bool,
+        peak_pixel_burst: float,
+        peak_pixel_avg: float,
+        peak_pixel_fraction_burst: float,
+        peak_margin_to_full_scale: float,
+        p99_0_avg: float | None,
+        p99_9_avg: float | None,
+        unsafe_reason: str | None,
         psf_safe: bool,
         p_signal: float,
+        dynamic_range: float,
         low_signal: bool,
-        max_pixel_avg: float | None = None,
-        max_pixel_burst: float | None = None,
-        saturated_pixel_count_avg: int | None = None,
-        saturated_pixel_count_burst: int | None = None,
-        saturated_fraction_avg: float | None = None,
-        saturated_fraction_burst: float | None = None,
     ) -> None:
         _ensure_open(self._file)
         if self._closed:
@@ -177,31 +171,16 @@ class PsfSafeExposureWriter:
         _append_scalar(f["sweep/exposure_us"], exposure_us)
         _append_scalar(f["sweep/gain_db"], gain_db)
         _append_scalar(f["sweep/wavelength_nm"], wavelength_nm)
-        _append_scalar(f["sweep/max_pixel"], max_pixel)
-        _append_scalar(f["sweep/max_pixel_avg"], max_pixel if max_pixel_avg is None else max_pixel_avg)
-        _append_scalar(f["sweep/max_pixel_burst"], max_pixel if max_pixel_burst is None else max_pixel_burst)
-        _append_scalar(f["sweep/p99_9"], p99_9)
-        _append_scalar(f["sweep/saturated_pixel_count"], int(saturated_pixel_count))
-        _append_scalar(
-            f["sweep/saturated_pixel_count_avg"],
-            int(saturated_pixel_count if saturated_pixel_count_avg is None else saturated_pixel_count_avg),
-        )
-        _append_scalar(
-            f["sweep/saturated_pixel_count_burst"],
-            int(saturated_pixel_count if saturated_pixel_count_burst is None else saturated_pixel_count_burst),
-        )
-        _append_scalar(f["sweep/saturated_fraction"], saturated_fraction)
-        _append_scalar(
-            f["sweep/saturated_fraction_avg"],
-            saturated_fraction if saturated_fraction_avg is None else saturated_fraction_avg,
-        )
-        _append_scalar(
-            f["sweep/saturated_fraction_burst"],
-            saturated_fraction if saturated_fraction_burst is None else saturated_fraction_burst,
-        )
+        _append_scalar(f["sweep/peak_pixel_burst"], peak_pixel_burst)
+        _append_scalar(f["sweep/peak_pixel_avg"], peak_pixel_avg)
+        _append_scalar(f["sweep/peak_pixel_fraction_burst"], peak_pixel_fraction_burst)
+        _append_scalar(f["sweep/peak_margin_to_full_scale"], peak_margin_to_full_scale)
+        _append_scalar(f["sweep/p99_0_avg"], p99_0_avg if p99_0_avg is not None else np.nan)
+        _append_scalar(f["sweep/p99_9_avg"], p99_9_avg if p99_9_avg is not None else np.nan)
+        _append_scalar(f["sweep/unsafe_reason"], unsafe_reason or "")
         _append_scalar(f["sweep/psf_safe"], bool(psf_safe))
-        _append_scalar(f["sweep/safe"], bool(safe))
         _append_scalar(f["sweep/p_signal"], p_signal)
+        _append_scalar(f["sweep/dynamic_range"], dynamic_range)
         _append_scalar(f["sweep/low_signal"], bool(low_signal))
 
         raw_grp = f["raw"]
@@ -248,7 +227,7 @@ class PsfSafeExposureWriter:
         if exc_type is not None:
             self.finalize(completed=False, error=str(exc_value))
         else:
-            self.finalize(completed=True)
+            self.close()
 
 
 def _ensure_open(file: h5py.File | None) -> h5py.File:
@@ -258,6 +237,6 @@ def _ensure_open(file: h5py.File | None) -> h5py.File:
 
 
 def _append_scalar(dset: h5py.Dataset, value: Any) -> None:
-    n = dset.shape[0]
-    dset.resize((n + 1,))
-    dset[n] = value
+    old_size = dset.shape[0]
+    dset.resize((old_size + 1,))
+    dset[old_size] = value

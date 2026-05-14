@@ -23,6 +23,13 @@ def _camera_params(path: Path) -> Path:
             "frames_per_capture": 3,
             "roi": None,
         },
+        "psf_safety_policy": {
+            "rule": "all_frames_all_pixels_strictly_below_full_scale",
+            "evaluated_on": "raw_burst_frames",
+            "allow_full_scale_pixel": False,
+            "allow_non_finite_pixel": False,
+            "frame_dtype_full_scale": 255,
+        },
         "validity": {
             "exposure_safety_valid": True,
             "psf_exposure_safe": True,
