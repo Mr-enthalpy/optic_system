@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -27,6 +28,10 @@ class FakeCaptureHelper:
         raw = (np.ones((self._h, self._w), dtype=np.float64) * 128).astype(np.uint8)
         rgb = np.zeros((self._h, self._w, 3), dtype=np.uint8)
         return raw, rgb
+
+    def capture_one_packet(self):
+        raw, rgb = self.capture_one()
+        return SimpleNamespace(raw=raw, preview_bgr=rgb, meta={"format": "raw8"})
 
 
 class TestCameraCaptureAdapterWithService:
@@ -193,7 +198,9 @@ class TestCaptureMetadataRawDtype:
 
         capture = adapter.acquire_burst(2)
         assert capture.metadata["raw_dtype"] == "uint8"
+        assert capture.metadata["pixel_format"] == "raw8"
         assert capture.metadata["frame_dtype_full_scale"] == 255
+        assert capture.metadata["frame_dtype_full_scale_source"] == "frame_metadata.format"
 
     def test_fake_camera_metadata_has_full_scale(self):
         cam = FakeCamera(height=240, width=320)

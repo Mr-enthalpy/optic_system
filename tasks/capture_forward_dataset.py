@@ -123,6 +123,15 @@ _DTYPE_FULL_SCALE = {
     np.dtype("uint16"): 65535,
     np.dtype("uint32"): 4294967295,
 }
+_PIXEL_FORMAT_FULL_SCALE = {
+    "rgb": 255,
+    "rgb8": 255,
+    "bgr8": 255,
+    "raw8": 255,
+    "mono8": 255,
+    "raw16": 65535,
+    "mono16": 65535,
+}
 
 
 class FakeCamera:
@@ -290,11 +299,22 @@ class CameraCaptureAdapter:
         frames: list[np.ndarray] = []
         raw_dtype: str | None = None
         frame_dtype_full_scale: int | None = None
+        pixel_format: str | None = None
         for _ in range(k):
-            raw, _rgb = self._helper.capture_one()
+            if hasattr(self._helper, "capture_one_packet"):
+                packet = self._helper.capture_one_packet()
+                raw = packet.raw
+                meta = dict(packet.meta)
+            else:
+                raw, _rgb = self._helper.capture_one()
+                meta = {}
             if raw_dtype is None:
                 raw_dtype = str(raw.dtype)
-                frame_dtype_full_scale = _DTYPE_FULL_SCALE.get(raw.dtype)
+                pixel_format = str(meta.get("format") or "").strip().lower() or None
+                frame_dtype_full_scale = (
+                    _PIXEL_FORMAT_FULL_SCALE.get(pixel_format)
+                    if pixel_format is not None else None
+                )
             frames.append(raw.astype(np.float64, copy=False))
         burst = np.stack(frames, axis=0)
         avg = burst.mean(axis=0, dtype=np.float64)
@@ -309,7 +329,9 @@ class CameraCaptureAdapter:
                 "exposure_us": cam_params.get("exposure_us"),
                 "gain_db": cam_params.get("gain_db"),
                 "raw_dtype": raw_dtype,
+                "pixel_format": pixel_format,
                 "frame_dtype_full_scale": frame_dtype_full_scale,
+                "frame_dtype_full_scale_source": "frame_metadata.format" if frame_dtype_full_scale is not None else None,
             },
         )
 

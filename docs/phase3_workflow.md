@@ -44,8 +44,10 @@ argument.  When provided, the task publishes runtime diagnostics:
 
 - `state.json` - task identity, phase, progress, completion
 - `current_mask_preview.png` or `.npy` - downsample preview of active LCD mask
-- `latest_frame_preview.png` or `.npy` - latest camera frame preview
-- `frame_stats.json` - max, p99.9, saturated fraction, dtype scale
+- `latest_frame_preview_fast.npy` - optional fast camera preview side channel
+- `latest_frame_preview.png` or `.npy` - latest task-published camera frame
+  preview fallback
+- `frame_stats.json` - strict peak-pixel and signal diagnostics
 - `log.jsonl` - structured event log
 
 A read-only monitor reads these files:
@@ -63,6 +65,18 @@ The status directory is transient runtime diagnostics, not thesis evidence.
 For camera preview status, tasks publish raw frame arrays by default and leave
 Bayer display encoding to the read-only monitor. This keeps Bayer-pattern
 assumptions out of capture tasks when camera metadata is unavailable.
+
+## Phase 3.0.5b full-scale rule
+
+Canonical hardware PSF-safe exposure calibration must resolve
+`frame_dtype_full_scale` from camera frame metadata, currently the frame stream
+pixel-format metadata. Hardware runs fail if this metadata is unavailable.
+They must not infer the strict PSF safety limit from observed pixel values or
+from an ndarray dtype fallback.
+
+The calibration output JSON and raw sweep HDF5 record
+`frame_dtype_full_scale_source` so failure artifacts can be audited without
+replaying the run log.
 
 ## Effective LCD pupil scan
 

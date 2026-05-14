@@ -43,6 +43,7 @@ class PsfSafeExposureWriter:
         self._closed: bool = False
         self._created_at_ns: int = _now_ns()
         self._full_scale: int = 255
+        self._full_scale_source: str = "unknown"
 
     @property
     def n_written(self) -> int:
@@ -96,7 +97,13 @@ class PsfSafeExposureWriter:
         sweep.create_dataset("dynamic_range", shape=(0,), maxshape=(None,), dtype=np.float64)
         sweep.create_dataset("low_signal", shape=(0,), maxshape=(None,), dtype=bool)
         sweep.create_dataset("frame_dtype_full_scale", data=self._full_scale)
+        sweep.create_dataset(
+            "frame_dtype_full_scale_source",
+            data=self._full_scale_source,
+            dtype=string_dtype,
+        )
         sweep.attrs["frame_dtype_full_scale"] = self._full_scale
+        sweep.attrs["frame_dtype_full_scale_source"] = self._full_scale_source
 
         lcd_grp = f.require_group("lcd")
         lcd_grp.create_dataset("metadata_json", shape=(1,), dtype=string_dtype)
@@ -116,11 +123,15 @@ class PsfSafeExposureWriter:
         }
         cap_grp.create_dataset("processing_flags_json", data=_json_str(pf))
 
-    def set_full_scale(self, full_scale: int) -> None:
+    def set_full_scale(self, full_scale: int, source: str | None = None) -> None:
         self._full_scale = int(full_scale)
+        if source is not None:
+            self._full_scale_source = str(source)
         if self._file is not None and "sweep" in self._file:
             self._file["sweep"].attrs["frame_dtype_full_scale"] = self._full_scale
             self._file["sweep/frame_dtype_full_scale"][()] = self._full_scale
+            self._file["sweep"].attrs["frame_dtype_full_scale_source"] = self._full_scale_source
+            self._file["sweep/frame_dtype_full_scale_source"][()] = self._full_scale_source
 
     def write_lcd_metadata(self, lcd_meta: dict[str, Any]) -> None:
         _ensure_open(self._file)

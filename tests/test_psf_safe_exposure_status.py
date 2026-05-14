@@ -103,7 +103,7 @@ def test_dry_run_status_marks_failed_when_no_safe_setting(tmp_path: Path, monkey
     assert (status_dir / state["latest_frame_preview"]).exists()
     assert state["frame_stats"] == "frame_stats.json"
     stats = json.loads((status_dir / "frame_stats.json").read_text(encoding="utf-8"))
-    assert stats["preview_kind"] == "bound_search"
+    assert stats["preview_kind"] == "bound_search:bracket_lower"
     assert stats["psf_safe"] is False
 
     import h5py

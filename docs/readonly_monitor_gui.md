@@ -13,6 +13,8 @@ The monitor reads task-published files from a run-status directory:
 
 * `state.json`
 * `current_mask_preview.png` or `current_mask_preview.npy`
+* `latest_frame_preview_fast.npy` when a capture task publishes the fast
+  preview side channel
 * `latest_frame_preview.npy` by default; `.png` is still readable for legacy
   or explicitly requested previews
 * `frame_stats.json`
@@ -53,6 +55,10 @@ The monitor never connects to camera, LCD, or TLS hardware.
 The monitor may be opened and closed at any time. Closing it does not stop the
 running task.
 
+Starting a new task with the same status directory resets transient run files
+such as `log.jsonl` and `latest_frame_preview_fast.npy`, so the monitor does
+not show stale flow messages or a stale fast preview from a previous run.
+
 The monitor shows only task-published previews and metadata. It does not write
 raw capture HDF5, change exposure or gain, change LCD masks, move TLS hardware,
 or modify task state.
@@ -76,11 +82,11 @@ the selected display encoding locally:
 
 ## Limitations
 
-The latest frame is not a subscribed camera stream. It is the most recent raw
-preview array written by the task.
-
-The monitor does not subscribe to a live camera stream; `latest_frame_preview`
-means the last preview file explicitly published by the running task.
+The monitor does not connect to the camera stream. When present, it prefers
+`latest_frame_preview_fast.npy`, a task-published fast side-channel preview
+that does not update `state.json`, `frame_stats.json`, or `log.jsonl`. If that
+file is absent, the monitor falls back to the latest frame path recorded in
+`state.json`.
 
 The GUI can display both `.npy` raw arrays and `.png` preview files. Bayer RGB
 preview modes require OpenCV in the experiment venv; raw mono preview still
@@ -105,6 +111,6 @@ fall back to `.npy` otherwise. Frame previews are written as raw `.npy` arrays
 by default so the monitor can choose the Bayer display encoding.
 
 Mask PNG previews and explicitly requested frame PNG previews are downsampled
-to a maximum side of 768 pixels before writing. Default raw frame `.npy`
-previews are not downsampled before publishing. Raw HDF5 data is unaffected;
-this is status-dir policy only.
+to a maximum side of 768 pixels before writing. Fast raw frame `.npy` previews
+are also downsampled for GUI responsiveness while preserving Bayer parity when
+possible. Raw HDF5 data is unaffected; this is status-dir policy only.

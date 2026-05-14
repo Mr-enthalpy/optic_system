@@ -263,7 +263,7 @@ def run_tk_gui(args: argparse.Namespace) -> int:
             text_var=frame_var,
             photos=photos,
             key="frame",
-            path=_preview_path(Path(args.status_dir), getattr(status, "latest_frame_preview", None)),
+            path=_frame_preview_path(Path(args.status_dir), status),
             fallback="latest frame preview: unavailable",
             frame_encoding=frame_encoding_var.get(),
         )
@@ -493,6 +493,13 @@ def _preview_path(status_dir: Path, value: str | None) -> Path | None:
         return None
     path = Path(value)
     return path if path.is_absolute() else status_dir / path
+
+
+def _frame_preview_path(status_dir: Path, status: Any | None) -> Path | None:
+    fast = status_dir / "latest_frame_preview_fast.npy"
+    if fast.exists():
+        return fast
+    return _preview_path(status_dir, getattr(status, "latest_frame_preview", None))
 
 
 def _format_progress(index: int | None, total: int | None) -> str:

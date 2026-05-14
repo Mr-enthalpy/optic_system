@@ -18,6 +18,7 @@ from scripts.calibrate_psf_safe_exposure import (
     compute_signal_metrics,
     infer_full_scale,
     _estimate_safe_bound_for_wavelength,
+    _resolve_frame_full_scale,
     _all_wavelengths_safe,
     _worst_signal_wavelength,
     _build_result,
@@ -156,6 +157,35 @@ def test_binary_search_returns_last_safe_row_not_last_probe():
 
     assert bound <= 500.0
     assert row["psf_safe"] is True
+
+
+def test_hardware_full_scale_requires_frame_metadata():
+    from types import SimpleNamespace
+
+    capture = SimpleNamespace(
+        frames_avg=np.zeros((4, 4), dtype=np.uint8),
+        metadata={},
+    )
+
+    with pytest.raises(RuntimeError, match="requires camera frame metadata"):
+        _resolve_frame_full_scale(capture, {"camera": {"full_scale": 255}}, dry_run=False)
+
+
+def test_hardware_full_scale_uses_frame_metadata():
+    from types import SimpleNamespace
+
+    capture = SimpleNamespace(
+        frames_avg=np.zeros((4, 4), dtype=np.uint8),
+        metadata={
+            "frame_dtype_full_scale": 255,
+            "frame_dtype_full_scale_source": "frame_metadata.format",
+        },
+    )
+
+    full_scale, source = _resolve_frame_full_scale(capture, {}, dry_run=False)
+
+    assert full_scale == 255.0
+    assert source == "frame_metadata.format"
 
 
 class TestPsfSafeExposureWriter:

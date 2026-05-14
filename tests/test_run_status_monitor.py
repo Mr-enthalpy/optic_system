@@ -227,3 +227,25 @@ def test_monitor_can_debayer_raw_npy_preview(tmp_path: Path) -> None:
 
     assert image.mode == "RGB"
     assert image.size == (8, 8)
+
+
+def test_monitor_prefers_fast_frame_preview_file(tmp_path: Path) -> None:
+    from scripts.monitor_run_status import _frame_preview_path
+
+    publisher = RunStatusPublisher(tmp_path, "run_fast")
+    publisher.write_frame_preview(np.zeros((4, 4), dtype=np.uint8))
+    fast_path = tmp_path / "latest_frame_preview_fast.npy"
+    np.save(fast_path, np.ones((4, 4), dtype=np.uint8))
+    status = RunStatusReader(tmp_path).read()
+
+    assert _frame_preview_path(tmp_path, status) == fast_path
+
+
+def test_new_publisher_resets_transient_run_files(tmp_path: Path) -> None:
+    (tmp_path / "log.jsonl").write_text("old\n", encoding="utf-8")
+    np.save(tmp_path / "latest_frame_preview_fast.npy", np.zeros((2, 2), dtype=np.uint8))
+
+    RunStatusPublisher(tmp_path, "run_new")
+
+    assert not (tmp_path / "log.jsonl").exists()
+    assert not (tmp_path / "latest_frame_preview_fast.npy").exists()

@@ -106,6 +106,13 @@ class OptionalRunStatus:
             except Exception as exc:
                 self.append_log("WARNING", "failed to write frame preview", error=str(exc))
 
+    def write_fast_frame_preview(self, frame: np.ndarray) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.write_fast_frame_preview(frame)
+            except Exception:
+                pass
+
     def write_frame_stats(self, stats: dict[str, Any]) -> None:
         if self._publisher is not None:
             try:
@@ -119,6 +126,32 @@ class OptionalRunStatus:
                 self._publisher.write_mask_preview(mask)
             except Exception as exc:
                 self.append_log("WARNING", "failed to write mask preview", error=str(exc))
+
+
+class _FastStatusPreviewPump:
+    def __init__(self, run_status: OptionalRunStatus, *, min_interval_s: float = 0.25):
+        self._run_status = run_status
+        self._min_interval_s = max(0.05, float(min_interval_s))
+        self._last_write_s = 0.0
+        self._worker = None
+
+    def start(self, stream_factory: Any, worker_factory: Any) -> None:
+        stream = stream_factory()
+
+        def _on_frame(packet: Any) -> None:
+            now = time.monotonic()
+            if now - self._last_write_s < self._min_interval_s:
+                return
+            self._last_write_s = now
+            self._run_status.write_fast_frame_preview(packet.raw)
+
+        self._worker = worker_factory(stream, on_frame=_on_frame)
+        self._worker.start()
+
+    def stop(self) -> None:
+        if self._worker is not None:
+            self._worker.stop(join_timeout=1.0)
+            self._worker = None
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +274,30 @@ def infer_full_scale(frame: np.ndarray) -> int:
         raise ValueError(f"Unknown dtype for full_scale inference: {frame.dtype}")
 
 
+def _resolve_frame_full_scale(capture: Any, plan: dict[str, Any], *, dry_run: bool) -> tuple[float, str]:
+    metadata = getattr(capture, "metadata", {}) or {}
+    metadata_full_scale = metadata.get("frame_dtype_full_scale")
+    if metadata_full_scale is not None:
+        return float(metadata_full_scale), str(metadata.get("frame_dtype_full_scale_source") or "frame_metadata")
+    if dry_run:
+        plan_full_scale = plan.get("camera", {}).get("full_scale")
+        if plan_full_scale is not None:
+            return float(plan_full_scale), "dry_run_plan_camera_full_scale"
+        return float(infer_full_scale(np.asarray(capture.frames_avg))), "dry_run_dtype_inference"
+    raise RuntimeError(
+        "Hardware PSF-safe exposure calibration requires camera frame metadata "
+        "to provide frame_dtype_full_scale. Refusing to infer full scale from "
+        "observed image data or ndarray dtype."
+    )
+
+
+def _resolve_dry_run_full_scale(plan: dict[str, Any]) -> tuple[float, str]:
+    plan_full_scale = plan.get("camera", {}).get("full_scale")
+    if plan_full_scale is not None:
+        return float(plan_full_scale), "dry_run_plan_camera_full_scale"
+    return 255.0, "dry_run_default_uint8_full_scale"
+
+
 # ---------------------------------------------------------------------------
 # Hardware lock
 # ---------------------------------------------------------------------------
@@ -338,14 +395,14 @@ def _estimate_safe_bound_for_wavelength(
     camera_adapter.apply_camera_params(exposure_us=R, gain_db=gain_db)
     row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
     if on_probe is not None:
-        on_probe(R, row)
+        on_probe(R, row, "bracket_upper")
     if row["psf_safe"]:
         return R, row
 
     camera_adapter.apply_camera_params(exposure_us=L, gain_db=gain_db)
     row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
     if on_probe is not None:
-        on_probe(L, row)
+        on_probe(L, row, "bracket_lower")
     if not row["psf_safe"]:
         return L, row
     safe_bound = L
@@ -358,7 +415,7 @@ def _estimate_safe_bound_for_wavelength(
         camera_adapter.apply_camera_params(exposure_us=mid, gain_db=gain_db)
         row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
         if on_probe is not None:
-            on_probe(mid, row)
+            on_probe(mid, row, "bisect")
         if row["psf_safe"]:
             L = mid
             safe_bound = mid
@@ -435,6 +492,8 @@ def run_psf_safe_exposure(
         lock.acquire()
 
     writer: PsfSafeExposureWriter | None = None
+    fast_preview_pump: _FastStatusPreviewPump | None = None
+    full_scale_source: str = "unknown"
 
     try:
         lcd_metadata: dict[str, Any]
@@ -444,6 +503,7 @@ def run_psf_safe_exposure(
 
         if not dry_run:
             from capture.frame_capture import FrameCaptureHelper
+            from capture.preview_worker import PreviewWorker
             from devices.frame_stream import FrameStreamClient
             from tasks.capture_forward_dataset import CameraCaptureAdapter
 
@@ -460,17 +520,20 @@ def run_psf_safe_exposure(
             time.sleep(lcd_cfg.get("settle_ms", 200) / 1000.0)
 
             camera_service.start_stream()
+            fast_preview_pump = _FastStatusPreviewPump(run_status)
+            fast_preview_pump.start(
+                lambda: FrameStreamClient(recv_timeout_ms=5000),
+                PreviewWorker,
+            )
             first_frame = camera_adapter.acquire_burst(1)
             initial_frame_preview = np.asarray(first_frame.frames_avg)
-            full_scale = float(
-                first_frame.metadata.get("frame_dtype_full_scale")
-                or plan.get("camera", {}).get("full_scale")
-                or infer_full_scale(first_frame.frames_avg)
+            full_scale, full_scale_source = _resolve_frame_full_scale(
+                first_frame, plan, dry_run=False,
             )
             lcd_metadata = lcd_service.get_metadata()
         else:
             camera_adapter = _make_fake_adapter()
-            full_scale = 255.0
+            full_scale, full_scale_source = _resolve_dry_run_full_scale(plan)
             lcd_metadata = {
                 "display_index": -1,
                 "subpixel_axis": 1,
@@ -479,7 +542,6 @@ def run_psf_safe_exposure(
                 "mode": "fake",
             }
             current_mask_preview = np.full((8, 24), 255, dtype=np.uint8)
-            initial_frame_preview = np.zeros((8, 8), dtype=np.uint8)
 
         writer = PsfSafeExposureWriter(
             output_raw,
@@ -487,7 +549,7 @@ def run_psf_safe_exposure(
             frames_per_capture=k,
         )
         writer.open()
-        writer.set_full_scale(int(full_scale))
+        writer.set_full_scale(int(full_scale), source=full_scale_source)
         writer.write_plan_json(plan)
         writer.write_lcd_metadata(lcd_metadata)
 
@@ -504,6 +566,12 @@ def run_psf_safe_exposure(
             camera_exposure_us=float(exposure_start),
             camera_gain_db=float(gain_min),
             camera_frame_dtype_full_scale=int(full_scale),
+        )
+        run_status.append_log(
+            "INFO",
+            "camera frame full scale resolved",
+            frame_dtype_full_scale=int(full_scale),
+            full_scale_source=full_scale_source,
         )
         if current_mask_preview is not None:
             run_status.write_mask_preview(current_mask_preview)
@@ -645,14 +713,14 @@ def run_psf_safe_exposure(
         def _estimate_bound_for_wl(wl: dict[str, Any], R_upper: float, at_gain: float) -> tuple[float, dict]:
             wl_nm = _set_wavelength_once(wl)
 
-            def _record_probe(at_exposure: float, row: dict[str, Any]) -> None:
+            def _record_probe(at_exposure: float, row: dict[str, Any], stage: str) -> None:
                 _record_candidate_row(
                     wl_nm=wl_nm,
                     at_exposure=at_exposure,
                     at_gain=at_gain,
                     row=row,
                     total_trials=None,
-                    phase_label="bound_search",
+                    phase_label=f"bound_search:{stage}",
                 )
 
             bound, row = _estimate_safe_bound_for_wavelength(
@@ -759,6 +827,7 @@ def run_psf_safe_exposure(
                         plan, None, all_results, full_scale,
                         selection_reason="no_safe_usable_setting_found",
                         error=msg,
+                        full_scale_source=full_scale_source,
                     )
                 print(f"  gain={at_gain:.1f}  SKIP: not PSF-safe at global_exposure={result.exposure_us}")
                 continue
@@ -802,6 +871,7 @@ def run_psf_safe_exposure(
                     plan, None, all_results, full_scale,
                     selection_reason="no_safe_usable_setting_found",
                     error=msg,
+                    full_scale_source=full_scale_source,
                 )
 
         run_status.append_log("INFO", "PSF-safe exposure calibration complete",
@@ -817,6 +887,7 @@ def run_psf_safe_exposure(
         result = _build_result(
             plan, accepted_result, all_results, full_scale,
             selection_reason=selection_reason,
+            full_scale_source=full_scale_source,
         )
 
         json_path = _repo_root() / output_json
@@ -838,6 +909,8 @@ def run_psf_safe_exposure(
         raise
 
     finally:
+        if fast_preview_pump is not None:
+            fast_preview_pump.stop()
         lock.release()
         if not dry_run:
             try:
@@ -853,6 +926,7 @@ def _build_result(
     full_scale: float,
     selection_reason: str | None = None,
     error: str | None = None,
+    full_scale_source: str = "unknown",
 ) -> dict[str, Any]:
     wls = plan["wavelengths"]
 
@@ -901,6 +975,7 @@ def _build_result(
         "plan_id": plan["plan_id"],
         "source_raw_capture_h5": plan["output"]["raw_h5"],
         "frame_dtype_full_scale": int(full_scale),
+        "frame_dtype_full_scale_source": full_scale_source,
         "global_safe_camera": global_safe,
         "wavelengths_nm": [float(w["wavelength_nm"]) for w in wls],
         "psf_safety_policy": {
@@ -909,6 +984,7 @@ def _build_result(
             "allow_full_scale_pixel": False,
             "allow_non_finite_pixel": False,
             "frame_dtype_full_scale": int(full_scale),
+            "frame_dtype_full_scale_source": full_scale_source,
         },
         "signal_policy": {
             "percentile": plan["signal"]["percentile"],

@@ -17,7 +17,9 @@ lcd:
   settle_ms: 200
 
 camera:
-  full_scale: 255  # optional override; normally auto-detected from raw dtype
+  # Dry-run fallback only. Canonical hardware runs require frame stream
+  # pixel-format metadata to resolve frame_dtype_full_scale.
+  full_scale: 255
 
 camera_search:
   # exposure_us_start must be set to the MAXIMUM exposure you are willing to try

@@ -66,6 +66,7 @@ def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
     assert result["schema_version"] == "1.0"
     assert result["plan_id"] == "bishe_psf_safe_exposure"
     assert result["frame_dtype_full_scale"] == 255
+    assert result["frame_dtype_full_scale_source"] == "unknown"
     assert result["global_safe_camera"] == {
         "exposure_us": 5000.0,
         "gain_db": 0.0,
@@ -79,6 +80,7 @@ def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
         "allow_full_scale_pixel": False,
         "allow_non_finite_pixel": False,
         "frame_dtype_full_scale": 255,
+        "frame_dtype_full_scale_source": "unknown",
     }
     assert "saturation_policy" not in result
 
@@ -99,7 +101,7 @@ def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
 def test_psf_safe_exposure_h5_new_schema_and_no_old_fields(tmp_path: Path) -> None:
     h5_path = tmp_path / "sweep.h5"
     with PsfSafeExposureWriter(h5_path, plan_id="bishe_psf_safe_exposure") as writer:
-        writer.set_full_scale(255)
+        writer.set_full_scale(255, source="frame_metadata.format")
         writer.write_plan_json(_plan(tmp_path))
         writer.append_sweep_row(
             wavelength_nm=550.0,
@@ -129,6 +131,10 @@ def test_psf_safe_exposure_h5_new_schema_and_no_old_fields(tmp_path: Path) -> No
         assert f["sweep/p_signal"].shape == (1,)
         assert f["sweep/dynamic_range"].shape == (1,)
         assert f["sweep/low_signal"].shape == (1,)
+        assert f["sweep"].attrs["frame_dtype_full_scale"] == 255
+        assert f["sweep/frame_dtype_full_scale"][()] == 255
+        assert f["sweep"].attrs["frame_dtype_full_scale_source"] == "frame_metadata.format"
+        assert f["sweep/frame_dtype_full_scale_source"].asstr()[()] == "frame_metadata.format"
 
         assert "saturated_fraction" not in f["sweep"]
         assert "saturated_pixel_count" not in f["sweep"]

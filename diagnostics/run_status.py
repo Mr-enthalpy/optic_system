@@ -47,7 +47,17 @@ class RunStatusPublisher:
     def __init__(self, status_dir: Path, run_id: str):
         self.status_dir = Path(status_dir)
         self.status_dir.mkdir(parents=True, exist_ok=True)
+        self._reset_transient_files()
         self._state = RunStatus(run_id=run_id)
+
+    def _reset_transient_files(self) -> None:
+        for name in ("log.jsonl", "latest_frame_preview_fast.npy"):
+            try:
+                (self.status_dir / name).unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
 
     def update(self, **kwargs: Any) -> None:
         data = asdict(self._state)
@@ -106,6 +116,18 @@ class RunStatusPublisher:
 
         rel = _relative_to_status_dir(path, self.status_dir)
         self.update(latest_frame_preview=rel)
+        return path
+
+    def write_fast_frame_preview(
+        self,
+        frame: np.ndarray,
+        filename: str = "latest_frame_preview_fast.npy",
+    ) -> Path:
+        """Write a frame preview without touching state/log slow-path files."""
+        self.status_dir.mkdir(parents=True, exist_ok=True)
+        path = self.status_dir / filename
+        array = _fast_preview_array(np.asarray(frame))
+        _atomic_save_npy(path, array)
         return path
 
     def write_frame_stats(
@@ -334,6 +356,19 @@ def _downsample_preview(arr: np.ndarray, max_side: int = 768) -> np.ndarray:
     except ImportError:
         ry, rx = max(1, h // new_h), max(1, w // new_w)
         return a[::ry, ::rx]
+
+
+def _fast_preview_array(arr: np.ndarray, max_side: int = 768) -> np.ndarray:
+    a = np.asarray(arr)
+    if a.ndim < 2:
+        return a
+    h, w = a.shape[:2]
+    if max(h, w) <= max_side:
+        return a
+    step = int(np.ceil(max(h, w) / float(max_side)))
+    if a.ndim == 2 and step > 1 and step % 2:
+        step += 1
+    return a[::step, ::step].copy()
 
 
 def _as_uint8_preview(array: np.ndarray) -> np.ndarray:

@@ -21,11 +21,15 @@ class FrameCaptureHelper:
         self.stream = stream
 
     def capture_one(self, timeout_s: Optional[float] = 5.0) -> tuple[np.ndarray, np.ndarray]:
+        packet = self.capture_one_packet(timeout_s=timeout_s)
+        return packet.raw, packet.preview_bgr
+
+    def capture_one_packet(self, timeout_s: Optional[float] = 5.0) -> FramePacket:
         t0 = time.time()
         while True:
             try:
                 packet = self.stream.recv_frame()
-                return packet.raw, packet.preview_bgr
+                return packet
             except Exception as e:
                 if timeout_s is not None and (time.time() - t0) > timeout_s:
                     raise RuntimeError(f"获取图像超时: {e}") from e
