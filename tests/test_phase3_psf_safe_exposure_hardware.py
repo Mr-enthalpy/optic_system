@@ -95,8 +95,11 @@ def test_psf_safe_exposure_hardware() -> None:
             assert f["sweep/exposure_us"].shape[0] > 0
             full_scale = float(f["sweep"].attrs["frame_dtype_full_scale"])
             assert full_scale > 0
-            assert "saturated_pixel_count" in f["sweep"]
+            assert "peak_pixel_burst" in f["sweep"]
             assert "psf_safe" in f["sweep"]
+            assert "saturated_fraction" not in f["sweep"]
+            assert "saturated_pixel_count" not in f["sweep"]
+            assert "max_pixel" not in f["sweep"]
             pf_raw = f["capture/processing_flags_json"][()]
             if isinstance(pf_raw, bytes):
                 pf_raw = pf_raw.decode()
@@ -115,14 +118,10 @@ def test_psf_safe_exposure_hardware() -> None:
             full_scale = float(result["frame_dtype_full_scale"])
             for wl, metrics in result["per_wavelength_metrics"].items():
                 print(
-                    f"  wl={wl} max={metrics['max_pixel']} "
-                    f"p99.9={metrics['p99_9']} "
-                    f"sat_count={metrics['saturated_pixel_count']} "
+                    f"  wl={wl} peak_burst={metrics['peak_pixel_burst']} "
                     f"psf_safe={metrics['psf_safe']}"
                 )
-                assert metrics["max_pixel"] < full_scale
-                assert metrics["max_pixel"] <= full_scale * 0.90
-                assert metrics["saturated_pixel_count"] == 0
+                assert metrics["peak_pixel_burst"] < full_scale
                 assert metrics["psf_safe"] is True
         else:
             print(f"\nSAFE params not found: {result.get('selection_reason')}")

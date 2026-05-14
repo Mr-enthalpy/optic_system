@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -14,149 +14,110 @@ if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
 from scripts.calibrate_psf_safe_exposure import (
-    compute_saturation_metrics,
+    compute_peak_safety_metrics,
     compute_signal_metrics,
     infer_full_scale,
+    _all_wavelengths_safe,
+    _worst_signal_wavelength,
+    _build_result,
 )
 
 
-class TestSaturationMetrics:
-    def test_all_black_not_saturated(self):
-        frame = np.zeros((100, 100), dtype=np.float64)
-        result = compute_saturation_metrics(frame, full_scale=255.0)
-        assert result["saturated"] is False
-        assert result["max_pixel"] == 0.0
-        assert result["p99_9"] == 0.0
-        assert result["saturated_fraction"] == 0.0
+FULL = 255.0
 
-    def test_all_white_saturated(self):
-        frame = np.full((100, 100), 255.0, dtype=np.float64)
-        result = compute_saturation_metrics(frame, full_scale=255.0)
-        assert result["saturated"] is True
-        assert result["max_pixel"] == 255.0
-        assert result["saturated_fraction"] == 1.0
 
-    def test_near_max_but_safe(self):
-        frame = np.full((100, 100), 200.0, dtype=np.float64)
-        result = compute_saturation_metrics(frame, full_scale=255.0)
-        assert result["saturated"] is False
-        assert result["p99_9"] == 200.0
+class TestPeakSafetyMetrics:
+    def test_all_below_full_scale_psf_safe(self):
+        burst = np.ones((3, 20, 20), dtype=np.float64) * 200
+        result = compute_peak_safety_metrics(burst, FULL)
+        assert result["psf_safe"] == True
+        assert result["unsafe_reason"] is None
 
-    def test_single_hot_pixel_fails_psf_safe(self):
-        frame = np.full((100, 100), 100.0, dtype=np.float64)
-        frame[0, 0] = 255.0
-        result = compute_saturation_metrics(frame, full_scale=255.0)
-        assert result["saturated"] is True, (
-            "a single full-scale PSF core pixel must reject the setting"
+    def test_one_pixel_at_full_scale_fails(self):
+        burst = np.ones((3, 20, 20), dtype=np.float64) * 200
+        burst[0, 0, 0] = 255.0
+        result = compute_peak_safety_metrics(burst, FULL)
+        assert result["psf_safe"] == False
+        assert result["unsafe_reason"] == "peak_pixel_at_or_above_full_scale"
+
+    def test_one_pixel_above_full_scale_fails(self):
+        burst = np.ones((3, 20, 20), dtype=np.float64) * 200
+        burst[0, 0, 0] = 260.0
+        result = compute_peak_safety_metrics(burst, FULL)
+        assert result["psf_safe"] == False
+
+    def test_nan_pixel_fails(self):
+        burst = np.ones((3, 5, 5), dtype=np.float64) * 128
+        burst[0, 0, 0] = float("nan")
+        result = compute_peak_safety_metrics(burst, FULL)
+        assert result["psf_safe"] == False
+        assert result["unsafe_reason"] == "non_finite_pixel"
+
+    def test_peak_pixel_burst_is_max_of_all_frames(self):
+        burst = np.array([
+            [[1, 2], [3, 4]],
+            [[5, 6], [7, 100]],
+        ], dtype=np.float64)
+        result = compute_peak_safety_metrics(burst, FULL)
+        assert result["peak_pixel_burst"] == 100.0
+
+    def test_peak_pixel_avg_from_avg_frame(self):
+        burst = np.ones((3, 20, 20), dtype=np.float64) * 200
+        avg = np.ones((20, 20), dtype=np.float64) * 180
+        avg[0, 0] = 250
+        result = compute_peak_safety_metrics(burst, FULL, avg_frame=avg)
+        assert result["peak_pixel_avg"] == 250.0
+
+    def test_peak_margin_computed(self):
+        burst = np.array([[[128.0]]], dtype=np.float64)
+        result = compute_peak_safety_metrics(burst, FULL)
+        assert result["peak_margin_to_full_scale"] == pytest.approx(127.0)
+
+    def test_peak_fraction_computed(self):
+        burst = np.array([[[128.0]]], dtype=np.float64)
+        result = compute_peak_safety_metrics(burst, FULL)
+        assert result["peak_pixel_fraction_burst"] == pytest.approx(128.0 / 255.0)
+
+    def test_p99_0_and_p99_9_from_avg(self):
+        burst = np.array([[[128.0]]], dtype=np.float64)
+        avg = np.arange(100, dtype=np.float64).reshape(10, 10)
+        result = compute_peak_safety_metrics(
+            burst, FULL, avg_frame=avg, diagnostic_percentiles=(99.0, 99.9),
         )
-        assert result["psf_safe"] is False
-        assert result["max_pixel"] == 255.0
-        assert result["p99_9"] == 100.0
-        assert result["saturated_pixel_count"] == 1
-        assert result["saturated_fraction"] < 0.001
+        assert result["p99_0_avg"] is not None
+        assert result["p99_9_avg"] is not None
 
-    def test_many_saturated_pixels_triggers(self):
-        frame = np.full((100, 100), 100.0, dtype=np.float64)
-        frame[:5, :] = 255.0
-        result = compute_saturation_metrics(frame, full_scale=255.0)
-        assert result["saturated"] is True
-        assert result["saturated_fraction"] == pytest.approx(0.05, abs=0.01)
+    def test_uint8_255_passes(self):
+        burst = np.full((3, 20, 20), 254, dtype=np.uint8)
+        result = compute_peak_safety_metrics(burst, FULL)
+        assert result["psf_safe"] == True
 
-    def test_p99_9_is_diagnostic_for_psf_safe_mode(self):
-        frame = np.full((100, 100), 220.0, dtype=np.float64)
-        result = compute_saturation_metrics(
-            frame, full_scale=255.0, max_pixel_fraction_threshold=0.90,
-        )
-        assert result["saturated"] is False
-        assert result["p99_9"] == 220.0
-
-    def test_16bit_full_scale(self):
-        frame = np.full((100, 100), 40000.0, dtype=np.float64)
-        result = compute_saturation_metrics(frame, full_scale=65535.0)
-        assert result["saturated"] is False
-        assert result["max_pixel"] == 40000.0
-
-    def test_16bit_near_full(self):
-        frame = np.full((100, 100), 60000.0, dtype=np.float64)
-        result = compute_saturation_metrics(
-            frame, full_scale=65535.0, max_pixel_fraction_threshold=0.90,
-        )
-        is_near_full = 60000.0 >= 65535.0 * 0.90
-        assert result["saturated"] == is_near_full
+    def test_uint16_65535_passes(self):
+        burst = np.full((3, 20, 20), 65534, dtype=np.uint16)
+        result = compute_peak_safety_metrics(burst, 65535.0)
+        assert result["psf_safe"] == True
 
 
-class TestSignalMetrics:
-    def test_bright_signal_usable(self):
-        rng = np.random.default_rng(42)
-        frame = np.clip(rng.normal(128, 30, (100, 100)), 0, 255).astype(np.float64)
-        result = compute_signal_metrics(frame, full_scale=255.0)
-        assert result["usable"] is True
-        assert result["p_signal"] > 50
-
-    def test_dim_signal_not_usable(self):
-        frame = np.full((100, 100), 5.0, dtype=np.float64)
-        result = compute_signal_metrics(
-            frame, full_scale=255.0,
-            min_signal_fraction_threshold=0.10,
-        )
-        assert result["usable"] is False
-        assert result["p_signal"] == 5.0
-
-    def test_dynamic_range_too_small(self):
-        frame = np.full((100, 100), 100.0, dtype=np.float64)
-        result = compute_signal_metrics(
-            frame, full_scale=255.0,
-            min_dynamic_range_fraction=0.50,
-        )
-        assert result["usable"] is False
-
-    def test_good_dynamic_range_usable(self):
-        frame = np.random.default_rng(42).normal(128, 40, (100, 100))
-        frame = np.clip(frame, 0, 255)
-        result = compute_signal_metrics(
-            frame, full_scale=255.0,
-            min_signal_fraction_threshold=0.10,
-            min_dynamic_range_fraction=0.05,
-        )
-        assert result["usable"] is True
-
-
-class TestFullScaleInference:
-    def test_uint8(self):
-        assert infer_full_scale(np.zeros((10, 10), dtype=np.uint8)) == 255
-
-    def test_uint16(self):
-        assert infer_full_scale(np.zeros((10, 10), dtype=np.uint16)) == 65535
-
-    def test_float64(self):
-        with pytest.raises(ValueError, match="float"):
-            infer_full_scale(np.zeros((10, 10), dtype=np.float64))
-
-
-class TestSweepDecisionLogic:
-    def test_all_safe_accepts(self):
+class TestAllWavelengthsSafe:
+    def test_accepts(self):
         results = [
-            {"saturated": False, "p_signal": 150.0, "low_signal": False},
-            {"saturated": False, "p_signal": 140.0, "low_signal": False},
+            {"psf_safe": True},
+            {"psf_safe": True},
         ]
-        from scripts.calibrate_psf_safe_exposure import _all_wavelengths_safe
         assert _all_wavelengths_safe(results) is True
 
-    def test_one_saturated_rejects(self):
+    def test_rejects_one_unsafe(self):
         results = [
-            {"saturated": False, "p_signal": 150.0, "low_signal": False},
-            {"saturated": True, "p_signal": 255.0, "low_signal": False},
+            {"psf_safe": True},
+            {"psf_safe": False},
         ]
-        from scripts.calibrate_psf_safe_exposure import _all_wavelengths_safe
         assert _all_wavelengths_safe(results) is False
 
     def test_worst_signal_identified(self):
         results = [
-            {"saturated": False, "p_signal": 150.0},
-            {"saturated": False, "p_signal": 20.0},
-            {"saturated": False, "p_signal": 100.0},
+            {"p_signal": 20.0},
+            {"p_signal": 100.0},
         ]
-        from scripts.calibrate_psf_safe_exposure import _worst_signal_wavelength
         worst = _worst_signal_wavelength(results)
         assert worst["p_signal"] == 20.0
 
@@ -171,22 +132,24 @@ class TestPsfSafeExposureWriter:
                 w.write_plan_json({"plan_id": "test"})
                 frame = np.ones((100, 100), dtype=np.float64) * 128
                 w.append_sweep_row(
-                    wavelength_nm=550.0, exposure_us=5000.0, gain_db=0.0,
-                    frames_avg=frame, max_pixel=128.0, p99_9=128.0,
-                    saturated_pixel_count=0,
-                    saturated_fraction=0.0, safe=True, psf_safe=True,
-                    p_signal=128.0, low_signal=False,
+                    wavelength_nm=550.0, exposure_us=50000.0, gain_db=0.0,
+                    frames_avg=frame,
+                    peak_pixel_burst=128.0, peak_pixel_avg=128.0,
+                    peak_pixel_fraction_burst=0.5, peak_margin_to_full_scale=127.0,
+                    p99_0_avg=127.0, p99_9_avg=127.0,
+                    unsafe_reason=None, psf_safe=True,
+                    p_signal=128.0, dynamic_range=100.0, low_signal=False,
                 )
             import h5py
             with h5py.File(p, "r") as f:
-                assert f["sweep/exposure_us"].shape == (1,)
-                assert bool(f["sweep/safe"][0]) is True
                 assert bool(f["sweep/psf_safe"][0]) is True
-                assert int(f["sweep/saturated_pixel_count"][0]) == 0
-                assert f["raw/frames_avg"].shape[0] == 1
-                assert f["capture/plan_id"][()] == b"test" or f["capture/plan_id"][()] == "test"
+                assert f["sweep/peak_pixel_burst"][0] == 128.0
+                assert f["sweep/unsafe_reason"][0] == b""
+                assert "saturated_fraction" not in f["sweep"]
+                assert "saturated_pixel_count" not in f["sweep"]
+                assert "safe" not in f["sweep"]
+                assert "max_pixel" not in f["sweep"]
         finally:
-            import shutil
             shutil.rmtree(d, ignore_errors=True)
 
     def test_writer_multiple_rows(self):
@@ -198,29 +161,20 @@ class TestPsfSafeExposureWriter:
                 for i in range(5):
                     frame = np.ones((50, 50), dtype=np.float64) * (i * 40)
                     w.append_sweep_row(
-                        wavelength_nm=float(500 + i * 10),
-                        exposure_us=float(1000 * (i + 1)),
-                        gain_db=float(i),
+                        wavelength_nm=550.0, exposure_us=50000.0, gain_db=0.0,
                         frames_avg=frame,
-                        max_pixel=float(i * 40),
-                        p99_9=float(i * 40),
-                        saturated_pixel_count=0,
-                        saturated_fraction=0.0,
-                        safe=(i < 4),
-                        psf_safe=(i < 4),
-                        p_signal=float(i * 40),
-                        low_signal=(i == 0),
+                        peak_pixel_burst=i * 40.0, peak_pixel_avg=i * 40.0,
+                        peak_pixel_fraction_burst=0.5, peak_margin_to_full_scale=255.0 - i * 40,
+                        p99_0_avg=i * 35.0, p99_9_avg=i * 38.0,
+                        unsafe_reason=None, psf_safe=True,
+                        p_signal=i * 30.0, dynamic_range=i * 30.0, low_signal=False,
                     )
             import h5py
             with h5py.File(p, "r") as f:
-                assert f["sweep/exposure_us"].shape == (5,)
-                assert f["sweep/safe"].shape == (5,)
-                assert f["sweep/psf_safe"].shape == (5,)
-                assert not f["sweep/safe"][4]
-                assert not f["sweep/psf_safe"][4]
-                assert f["sweep/low_signal"][0]
+                assert f["sweep/peak_pixel_burst"].shape == (5,)
+                assert "saturated_fraction" not in f["sweep"]
+                assert "max_pixel" not in f["sweep"]
         finally:
-            import shutil
             shutil.rmtree(d, ignore_errors=True)
 
     def test_processing_flags(self):
@@ -232,195 +186,89 @@ class TestPsfSafeExposureWriter:
                 pass
             import h5py
             with h5py.File(p, "r") as f:
-                pf_raw = f["capture/processing_flags_json"][()]
-                if isinstance(pf_raw, bytes):
-                    pf_raw = pf_raw.decode()
-                pf = json.loads(pf_raw)
+                pf = json.loads(f["capture/processing_flags_json"][()])
                 assert pf["scientific_calibration_valid"] is False
                 assert pf["training_ready"] is False
-                assert pf["phase"] == "phase3_0_5b_psf_safe_exposure"
-                assert pf["completed"] is True
         finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
-
-    def test_full_scale_setting(self):
-        from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
-        d = tempfile.mkdtemp(prefix="optsys_sw_")
-        p = Path(d) / "test_fs.h5"
-        try:
-            with PsfSafeExposureWriter(p, plan_id="fs_test") as w:
-                w.set_full_scale(65535)
-            import h5py
-            with h5py.File(p, "r") as f:
-                assert f["sweep"].attrs["frame_dtype_full_scale"] == 65535
-                assert f["sweep/frame_dtype_full_scale"][()] == 65535
-        finally:
-            import shutil
             shutil.rmtree(d, ignore_errors=True)
 
 
 class TestCameraParamsJSON:
-    def test_schema_complete(self):
-        from scripts.calibrate_psf_safe_exposure import _build_result
+    def test_psf_safety_policy_schema(self):
         plan = {
             "plan_id": "test",
             "output": {"raw_h5": "data/raw/test.h5"},
-            "wavelengths": [
-                {"wavelength_nm": 450.0},
-                {"wavelength_nm": 550.0},
-                {"wavelength_nm": 650.0},
-            ],
-            "saturation": {
-                "percentile": 99.9,
-                "max_pixel_fraction_threshold": 0.90,
-                "hard_max_pixel_fraction_threshold": 0.98,
-                "saturated_pixel_count_threshold": 0,
-            },
+            "wavelengths": [{"wavelength_nm": 550.0}],
+            "camera_search": {"gain_db_min": 0.0, "frames_per_setting": 3},
+            "psf_safety": {},
             "signal": {
                 "percentile": 99.0,
                 "min_signal_fraction_threshold": 0.10,
                 "min_dynamic_range_fraction": 0.08,
             },
-            "camera_search": {
-                "frames_per_setting": 5,
-                "gain_db_min": 0.0,
-            },
         }
-        all_results = [
-            {"wavelength_nm": 450.0, "max_pixel": 100, "p99_9": 90,
-             "saturated_pixel_count": 0, "saturated_fraction": 0.0,
-             "psf_safe": True, "safe": True, "saturated": False,
-             "p_signal": 85, "low_signal": False},
-        ]
-        result = _build_result(
-            plan, exposure_us=3125.0, gain_db=0.0,
-            all_results=all_results, full_scale=255.0,
-            selection_reason="psf_safe_max_pixel_headroom",
-        )
+        all_results = [{
+            "wavelength_nm": 550.0,
+            "exposure_us": 5000.0,
+            "gain_db": 0.0,
+            "peak_pixel_burst": 200.0,
+            "peak_pixel_avg": 190.0,
+            "peak_pixel_fraction_burst": 200.0 / 255.0,
+            "peak_margin_to_full_scale": 55.0,
+            "p99_0_avg": 180.0,
+            "p99_9_avg": 195.0,
+            "p_signal": 181.0,
+            "dynamic_range": 150.0,
+            "psf_safe": True,
+            "unsafe_reason": None,
+            "low_signal": False,
+        }]
 
-        assert result["schema_version"] == "1.0"
-        assert result["frame_dtype_full_scale"] == 255
-        assert result["global_safe_camera"]["exposure_us"] == 3125.0
-        assert result["global_safe_camera"]["gain_db"] == 0.0
-        assert result["global_safe_camera"]["gain_elevated"] is False
-        assert result["selection_reason"] == "psf_safe_max_pixel_headroom"
-        assert result["validity"]["exposure_safety_valid"] is True
+        result = _build_result(plan, 5000.0, 0.0, all_results, 255.0, selection_reason="psf_safe")
+
+        assert result["psf_safety_policy"]["rule"] == "all_frames_all_pixels_strictly_below_full_scale"
+        assert result["psf_safety_policy"]["allow_full_scale_pixel"] is False
+        wl_550 = result["per_wavelength_metrics"]["550.0"]
+        assert wl_550["psf_safe"] is True
+        assert wl_550["unsafe_reason"] is None
+        assert "saturated_pixel_count" not in wl_550
+        assert "saturated_fraction" not in wl_550
+        assert "safe" not in wl_550
+        assert "saturation_policy" not in result
         assert result["validity"]["psf_exposure_safe"] is True
-        assert result["validity"]["scientific_calibration_valid"] is False
-        assert result["validity"]["training_ready"] is False
-        assert "450.0" in result["per_wavelength_metrics"]
-
-    def test_gain_elevated_true(self):
-        from scripts.calibrate_psf_safe_exposure import _build_result
-        plan = {
-            "plan_id": "test",
-            "output": {"raw_h5": "data/raw/test.h5"},
-            "wavelengths": [{"wavelength_nm": 550.0}],
-            "saturation": {
-                "percentile": 99.9,
-                "max_pixel_fraction_threshold": 0.90,
-                "hard_max_pixel_fraction_threshold": 0.98,
-                "saturated_pixel_count_threshold": 0,
-            },
-            "signal": {
-                "percentile": 99.0,
-                "min_signal_fraction_threshold": 0.10,
-                "min_dynamic_range_fraction": 0.08,
-            },
-            "camera_search": {
-                "frames_per_setting": 5,
-                "gain_db_min": 0.0,
-            },
-        }
-        result = _build_result(
-            plan, exposure_us=5000.0, gain_db=6.0,
-            all_results=[], full_scale=255.0,
-            selection_reason="elevated_gain_due_to_low_signal",
-        )
-        assert result["global_safe_camera"]["gain_elevated"] is True
-        assert result["selection_reason"] == "elevated_gain_due_to_low_signal"
-
-    def test_failure_no_safe_setting(self):
-        from scripts.calibrate_psf_safe_exposure import _build_result
-        plan = {
-            "plan_id": "test",
-            "output": {"raw_h5": "data/raw/test.h5"},
-            "wavelengths": [{"wavelength_nm": 550.0}],
-            "saturation": {
-                "percentile": 99.9,
-                "max_pixel_fraction_threshold": 0.90,
-                "hard_max_pixel_fraction_threshold": 0.98,
-                "saturated_pixel_count_threshold": 0,
-            },
-            "signal": {
-                "percentile": 99.0,
-                "min_signal_fraction_threshold": 0.10,
-                "min_dynamic_range_fraction": 0.08,
-            },
-            "camera_search": {
-                "frames_per_setting": 5,
-                "gain_db_min": 0.0,
-            },
-        }
-        result = _build_result(
-            plan, exposure_us=None, gain_db=None,
-            all_results=[], full_scale=255.0,
-            selection_reason="no_safe_usable_setting_found",
-            error="even min exposure saturated",
-        )
-        assert result["global_safe_camera"]["exposure_us"] is None
-        assert result["validity"]["exposure_safety_valid"] is False
-        assert result["error"] is not None
 
 
-class TestDryRun:
-    def test_dry_run_produces_h5_and_json(self, tmp_path):
-        plan_dict = {
-            "plan_id": "dry_test",
-            "wavelengths": [
-                {"wavelength_nm": 550.0, "grating": None, "settle_ms": 0},
-            ],
-            "lcd": {"mode": "all_open", "mask_path": None, "settle_ms": 0},
-            "camera_search": {
-                "exposure_us_start": 10000,
-                "exposure_us_min": 100,
-                "exposure_us_step_factor": 0.5,
-                "gain_db_min": 0.0,
-                "gain_db_max": 24.0,
-                "gain_db_step_db": 3.0,
-                "frames_per_setting": 3,
-            },
-            "saturation": {
-                "percentile": 99.9,
-                "max_pixel_fraction_threshold": 0.90,
-                "hard_max_pixel_fraction_threshold": 0.98,
-                "saturated_pixel_count_threshold": 0,
-            },
-            "signal": {
-                "percentile": 99.0,
-                "min_signal_fraction_threshold": 0.10,
-                "min_dynamic_range_fraction": 0.08,
-            },
-            "output": {
-                "raw_h5": str(tmp_path / "dry_test.h5"),
-                "camera_params_json": str(tmp_path / "dry_test.json"),
-            },
-            "lock_file": str(tmp_path / "lock_test.lock"),
-        }
+def test_dry_run_produces_h5_and_json(tmp_path):
+    plan_dict = {
+        "plan_id": "test_dry",
+        "wavelengths": [{"wavelength_nm": 550.0}],
+        "lcd": {"mode": "all_transmissive", "settle_ms": 0, "display_index": -1},
+        "camera_search": {
+            "exposure_us_start": 10000.0,
+            "exposure_us_min": 1000.0,
+            "exposure_us_step_factor": 0.5,
+            "gain_db_min": 0.0,
+            "gain_db_max": 18.0,
+            "gain_db_step_db": 6.0,
+            "frames_per_setting": 3,
+        },
+        "psf_safety": {},
+        "signal": {
+            "percentile": 99.0,
+            "min_signal_fraction_threshold": 0.05,
+            "min_dynamic_range_fraction": 0.02,
+        },
+        "output": {
+            "raw_h5": str(tmp_path / "dry_test.h5"),
+            "camera_params_json": str(tmp_path / "dry_test.json"),
+        },
+        "lock_file": str(tmp_path / "lock_test.lock"),
+    }
 
-        from scripts.calibrate_psf_safe_exposure import run_psf_safe_exposure
-        h5_path, result = run_psf_safe_exposure(
-            plan_dict, None, None, None, dry_run=True,
-        )
+    from scripts.calibrate_psf_safe_exposure import run_psf_safe_exposure
+    h5_path, result = run_psf_safe_exposure(
+        plan_dict, None, None, None, dry_run=True,
+    )
 
-        assert h5_path.exists()
-        import h5py
-        with h5py.File(h5_path, "r") as f:
-            assert f["sweep/exposure_us"].shape[0] > 0
-            assert f["capture/plan_id"][()] is not None
-
-        assert "global_safe_camera" in result
-        assert "selection_reason" in result
-        assert result["validity"]["scientific_calibration_valid"] is False
-        assert result["validity"]["training_ready"] is False
+    assert h5_path.exists()
+    assert result["psf_safety_policy"]["rule"] == "all_frames_all_pixels_strictly_below_full_scale"

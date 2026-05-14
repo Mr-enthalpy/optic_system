@@ -32,11 +32,11 @@ camera_search:
   gain_db_step_db: 3.0
   frames_per_setting: 5
 
-saturation:
-  percentile: 99.9
-  max_pixel_fraction_threshold: 0.90
-  hard_max_pixel_fraction_threshold: 0.98
-  saturated_pixel_count_threshold: 0
+psf_safety:
+  rule: all_frames_all_pixels_strictly_below_full_scale
+
+diagnostics:
+  percentiles: [99.0, 99.9]
 
 signal:
   percentile: 99.0

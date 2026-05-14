@@ -74,8 +74,8 @@ def main() -> None:
             max_arr = f["sweep/max_pixel"][:]
             max_avg_arr = f["sweep/max_pixel_avg"][:] if "max_pixel_avg" in f["sweep"] else max_arr
             p99_arr = f["sweep/p99_9"][:]
-            sat_count_arr = f["sweep/saturated_pixel_count"][:]
-            sf_arr = f["sweep/saturated_fraction"][:]
+            peak_arr = f["sweep/peak_pixel_burst"][:]
+            margin_arr = f["sweep/peak_margin_to_full_scale"][:]
             psf_safe_arr = f["sweep/psf_safe"][:]
             psig_arr = f["sweep/p_signal"][:]
             low_arr = f["sweep/low_signal"][:]

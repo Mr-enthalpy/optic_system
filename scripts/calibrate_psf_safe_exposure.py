@@ -2,9 +2,9 @@
 """
 Phase 3.0.5b - PSF-safe camera exposure / gain refinement.
 
-Finds camera parameters that keep point-source PSF captures below strict
-max-pixel headroom across a predefined wavelength set while preserving usable
-signal strength. Global saturated fraction is recorded only as a diagnostic.
+Finds camera parameters that keep every raw burst frame pixel strictly below
+dtype full scale across all tested wavelengths while preserving usable signal
+strength.
 
 Outputs:
   data/raw/bishe_psf_safe_exposure.h5
@@ -15,8 +15,9 @@ Constraints:
     GUI/session before running.  The read-only run-status monitor may remain open.
   - Always prefers gain_min.  Only elevates gain when gain_min yields
     safe-but-unusably-dim signal.
-  - If even gain_min + exposure_min violates max-pixel headroom, fails
-    immediately. Raising gain is never used to solve overexposure.
+  - If even gain_min + exposure_min has any pixel at full scale in raw
+    burst frames, fails immediately.  Raising gain is never used to solve
+    pixel saturation.
 """
 
 from __future__ import annotations
@@ -113,58 +114,59 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         assert isinstance(wl.get("wavelength_nm"), (int, float)), "each wavelength needs wavelength_nm"
     assert plan.get("lcd"), "lcd section required"
     assert plan.get("camera_search"), "camera_search section required"
-    assert plan.get("saturation"), "saturation section required"
+    assert plan.get("psf_safety"), "psf_safety section required"
     assert plan.get("signal"), "signal section required"
 
 
 # ---------------------------------------------------------------------------
-# Saturation / signal metrics
+# Peak-pixel PSF safety metrics
 # ---------------------------------------------------------------------------
 
 
-def compute_saturation_metrics(
-    frame: np.ndarray,
+def compute_peak_safety_metrics(
+    burst: np.ndarray,
     full_scale: float,
-    percentile: float = 99.9,
-    max_pixel_fraction_threshold: float = 0.90,
-    hard_max_pixel_fraction_threshold: float = 0.98,
-    saturated_pixel_count_threshold: int = 0,
+    *,
+    avg_frame: np.ndarray | None = None,
+    diagnostic_percentiles: tuple[float, ...] = (99.0, 99.9),
 ) -> dict[str, Any]:
-    p99_9 = float(np.percentile(frame, percentile))
-    max_pixel = float(frame.max())
-    saturated = frame >= full_scale
-    saturated_pixel_count = int(np.count_nonzero(saturated))
-    saturated_fraction = float(saturated.mean())
+    burst_arr = np.asarray(burst, dtype=np.float64)
+    finite = np.isfinite(burst_arr).all()
+    peak_pixel_burst = float(np.max(burst_arr)) if finite else float("inf")
 
-    max_limit = full_scale * max_pixel_fraction_threshold
-    hard_max_limit = full_scale * hard_max_pixel_fraction_threshold
-    hard_full_scale_hit = max_pixel >= full_scale
-    hard_threshold_hit = max_pixel >= hard_max_limit
-    max_threshold_hit = max_pixel >= max_limit
-    saturated_count_hit = saturated_pixel_count > int(saturated_pixel_count_threshold)
+    psf_safe = finite and peak_pixel_burst < float(full_scale)
+    unsafe_reason: str | None = None
+    if not finite:
+        unsafe_reason = "non_finite_pixel"
+    elif peak_pixel_burst >= float(full_scale):
+        unsafe_reason = "peak_pixel_at_or_above_full_scale"
 
-    reasons: list[str] = []
-    if hard_full_scale_hit:
-        reasons.append("max_pixel_at_or_above_full_scale")
-    if hard_threshold_hit:
-        reasons.append("max_pixel_at_or_above_hard_threshold")
-    if max_threshold_hit:
-        reasons.append("max_pixel_at_or_above_psf_safe_threshold")
-    if saturated_count_hit:
-        reasons.append("saturated_pixel_count_above_threshold")
+    peak_pixel_avg: float | None = None
+    p99_0_avg: float | None = None
+    p99_9_avg: float | None = None
+    if avg_frame is not None:
+        avg = np.asarray(avg_frame, dtype=np.float64)
+        peak_pixel_avg = float(np.max(avg))
+        for pct in diagnostic_percentiles:
+            val = float(np.percentile(avg, pct))
+            if pct == 99.0:
+                p99_0_avg = val
+            elif pct == 99.9:
+                p99_9_avg = val
 
-    psf_safe = not reasons
+    peak_pixel_fraction_burst = peak_pixel_burst / float(full_scale) if float(full_scale) > 0 else float("inf")
+    peak_margin_to_full_scale = float(full_scale) - peak_pixel_burst
 
     return {
-        "max_pixel": max_pixel,
-        "p99_9": p99_9,
-        "saturated_pixel_count": saturated_pixel_count,
-        "saturated_fraction": saturated_fraction,
         "psf_safe": psf_safe,
-        "safe": psf_safe,
-        "saturated": not psf_safe,
-        "saturation_reasons": reasons,
-        "full_scale": full_scale,
+        "unsafe_reason": unsafe_reason,
+        "peak_pixel_burst": peak_pixel_burst,
+        "peak_pixel_avg": peak_pixel_avg,
+        "peak_pixel_fraction_burst": peak_pixel_fraction_burst,
+        "peak_margin_to_full_scale": peak_margin_to_full_scale,
+        "frame_dtype_full_scale": float(full_scale),
+        "p99_0_avg": p99_0_avg,
+        "p99_9_avg": p99_9_avg,
     }
 
 
@@ -247,51 +249,37 @@ def _acquire_and_evaluate(
     sig_cfg: dict,
 ) -> dict[str, Any]:
     capture = camera_adapter.acquire_burst(k)
-    frame = capture.frames_avg
-    burst = np.asarray(getattr(capture, "burst", frame[None, :, :]), dtype=np.float64)
-    sat_avg = compute_saturation_metrics(
-        frame, full_scale,
-        percentile=sat_cfg["percentile"],
-        max_pixel_fraction_threshold=sat_cfg["max_pixel_fraction_threshold"],
-        hard_max_pixel_fraction_threshold=sat_cfg["hard_max_pixel_fraction_threshold"],
-        saturated_pixel_count_threshold=sat_cfg["saturated_pixel_count_threshold"],
-    )
-    sat_burst = compute_saturation_metrics(
-        burst, full_scale,
-        percentile=sat_cfg["percentile"],
-        max_pixel_fraction_threshold=sat_cfg["max_pixel_fraction_threshold"],
-        hard_max_pixel_fraction_threshold=sat_cfg["hard_max_pixel_fraction_threshold"],
-        saturated_pixel_count_threshold=sat_cfg["saturated_pixel_count_threshold"],
+    avg = capture.frames_avg
+    burst = np.asarray(getattr(capture, "burst", avg[None, :, :]), dtype=np.float64)
+
+    pcts = tuple(float(p) for p in sat_cfg.get("percentiles", [99.0, 99.9]))
+    safety = compute_peak_safety_metrics(
+        burst, full_scale, avg_frame=avg, diagnostic_percentiles=pcts,
     )
     sig = compute_signal_metrics(
-        frame, full_scale,
+        avg, full_scale,
         signal_percentile=sig_cfg["percentile"],
         min_signal_fraction_threshold=sig_cfg["min_signal_fraction_threshold"],
         min_dynamic_range_fraction=sig_cfg["min_dynamic_range_fraction"],
     )
     return {
-        "frame": frame,
-        "max_pixel": sat_burst["max_pixel"],
-        "max_pixel_avg": sat_avg["max_pixel"],
-        "max_pixel_burst": sat_burst["max_pixel"],
-        "p99_9": sat_avg["p99_9"],
-        "saturated_pixel_count": sat_burst["saturated_pixel_count"],
-        "saturated_pixel_count_avg": sat_avg["saturated_pixel_count"],
-        "saturated_pixel_count_burst": sat_burst["saturated_pixel_count"],
-        "saturated_fraction": sat_burst["saturated_fraction"],
-        "saturated_fraction_avg": sat_avg["saturated_fraction"],
-        "saturated_fraction_burst": sat_burst["saturated_fraction"],
-        "psf_safe": sat_burst["psf_safe"],
-        "safe": sat_burst["safe"],
-        "saturated": sat_burst["saturated"],
-        "saturation_reasons": sat_burst["saturation_reasons"],
+        "frame": avg,
+        "psf_safe": safety["psf_safe"],
+        "unsafe_reason": safety["unsafe_reason"],
+        "peak_pixel_burst": safety["peak_pixel_burst"],
+        "peak_pixel_avg": safety["peak_pixel_avg"],
+        "peak_pixel_fraction_burst": safety["peak_pixel_fraction_burst"],
+        "peak_margin_to_full_scale": safety["peak_margin_to_full_scale"],
+        "p99_0_avg": safety.get("p99_0_avg"),
+        "p99_9_avg": safety.get("p99_9_avg"),
         "p_signal": sig["p_signal"],
+        "dynamic_range": sig["dynamic_range"],
         "low_signal": not sig["usable"],
     }
 
 
 def _all_wavelengths_safe(results_per_wl: list[dict]) -> bool:
-    return all(bool(r.get("psf_safe", not r.get("saturated", True))) for r in results_per_wl)
+    return all(bool(r["psf_safe"]) for r in results_per_wl)
 
 
 def _worst_signal_wavelength(results_per_wl: list[dict]) -> dict:
@@ -315,7 +303,7 @@ def run_psf_safe_exposure(
     wls = plan["wavelengths"]
     lcd_cfg = plan["lcd"]
     search_cfg = plan["camera_search"]
-    sat_cfg = plan["saturation"]
+    safety_cfg = plan["psf_safety"]
     sig_cfg = plan["signal"]
 
     exposure_start = float(search_cfg["exposure_us_start"])
@@ -407,32 +395,28 @@ def run_psf_safe_exposure(
                         time.sleep(settle / 1000.0)
 
                 row = _acquire_and_evaluate(
-                    camera_adapter, k, full_scale, sat_cfg, sig_cfg,
+                    camera_adapter, k, full_scale, safety_cfg, sig_cfg,
                 )
                 row["wavelength_nm"] = wl_nm
                 row["exposure_us"] = at_exposure
                 row["gain_db"] = at_gain
                 results.append(row)
 
-                safe_flag = not row["saturated"]
                 writer.append_sweep_row(
                     wavelength_nm=wl_nm,
                     exposure_us=at_exposure,
                     gain_db=at_gain,
                     frames_avg=row["frame"],
-                    max_pixel=row["max_pixel"],
-                    max_pixel_avg=row["max_pixel_avg"],
-                    max_pixel_burst=row["max_pixel_burst"],
-                    p99_9=row["p99_9"],
-                    saturated_pixel_count=row["saturated_pixel_count"],
-                    saturated_pixel_count_avg=row["saturated_pixel_count_avg"],
-                    saturated_pixel_count_burst=row["saturated_pixel_count_burst"],
-                    saturated_fraction=row["saturated_fraction"],
-                    saturated_fraction_avg=row["saturated_fraction_avg"],
-                    saturated_fraction_burst=row["saturated_fraction_burst"],
-                    safe=safe_flag,
+                    peak_pixel_burst=row["peak_pixel_burst"],
+                    peak_pixel_avg=row["peak_pixel_avg"],
+                    peak_pixel_fraction_burst=row["peak_pixel_fraction_burst"],
+                    peak_margin_to_full_scale=row["peak_margin_to_full_scale"],
+                    p99_0_avg=row["p99_0_avg"],
+                    p99_9_avg=row["p99_9_avg"],
+                    unsafe_reason=row["unsafe_reason"],
                     psf_safe=row["psf_safe"],
                     p_signal=row["p_signal"],
+                    dynamic_range=row["dynamic_range"],
                     low_signal=row["low_signal"],
                 )
 
@@ -446,15 +430,15 @@ def run_psf_safe_exposure(
                     camera_gain_db=float(at_gain),
                 )
                 run_status.write_frame_stats({
-                    "max_pixel": row["max_pixel"],
-                    "max_pixel_burst": row["max_pixel_burst"],
-                    "max_pixel_avg": row["max_pixel_avg"],
-                    "p99_9": row["p99_9"],
-                    "saturated_pixel_count": row["saturated_pixel_count"],
-                    "saturated_fraction": row["saturated_fraction"],
+                    "peak_pixel_burst": row["peak_pixel_burst"],
+                    "peak_pixel_avg": row["peak_pixel_avg"],
+                    "peak_pixel_fraction_burst": row["peak_pixel_fraction_burst"],
+                    "peak_margin_to_full_scale": row["peak_margin_to_full_scale"],
+                    "p99_9_avg": row["p99_9_avg"],
                     "p_signal": row["p_signal"],
+                    "dynamic_range": row["dynamic_range"],
                     "psf_safe": row["psf_safe"],
-                    "low_signal": row["low_signal"],
+                    "unsafe_reason": row["unsafe_reason"],
                     "frame_dtype_full_scale": int(full_scale),
                 })
                 if trial_idx % max(1, int(status_preview_every)) == 0:
@@ -465,21 +449,21 @@ def run_psf_safe_exposure(
                     exposure_us=at_exposure,
                     gain_db=at_gain,
                     psf_safe=row["psf_safe"],
-                    max_pixel_burst=row["max_pixel_burst"],
+                    peak_pixel_burst=row["peak_pixel_burst"],
                 )
                 # -------------------------
 
                 all_results.append(row)
 
                 wl_label = f"{wl_nm}nm"
-                sat_label = "SAT" if row["saturated"] else "ok"
+                safe_label = "SAFE" if row["psf_safe"] else f"UNSAFE: {row.get('unsafe_reason', 'unknown')}"
                 sig_label = "LO" if row["low_signal"] else "ok"
                 print(f"  exp={at_exposure:8.1f}  gain={at_gain:5.1f}  "
-                      f"wl={wl_label:>7s}  max_burst={row['max_pixel_burst']:6.1f}  "
-                      f"max_avg={row['max_pixel_avg']:6.1f}  "
-                      f"p99.9={row['p99_9']:6.1f}  sat_count={row['saturated_pixel_count']:4d}  "
-                      f"sat_frac={row['saturated_fraction']:.4f}  "
-                      f"p_sig={row['p_signal']:6.1f}  [{sat_label}] [{sig_label}]")
+                      f"wl={wl_label:>7s}  peak_burst={row['peak_pixel_burst']:6.1f}  "
+                      f"peak_avg={row['peak_pixel_avg'] or 0:6.1f}  "
+                      f"peak_frac={row['peak_pixel_fraction_burst']:.4f}  "
+                      f"margin={row['peak_margin_to_full_scale']:6.1f}  "
+                      f"p_sig={row['p_signal']:6.1f}  [{safe_label}] [{sig_label}]")
             return results
 
         # ---- Phase 1: gain = gain_min -------------------------------------
@@ -500,8 +484,9 @@ def run_psf_safe_exposure(
         if max_safe_exposure is None:
             msg = (
                 f"FAIL: even min exposure ({exposure_min} us) at gain_min "
-                f"({gain_min} dB) violates PSF-safe max-pixel headroom. Reduce source intensity, "
-                f"add ND filter, or close aperture."
+                f"({gain_min} dB) has at least one pixel reaching full scale "
+                f"in the raw burst frames. Reduce source intensity, add ND "
+                f"filter, close aperture, or change optical alignment."
             )
             print(f"\n{msg}")
             run_status.append_log("CRITICAL", msg)
@@ -625,7 +610,6 @@ def _build_result(
     error: str | None = None,
 ) -> dict[str, Any]:
     wls = plan["wavelengths"]
-    sat_cfg = plan["saturation"]
 
     wl_metrics: dict[str, dict] = {}
     for wl in wls:
@@ -644,31 +628,16 @@ def _build_result(
         if matching:
             last = matching[-1]
             wl_metrics[wl_nm] = {
-                "max_pixel": last["max_pixel"],
-                "max_pixel_avg": last.get("max_pixel_avg", last["max_pixel"]),
-                "max_pixel_burst": last.get("max_pixel_burst", last["max_pixel"]),
-                "p99_9": last["p99_9"],
-                "saturated_pixel_count": last.get("saturated_pixel_count", 0),
-                "saturated_pixel_count_avg": last.get(
-                    "saturated_pixel_count_avg",
-                    last.get("saturated_pixel_count", 0),
-                ),
-                "saturated_pixel_count_burst": last.get(
-                    "saturated_pixel_count_burst",
-                    last.get("saturated_pixel_count", 0),
-                ),
-                "saturated_fraction": last["saturated_fraction"],
-                "saturated_fraction_avg": last.get(
-                    "saturated_fraction_avg",
-                    last["saturated_fraction"],
-                ),
-                "saturated_fraction_burst": last.get(
-                    "saturated_fraction_burst",
-                    last["saturated_fraction"],
-                ),
+                "peak_pixel_burst": last["peak_pixel_burst"],
+                "peak_pixel_avg": last.get("peak_pixel_avg"),
+                "peak_pixel_fraction_burst": last["peak_pixel_fraction_burst"],
+                "peak_margin_to_full_scale": last["peak_margin_to_full_scale"],
+                "p99_0_avg": last.get("p99_0_avg"),
+                "p99_9_avg": last.get("p99_9_avg"),
                 "p_signal": last["p_signal"],
-                "safe": bool(last.get("safe", not last["saturated"])),
-                "psf_safe": bool(last.get("psf_safe", not last["saturated"])),
+                "dynamic_range": last["dynamic_range"],
+                "psf_safe": bool(last["psf_safe"]),
+                "unsafe_reason": last.get("unsafe_reason"),
                 "low_signal": last["low_signal"],
             }
 
@@ -694,15 +663,12 @@ def _build_result(
         "frame_dtype_full_scale": int(full_scale),
         "global_safe_camera": global_safe,
         "wavelengths_nm": [float(w["wavelength_nm"]) for w in wls],
-        "saturation_policy": {
-            "percentile": sat_cfg["percentile"],
-            "max_pixel_fraction_threshold": sat_cfg["max_pixel_fraction_threshold"],
-            "hard_max_pixel_fraction_threshold": sat_cfg["hard_max_pixel_fraction_threshold"],
-            "saturated_pixel_count_threshold": sat_cfg["saturated_pixel_count_threshold"],
-            "saturated_fraction_diagnostic_only": True,
-            "psf_safe_uses_burst_max_pixel": True,
-            "bad_pixel_mask": None,
-            "bad_pixel_mask_policy": "none; any full-scale burst pixel is unsafe",
+        "psf_safety_policy": {
+            "rule": "all_frames_all_pixels_strictly_below_full_scale",
+            "evaluated_on": "raw_burst_frames",
+            "allow_full_scale_pixel": False,
+            "allow_non_finite_pixel": False,
+            "frame_dtype_full_scale": int(full_scale),
         },
         "signal_policy": {
             "percentile": plan["signal"]["percentile"],
