@@ -21,6 +21,41 @@ consume the raw HDF5 to produce processed results.
 | `bishe_psf_safe_exposure.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
 | `bishe_pupil_scan.yaml` | Phase 3.1 procedural effective LCD pupil scan |
 
+### `plans/bishe_psf_safe_exposure.yaml`
+- **Phase:** 3.0.5b - PSF-safe exposure/gain refinement.
+- **Purpose:** Find camera parameters whose raw burst frames are strictly below
+  dtype full scale for every tested wavelength.
+- **TLS sequencing:** Wavelength/grating movement is the outer hardware loop.
+  The script sets a wavelength once, waits for the slow TLS motion to finish,
+  then evaluates the plan-derived `(exposure_us, gain_db)` candidates at that
+  wavelength.
+- **TLS requirement:** Hardware runs require `--tls-serial` or `TLS_C1_SERIAL`.
+  Without TLS participation, plan wavelengths are only labels and the output
+  cannot prove cross-wavelength safety. The dangerous
+  `--allow-wavelength-labels-without-tls` override is reserved for explicit
+  manual external wavelength control or fixed single-wavelength tests.
+- **Hardware scheduling invariant:** TLS / monochromator motion is slow,
+  expensive, and motion-state-sensitive. LCD updates are cheap and camera
+  parameter changes plus repeated burst acquisition are cheap enough for this
+  calibration. Therefore, Phase 3.0.5b keeps TLS wavelength movement as the
+  outer hardware loop: each planned wavelength should trigger at most one
+  TLS move/wait cycle per search pass, and exposure/gain candidates are
+  evaluated under that fixed wavelength. If future coarse/fine passes are
+  added, TLS move count must scale with
+  `N_wavelengths * N_search_passes`, not with
+  `N_wavelengths * N_candidates`.
+- **Selection policy:** Current thesis-branch 3.0.5b uses an auditable
+  discrete grid and lexicographic selection, not continuous joint optimization
+  of `(gain_db, exposure_us)`. The objective is strict PSF safety across all
+  planned wavelengths, then preference for `gain_db_min`, then the largest
+  usable exposure at that gain. Higher gain is penalized and used only when
+  `gain_db_min` is PSF-safe but unusably dim. Camera parameters are global
+  across wavelengths so Phase 3.1 pupil scan, PSF repeatability, and PSF
+  dictionary captures remain comparable.
+- **Output raw HDF5:** `data/raw/bishe_psf_safe_exposure.h5`.
+- **Downstream output:** `outputs/exposure_calibration/camera_params_psf_safe.json`
+  is written only when a globally PSF-safe setting is found.
+
 ### `plans/bishe_pupil_scan.yaml`
 - **Phase:** 3.1 - Effective LCD pupil / active modulation region scan
 - **Purpose:** Locate the physical LCD region where procedural mask changes

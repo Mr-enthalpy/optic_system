@@ -56,6 +56,10 @@ The monitor shows only task-published previews and metadata. It does not write
 raw capture HDF5, change exposure or gain, change LCD masks, move TLS hardware,
 or modify task state.
 
+The GUI keeps task metadata in a separate top-right panel with its own scroll
+area. Frame and mask previews are displayed in the main middle panels, and the
+recent-log panel renders only the newest `--max-log-lines` entries.
+
 ## Limitations
 
 The latest frame is not a video stream. It is the most recent preview image or
@@ -73,8 +77,9 @@ added later without changing the diagnostics boundary.
 Refresh rate depends on task publishing frequency and the monitor
 `--poll-interval`.
 
-If a task does not publish a frame preview, only state, mask preview, frame
-statistics, and logs that are present in the run-status directory are shown.
+If a task does not publish a frame or mask preview, only state, frame
+statistics, metadata, and logs that are present in the run-status directory are
+shown.
 
 This monitor is infrastructure only. Capture and calibration tasks must
 explicitly publish richer diagnostics by calling `write_frame_preview(...)`,
