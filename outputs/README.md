@@ -15,16 +15,19 @@ provenance rule below.
 ### `outputs/pupil_scan/`
 
 - **Phase:** 3.1 — Effective LCD pupil scan
-- **Depends on:** `outputs/pupil_scan/pupil_scan_raw.h5` (or user-specified
-  raw capture path)
+- **Depends on:** `data/raw/bishe_pupil_scan.h5` (or user-specified raw
+  pupil scan HDF5) produced by `scripts/capture_pupil_scan.py`.
 - **Produces:**
-  - `effective_lcd_roi.json` — pupil center, radii, optionally ellipse
-    parameters
-  - `x_profile.csv` / `y_profile.csv` — raw energy-difference profiles
-    (optional)
-  - `pupil_scan_figure.png` — visualization (optional)
-- **Script:** pupil scan analysis script (to be created in Phase 3.1)
-- **Status:** intermediate — consumed by later phases, not thesis-final
+  - `effective_lcd_roi.json` - effective LCD physical-coordinate ROI and
+    provenance
+  - `response_map.npy` - coarse block response map
+  - `response_map.png` - quick-look block response visualization
+  - `x_profile.csv` - smoothed bar response profile along physical x
+  - `y_profile.csv` - smoothed bar response profile along physical y
+  - `pupil_scan_report.md` - human-readable diagnostics and warnings
+- **Script:** `scripts/analyze_pupil_scan.py`
+- **Status:** intermediate; estimates active modulation support, not
+  scientific calibration validity.
 
 ### `outputs/psf_repeatability/`
 

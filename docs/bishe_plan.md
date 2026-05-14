@@ -49,12 +49,18 @@ optical determinism, and demonstrating a simple reconstruction proof-of-concept.
   `raw_capture.h5`.
 
 ### M1 — Effective LCD pupil scan
-**Status: planned**
+**Status: implemented / in progress**
 
-- Implement bar-scan capture plan: sweep a narrow vertical/horizontal bar
-  across the LCD, capture camera response.
-- Fit effective pupil center and radius from energy-difference profiles.
-- Optionally fit ellipse parameters to account for off-axis effects.
+- Depends on Phase 3.0.5 `outputs/exposure_calibration/camera_params.json`
+  for exposure, gain, frames-per-capture defaults, and raw frame full scale.
+- Implement procedural bar/block scan capture: generate masks at runtime,
+  display each physical LCD mask, capture camera response, and write raw HDF5
+  first.
+- Estimate the effective LCD physical-coordinate ROI from robust response
+  support using smoothed bar profiles and/or the largest 2D block-map
+  component.
+- This phase locates the LCD region where mask changes measurably affect the
+  camera image. It is not a scientific calibration validity claim.
 - Output: `outputs/pupil_scan/effective_lcd_roi.json`
 
 ### M2 — PSF repeatability and ROI alignment
