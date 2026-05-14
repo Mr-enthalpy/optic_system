@@ -34,6 +34,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -317,6 +318,55 @@ def _worst_signal_wavelength(results_per_wl: list[dict]) -> dict:
     return min(results_per_wl, key=lambda r: r["p_signal"])
 
 
+def _estimate_safe_bound_for_wavelength(
+    camera_adapter,
+    *,
+    k: int,
+    full_scale: float,
+    diagnostics_cfg: dict[str, Any],
+    sig_cfg: dict[str, Any],
+    L: float,
+    R: float,
+    gain_db: float,
+    eps_absolute: float = 50.0,
+    max_iter: int = 30,
+) -> tuple[float, dict[str, Any]]:
+    R = float(R)
+    L = float(L)
+
+    camera_adapter.apply_camera_params(exposure_us=R, gain_db=gain_db)
+    row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
+    if row["psf_safe"]:
+        return R, row
+
+    camera_adapter.apply_camera_params(exposure_us=L, gain_db=gain_db)
+    row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
+    if not row["psf_safe"]:
+        return L, row
+
+    for _ in range(max_iter):
+        if R - L < eps_absolute:
+            break
+        mid = (L + R) / 2.0
+        camera_adapter.apply_camera_params(exposure_us=mid, gain_db=gain_db)
+        row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
+        if row["psf_safe"]:
+            L = mid
+        else:
+            R = mid
+
+    return L, row
+
+
+@dataclass
+class _GainResult:
+    gain_db: float
+    exposure_us: float | None
+    psf_safe: bool
+    low_signal: bool = True
+    final_rows: list[dict[str, Any]] = field(default_factory=list)
+
+
 def run_psf_safe_exposure(
     plan: dict[str, Any],
     camera_service,
@@ -451,42 +501,11 @@ def run_psf_safe_exposure(
             )
 
         all_results: list[dict] = []
+        per_wavelength_bounds: dict[str, float] = {}
         selection_reason: str | None = None
         safe_exposure: float | None = None
         safe_gain: float | None = None
-
-        def _exposure_candidates(at_gain: float) -> list[tuple[float, float]]:
-            candidates = []
-            exposure = exposure_start
-            while exposure >= exposure_min:
-                candidates.append((float(exposure), float(at_gain)))
-                exposure *= step_factor
-            return candidates
-
-        def _candidate_results(candidate: tuple[float, float]) -> list[dict]:
-            exposure_us, gain_db = candidate
-            return [
-                r for r in all_results
-                if float(r["exposure_us"]) == exposure_us
-                and float(r["gain_db"]) == gain_db
-            ]
-
-        def _candidate_worst_signal(candidate: tuple[float, float]) -> dict:
-            return _worst_signal_wavelength(_candidate_results(candidate))
-
-        def _candidate_is_globally_safe(candidate: tuple[float, float]) -> bool:
-            rows = _candidate_results(candidate)
-            tested_wls = {float(r["wavelength_nm"]) for r in rows}
-            expected_wls = {float(w["wavelength_nm"]) for w in wls}
-            return tested_wls == expected_wls and all(bool(r["psf_safe"]) for r in rows)
-
-        def _first_safe_candidate(
-            candidates: list[tuple[float, float]],
-        ) -> tuple[float, float] | None:
-            for candidate in candidates:
-                if _candidate_is_globally_safe(candidate):
-                    return candidate
-            return None
+        binary_search_eps = float(search_cfg.get("binary_search_eps_us", 50.0))
 
         def _set_wavelength_once(wl: dict[str, Any]) -> float:
             wl_nm = float(wl["wavelength_nm"])
@@ -590,105 +609,141 @@ def run_psf_safe_exposure(
                   f"margin={row['peak_margin_to_full_scale']:6.1f}  "
                   f"p_sig={row['p_signal']:6.1f}  [{safe_label}] [{sig_label}]")
 
-        def _evaluate_candidates(
-            candidates: list[tuple[float, float]],
-            *,
-            phase_label: str,
-        ) -> None:
-            total_trials = len(all_results) + len(candidates) * len(wls)
-            print(f"\n{phase_label}")
-            # Hardware scheduling invariant:
-            # TLS/monochromator motion is slow, expensive, and state-sensitive.
-            # Keep move/wait outside the exposure/gain loop: for one search
-            # pass, move the TLS once per planned wavelength, then evaluate all
-            # cheap camera candidates under that fixed wavelength.
+        def _estimate_bound_for_wl(wl: dict[str, Any], R_upper: float, at_gain: float) -> tuple[float, dict]:
+            wl_nm = _set_wavelength_once(wl)
+            bound, row = _estimate_safe_bound_for_wavelength(
+                camera_adapter,
+                k=k, full_scale=full_scale,
+                diagnostics_cfg=diagnostics_cfg, sig_cfg=sig_cfg,
+                L=exposure_min, R=R_upper, gain_db=at_gain,
+                eps_absolute=binary_search_eps,
+            )
+            return bound, row
+
+        def _final_verification_sweep(
+            at_exposure: float, at_gain: float, *, phase_label: str = "final"
+        ) -> list[dict]:
+            rows: list[dict] = []
+            total_trials = len(all_results) + len(wls)
+            print(f"\n  [{phase_label} verification at exposure={at_exposure:.1f} gain={at_gain:.1f}]")
             for wl in wls:
                 wl_nm = _set_wavelength_once(wl)
-                print(f"\n  wavelength={wl_nm} nm")
-                for at_exposure, at_gain in candidates:
-                    camera_adapter.apply_camera_params(
-                        exposure_us=at_exposure,
-                        gain_db=at_gain,
-                    )
-                    row = _acquire_and_evaluate(
-                        camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg,
-                    )
-                    _record_candidate_row(
-                        wl_nm=wl_nm,
-                        at_exposure=at_exposure,
-                        at_gain=at_gain,
-                        row=row,
-                        total_trials=total_trials,
-                    )
+                camera_adapter.apply_camera_params(exposure_us=at_exposure, gain_db=at_gain)
+                row = _acquire_and_evaluate(
+                    camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg,
+                )
+                _record_candidate_row(
+                    wl_nm=wl_nm,
+                    at_exposure=at_exposure,
+                    at_gain=at_gain,
+                    row=row,
+                    total_trials=total_trials,
+                )
+                rows.append(row)
+            return rows
 
-        # ---- Phase 1: gain = gain_min -------------------------------------
-        phase1_candidates = _exposure_candidates(gain_min)
-        _evaluate_candidates(
-            phase1_candidates,
-            phase_label=f"Phase 1 - searching at gain_min={gain_min}",
-        )
-        phase1_safe = _first_safe_candidate(phase1_candidates)
+        def _estimate_global_for_gain(at_gain: float) -> _GainResult:
+            nonlocal per_wavelength_bounds
+            bounds: dict[str, float] = {}
+            R_upper = exposure_start
+            all_safe = True
+            print(f"\n---- gain={at_gain:.1f} dB  search upper bounds ----")
 
-        if phase1_safe is None:
-            msg = (
-                f"FAIL: even min exposure ({exposure_min} us) at gain_min "
-                f"({gain_min} dB) has at least one pixel reaching full scale "
-                f"in the raw burst frames. Reduce source intensity, add ND "
-                f"filter, close aperture, or change optical alignment."
+            for wl in wls:
+                wl_nm_str = str(wl["wavelength_nm"])
+                bound, _row = _estimate_bound_for_wl(wl, R_upper, at_gain)
+                bounds[wl_nm_str] = bound
+                if not _row["psf_safe"]:
+                    print(f"  wl={wl_nm_str}nm  FAIL: even min exposure unsafe at gain={at_gain}")
+                    all_safe = False
+                    break
+                print(f"  wl={wl_nm_str}nm  safe_upper_bound={bound:.0f} us")
+                R_upper = bound
+
+            if not all_safe:
+                return _GainResult(gain_db=at_gain, exposure_us=None, psf_safe=False)
+
+            global_exposure = min(bounds.values()) if bounds else 0.0
+            per_wavelength_bounds = bounds
+
+            rows = _final_verification_sweep(
+                at_exposure=global_exposure, at_gain=at_gain,
+                phase_label="final",
             )
-            print(f"\n{msg}")
-            run_status.append_log("CRITICAL", msg)
-            run_status.update(error=msg, completed=False)
-            writer.finalize(completed=False, error=msg)
-            return Path(output_raw), _build_result(
-                plan, None, None, all_results, full_scale,
-                selection_reason="no_safe_usable_setting_found",
-                error=msg,
+
+            psf_safe = all(bool(r["psf_safe"]) for r in rows)
+            if not psf_safe:
+                return _GainResult(
+                    gain_db=at_gain, exposure_us=global_exposure, psf_safe=False,
+                )
+
+            low_sig = any(r["low_signal"] for r in rows)
+            return _GainResult(
+                gain_db=at_gain, exposure_us=global_exposure,
+                psf_safe=True, low_signal=low_sig, final_rows=rows,
             )
 
-        max_safe_exposure, phase1_gain = phase1_safe
-        worst = _candidate_worst_signal(phase1_safe)
-        if not worst["low_signal"]:
-            safe_exposure = max_safe_exposure
-            safe_gain = phase1_gain
-            selection_reason = "all_burst_pixels_below_full_scale"
-            print(f"\n  ACCEPT: exposure={safe_exposure} gain={safe_gain} "
-                  f"({selection_reason})")
-        else:
-            print(f"\n  signal too weak at gain_min: p_signal={worst['p_signal']:.1f}")
-            print(f"  entering Phase 2 -elevated gain search")
+        # ---- Lexicographic gain selection ----------------------------------
+        gain_candidates: list[float] = [gain_min]
+        g = gain_min + gain_step
+        while g <= gain_max:
+            gain_candidates.append(g)
+            g += gain_step
 
-            phase2_candidates: list[tuple[float, float]] = []
-            gain = gain_min + gain_step
-            while gain <= gain_max:
-                phase2_candidates.extend(_exposure_candidates(gain))
-                gain += gain_step
-            _evaluate_candidates(phase2_candidates, phase_label="Phase 2 - elevated gain search")
+        for at_gain in gain_candidates:
+            result = _estimate_global_for_gain(at_gain)
+            if not result.psf_safe:
+                if at_gain == gain_min:
+                    msg = (
+                        f"FAIL: even min exposure ({exposure_min} us) at gain_min "
+                        f"({gain_min} dB) has at least one pixel reaching full scale. "
+                        f"Reduce source intensity, add ND filter, close aperture, "
+                        f"or change optical alignment."
+                    )
+                    print(f"\n{msg}")
+                    run_status.append_log("CRITICAL", msg)
+                    run_status.update(error=msg, completed=False)
+                    writer.finalize(completed=False, error=msg)
+                    return Path(output_raw), _build_result(
+                        plan, None, None, all_results, full_scale,
+                        per_wavelength_bounds=per_wavelength_bounds,
+                        selection_reason="no_safe_usable_setting_found",
+                        error=msg,
+                    )
+                print(f"  gain={at_gain:.1f}  SKIP: not PSF-safe at global_exposure={result.exposure_us}")
+                continue
 
-            found = False
-            for candidate in phase2_candidates:
-                if not _candidate_is_globally_safe(candidate):
-                    continue
-                worst2 = _candidate_worst_signal(candidate)
-                if worst2["low_signal"]:
-                    print(f"  safe but still low signal at gain={candidate[1]}")
-                    continue
-                safe_exposure, safe_gain = candidate
-                selection_reason = "elevated_gain_due_to_low_signal"
-                print(f"  ACCEPT: exposure={safe_exposure} gain={safe_gain} "
+            if not result.low_signal:
+                safe_exposure = result.exposure_us
+                safe_gain = at_gain
+                selection_reason = (
+                    "all_burst_pixels_below_full_scale"
+                    if at_gain == gain_min
+                    else "elevated_gain_due_to_low_signal"
+                )
+                print(f"\n  ACCEPT: exposure={safe_exposure} gain={safe_gain} "
                       f"({selection_reason})")
-                found = True
                 break
 
-            if not found:
-                safe_exposure = max_safe_exposure
+            if at_gain == gain_min:
+                print(f"  signal too weak at gain_min; trying higher gains ...")
+            else:
+                print(f"  safe but low signal at gain={at_gain}; trying next ...")
+
+        else:
+            safe_exposure = result.exposure_us if 'result' in dir() and result.psf_safe else None
+            safe_gain = gain_min if safe_exposure is None else result.gain_db
+            if safe_exposure is None:
+                safe_exposure = per_wavelength_bounds.get(
+                    str(wls[0]["wavelength_nm"]), exposure_min
+                ) if per_wavelength_bounds else exposure_min
                 safe_gain = gain_min
-                selection_reason = "psf_safe_gain_min_low_signal_fallback"
-                print(f"\n  WARNING: all gains safe-but-dim. "
-                      f"Accepting gain_min safe exposure={safe_exposure} "
-                      f"(global signal low -expected when LCD active region "
-                      f"is small relative to sensor. Pupil scan (Phase 3.1) "
-                      f"will determine the ROI.)")
+            selection_reason = "psf_safe_gain_min_low_signal_fallback"
+            print(f"\n  WARNING: all gains safe-but-dim. "
+                  f"Accepting gain_min safe exposure={safe_exposure} "
+                  f"(global signal low -expected when LCD active region "
+                  f"is small relative to sensor. Pupil scan (Phase 3.1) "
+                  f"will determine the ROI.)")
 
         run_status.append_log("INFO", "PSF-safe exposure calibration complete",
                               exposure_us=safe_exposure, gain_db=safe_gain,
@@ -702,6 +757,7 @@ def run_psf_safe_exposure(
 
         result = _build_result(
             plan, safe_exposure, safe_gain, all_results, full_scale,
+            per_wavelength_bounds=per_wavelength_bounds,
             selection_reason=selection_reason,
         )
 
@@ -740,6 +796,7 @@ def _build_result(
     full_scale: float,
     selection_reason: str | None = None,
     error: str | None = None,
+    per_wavelength_bounds: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     wls = plan["wavelengths"]
 
@@ -760,6 +817,8 @@ def _build_result(
         if matching:
             last = matching[-1]
             wl_metrics[wl_nm] = {
+                "measured_at_exposure_us": float(exposure_us) if exposure_us is not None else None,
+                "measured_at_gain_db": float(gain_db) if gain_db is not None else None,
                 "peak_pixel_burst": last["peak_pixel_burst"],
                 "peak_pixel_avg": last.get("peak_pixel_avg"),
                 "peak_pixel_fraction_burst": last["peak_pixel_fraction_burst"],
@@ -808,6 +867,10 @@ def _build_result(
             "min_dynamic_range_fraction": plan["signal"]["min_dynamic_range_fraction"],
         },
         "per_wavelength_metrics": wl_metrics,
+        "search_diagnostics": {
+            "binary_search_eps_us": float(plan["camera_search"].get("binary_search_eps_us", 50.0)),
+            "per_wavelength_safe_upper_bounds": per_wavelength_bounds or {},
+        },
         "selection_reason": selection_reason,
         "validity": {
             "exposure_safety_valid": selected_psf_safe,
@@ -822,8 +885,35 @@ def _build_result(
 
 
 def _make_fake_adapter():
-    from tasks.capture_forward_dataset import FakeCamera
-    return FakeCamera(height=480, width=640, exposure_us=5000.0, gain_db=0.0)
+    class _CalibFakeCamera:
+        def __init__(self):
+            self.exposure_us: float | None = None
+            self.gain_db: float | None = None
+            self._rng = np.random.default_rng(4242)
+
+        def apply_camera_params(self, exposure_us=None, gain_db=None):
+            if exposure_us is not None:
+                self.exposure_us = float(exposure_us)
+            if gain_db is not None:
+                self.gain_db = float(gain_db)
+
+        def acquire_burst(self, k: int):
+            from tasks.capture_forward_dataset import CaptureFrames
+            burst = self._rng.uniform(10, 200, (k, 48, 64)).astype(np.float64)
+            burst[0, 24, 32] = 220.0
+            avg = burst.mean(axis=0, dtype=np.float64)
+            return CaptureFrames(
+                burst=burst,
+                frames_avg=avg,
+                metadata={
+                    "frame_dtype_full_scale": 255,
+                    "acquisition": "burst",
+                    "n": k,
+                    "timestamp_ns": time.monotonic_ns(),
+                },
+            )
+
+    return _CalibFakeCamera()
 
 
 # ---------------------------------------------------------------------------

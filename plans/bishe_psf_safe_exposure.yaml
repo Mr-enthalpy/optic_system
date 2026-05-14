@@ -25,6 +25,9 @@ camera_search:
   # by step_factor until reaching exposure_us_min or finding a safe exposure.
   exposure_us_start: 50000
   exposure_us_min: 100
+  # Phase 1 uses binary search per wavelength.  Search stops when the
+  # exposure interval is narrower than binary_search_eps_us (microseconds).
+  binary_search_eps_us: 50.0
   exposure_us_step_factor: 0.5
   gain_db_start: 0.0
   gain_db_min: 0.0

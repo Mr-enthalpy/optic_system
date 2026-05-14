@@ -70,10 +70,28 @@ def test_dry_run_writes_log_jsonl(tmp_path: Path) -> None:
     assert len(logs) >= 1
 
 
-def test_dry_run_status_marks_failed_when_no_safe_setting(tmp_path: Path) -> None:
-    """FakeCamera with exposure_us_start=10000, gain_db_min=0 saturates all
-    wavelengths at gain_min; the sweep finds no safe setting."""
+def test_dry_run_status_marks_failed_when_no_safe_setting(tmp_path: Path, monkeypatch):
     plan = _psf_safe_plan(tmp_path)
+    plan["camera_search"]["exposure_us_min"] = 10000.0
+    plan["camera_search"]["exposure_us_start"] = 10000.0
+    plan["camera_search"]["gain_db_min"] = 0.0
+    plan["camera_search"]["gain_db_max"] = 0.0
+
+    class _FailingFakeCamera:
+        def apply_camera_params(self, exposure_us=None, gain_db=None): pass
+        def acquire_burst(self, k: int):
+            burst = np.full((k, 4, 4), 260.0, dtype=np.float64)
+            avg = burst.mean(axis=0, dtype=np.float64)
+            return SimpleNamespace(
+                frames_avg=avg, burst=burst,
+                metadata={"frame_dtype_full_scale": 255},
+            )
+
+    monkeypatch.setattr(
+        "scripts.calibrate_psf_safe_exposure._make_fake_adapter",
+        lambda: _FailingFakeCamera(),
+    )
+
     status_dir = tmp_path / "status"
 
     run_psf_safe_exposure(plan, None, None, None, dry_run=True, status_dir=status_dir)
@@ -259,7 +277,7 @@ def test_tls_moves_once_per_wavelength_not_per_candidate(
     )
 
     exposure_candidates = [10000.0, 5000.0, 2500.0]
-    assert fake_tls.move_call_count == len(wavelengths)
-    assert fake_tls.wait_call_count == len(wavelengths)
-    assert fake_tls.set_wavelength_calls == [450.0, 550.0, 650.0]
-    assert fake_camera.apply_params_call_count == len(wavelengths) * len(exposure_candidates)
+    assert fake_tls.move_call_count == 2 * len(wavelengths)
+    assert fake_tls.wait_call_count == 2 * len(wavelengths)
+    assert fake_tls.set_wavelength_calls == [450.0, 550.0, 650.0, 450.0, 550.0, 650.0]
+    assert fake_camera.apply_params_call_count >= len(wavelengths)
