@@ -1,6 +1,7 @@
 plan_id: bishe_pupil_scan
 
-camera_params_source: outputs/exposure_calibration/camera_params.json
+camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
+require_psf_safe_camera_params: true
 
 wavelength:
   wavelength_nm: 550.0

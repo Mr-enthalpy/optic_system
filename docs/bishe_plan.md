@@ -51,8 +51,24 @@ optical determinism, and demonstrating a simple reconstruction proof-of-concept.
 ### M1 — Effective LCD pupil scan
 **Status: implemented / in progress**
 
-- Depends on Phase 3.0.5 `outputs/exposure_calibration/camera_params.json`
-  for exposure, gain, frames-per-capture defaults, and raw frame full scale.
+- The original Phase 3.0.5 exposure sweep was sensor-level coarse safety only.
+  It is not sufficient for PSF, dOTF, or pupil-fit experiments because
+  point-source PSF energy may occupy a very small fraction of the full sensor.
+  A small global saturated fraction can still mean the PSF core is saturated.
+  Phase 3.0.5b introduces PSF-safe exposure selection using max-pixel headroom
+  as the primary constraint.
+- Phase 3.1 coarse localization may use previous camera_params.json for
+  first-pass scan only. Phase 3.1.1 fine strip scan, dOTF, PSF dictionary, and
+  PSF repeatability must use camera_params_psf_safe.json by default.
+- The Phase 3.1 data currently reviewed in PR #24 is first-pass coarse
+  active-region localization only. It must not be described as final pupil
+  geometry, final effective pupil, calibrated active pupil, or a PSF-safe scan.
+  The review observed clipping/local saturation, so final fine scans must use
+  lower exposure or the Phase 3.0.5b PSF-safe criterion before pupil
+  characterization.
+- Depends by default on Phase 3.0.5b
+  `outputs/exposure_calibration/camera_params_psf_safe.json` for exposure,
+  gain, frames-per-capture defaults, and raw frame full scale.
 - Implement procedural bar/block scan capture: generate masks at runtime,
   display each physical LCD mask, capture camera response, and write raw HDF5
   first.
@@ -67,6 +83,7 @@ optical determinism, and demonstrating a simple reconstruction proof-of-concept.
 **Status: planned**
 
 - Capture multiple repeats of the same mask at a single wavelength.
+- Use `outputs/exposure_calibration/camera_params_psf_safe.json` by default.
 - Quantify frame-to-frame and capture-to-capture variation.
 - Establish energy-based ROI selection for downstream PSF extraction.
 - Output: `outputs/psf_repeatability/repeatability_metrics.json`
@@ -75,6 +92,7 @@ optical determinism, and demonstrating a simple reconstruction proof-of-concept.
 **Status: planned**
 
 - Generate base mask + perturbation mask pairs.
+- Use `outputs/exposure_calibration/camera_params_psf_safe.json` by default.
 - Capture PSF pairs.
 - Compute dOTF (complex OTF difference with least-squares flux scaling).
 - Visualize dOTF magnitude and phase.
@@ -89,6 +107,7 @@ Explicit success criterion: Observe clear, reproducible structure in dOTF.
 
 - Select a set of representative masks (e.g., gratings at various orientations
   and periods, checkerboards, radial patterns).
+- Use `outputs/exposure_calibration/camera_params_psf_safe.json` by default.
 - Capture PSF for each mask at a single wavelength.
 - Export mask-to-PSF pairs in `LCD_forward`-compatible HDF5 format.
 - Output: `outputs/psf_dictionary/psf_dict_lambda_<wl>nm.h5`

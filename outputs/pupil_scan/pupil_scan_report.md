@@ -7,7 +7,13 @@
 - roi_physical: `{'x_min': 1045, 'x_max': 1181, 'y_min': 1782, 'y_max': 1994}`
 
 ## Warnings
-- none
+- PR #24 review observed clipping/local saturation in the Phase 3.1 hardware
+  images. This result is first-pass coarse active-region localization only.
+- Do not describe this output as final pupil geometry, final effective pupil,
+  calibrated active pupil, or a PSF-safe scan.
+- Final fine strip scan, dOTF, PSF dictionary, and PSF repeatability must use
+  `outputs/exposure_calibration/camera_params_psf_safe.json` after rerunning
+  Phase 3.0.5b PSF-safe exposure refinement.
 
 ## Inputs
 - x_profile_available: True

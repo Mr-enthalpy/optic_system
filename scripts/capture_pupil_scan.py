@@ -91,7 +91,11 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         )
 
 
-def load_camera_params(source: str | Path) -> tuple[dict[str, Any], Path]:
+def load_camera_params(
+    source: str | Path,
+    *,
+    require_psf_safe: bool = False,
+) -> tuple[dict[str, Any], Path]:
     source_path = Path(source)
     if not source_path.is_absolute():
         source_path = _repo_root() / source_path
@@ -99,16 +103,26 @@ def load_camera_params(source: str | Path) -> tuple[dict[str, Any], Path]:
         raise FileNotFoundError(f"camera_params_source not found: {source_path}")
     with open(source_path, "r", encoding="utf-8") as f:
         params = json.load(f)
-    _validate_camera_params(params, source_path)
+    _validate_camera_params(params, source_path, require_psf_safe=require_psf_safe)
     return params, source_path
 
 
-def _validate_camera_params(params: dict[str, Any], source_path: Path) -> None:
+def _validate_camera_params(
+    params: dict[str, Any],
+    source_path: Path,
+    *,
+    require_psf_safe: bool = False,
+) -> None:
     validity = params.get("validity", {})
     if validity.get("exposure_safety_valid") is not True:
         raise ValueError(
             f"{source_path} is not exposure-safety valid: "
             "validity.exposure_safety_valid must be true"
+        )
+    if require_psf_safe and validity.get("psf_exposure_safe") is not True:
+        raise ValueError(
+            f"{source_path} is not PSF-exposure safe: "
+            "validity.psf_exposure_safe must be true"
         )
     gsc = params.get("global_safe_camera", {})
     if gsc.get("exposure_us") is None:
@@ -184,7 +198,10 @@ def run_pupil_scan(
     from tasks.pupil_scan_h5 import PupilScanWriter
     from tasks.pupil_scan_masks import ScanMaskSpec, iter_pupil_scan_masks
 
-    camera_params, _camera_params_path = load_camera_params(plan["camera_params_source"])
+    camera_params, _camera_params_path = load_camera_params(
+        plan["camera_params_source"],
+        require_psf_safe=bool(plan.get("require_psf_safe_camera_params", True)),
+    )
     (
         exposure_us,
         gain_db,

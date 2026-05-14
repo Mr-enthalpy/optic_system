@@ -42,15 +42,17 @@ class TestSaturationMetrics:
         assert result["saturated"] is False
         assert result["p99_9"] == 200.0
 
-    def test_single_hot_pixel_not_confused(self):
+    def test_single_hot_pixel_fails_psf_safe(self):
         frame = np.full((100, 100), 100.0, dtype=np.float64)
         frame[0, 0] = 255.0
         result = compute_saturation_metrics(frame, full_scale=255.0)
-        assert result["saturated"] is False, (
-            "single hot pixel at 255 should not trigger saturation"
+        assert result["saturated"] is True, (
+            "a single full-scale PSF core pixel must reject the setting"
         )
+        assert result["psf_safe"] is False
         assert result["max_pixel"] == 255.0
         assert result["p99_9"] == 100.0
+        assert result["saturated_pixel_count"] == 1
         assert result["saturated_fraction"] < 0.001
 
     def test_many_saturated_pixels_triggers(self):
@@ -60,12 +62,13 @@ class TestSaturationMetrics:
         assert result["saturated"] is True
         assert result["saturated_fraction"] == pytest.approx(0.05, abs=0.01)
 
-    def test_p99_9_threshold_triggers(self):
+    def test_p99_9_is_diagnostic_for_psf_safe_mode(self):
         frame = np.full((100, 100), 220.0, dtype=np.float64)
         result = compute_saturation_metrics(
-            frame, full_scale=255.0, max_pixel_fraction_threshold=0.85,
+            frame, full_scale=255.0, max_pixel_fraction_threshold=0.90,
         )
-        assert result["saturated"] is True
+        assert result["saturated"] is False
+        assert result["p99_9"] == 220.0
 
     def test_16bit_full_scale(self):
         frame = np.full((100, 100), 40000.0, dtype=np.float64)
@@ -76,9 +79,9 @@ class TestSaturationMetrics:
     def test_16bit_near_full(self):
         frame = np.full((100, 100), 60000.0, dtype=np.float64)
         result = compute_saturation_metrics(
-            frame, full_scale=65535.0, max_pixel_fraction_threshold=0.85,
+            frame, full_scale=65535.0, max_pixel_fraction_threshold=0.90,
         )
-        is_near_full = 60000.0 > 65535.0 * 0.85
+        is_near_full = 60000.0 >= 65535.0 * 0.90
         assert result["saturated"] == is_near_full
 
 
@@ -170,13 +173,16 @@ class TestExposureSweepWriter:
                 w.append_sweep_row(
                     wavelength_nm=550.0, exposure_us=5000.0, gain_db=0.0,
                     frames_avg=frame, max_pixel=128.0, p99_9=128.0,
-                    saturated_fraction=0.0, safe=True,
+                    saturated_pixel_count=0,
+                    saturated_fraction=0.0, safe=True, psf_safe=True,
                     p_signal=128.0, low_signal=False,
                 )
             import h5py
             with h5py.File(p, "r") as f:
                 assert f["sweep/exposure_us"].shape == (1,)
                 assert bool(f["sweep/safe"][0]) is True
+                assert bool(f["sweep/psf_safe"][0]) is True
+                assert int(f["sweep/saturated_pixel_count"][0]) == 0
                 assert f["raw/frames_avg"].shape[0] == 1
                 assert f["capture/plan_id"][()] == b"test" or f["capture/plan_id"][()] == "test"
         finally:
@@ -198,8 +204,10 @@ class TestExposureSweepWriter:
                         frames_avg=frame,
                         max_pixel=float(i * 40),
                         p99_9=float(i * 40),
+                        saturated_pixel_count=0,
                         saturated_fraction=0.0,
                         safe=(i < 4),
+                        psf_safe=(i < 4),
                         p_signal=float(i * 40),
                         low_signal=(i == 0),
                     )
@@ -207,7 +215,9 @@ class TestExposureSweepWriter:
             with h5py.File(p, "r") as f:
                 assert f["sweep/exposure_us"].shape == (5,)
                 assert f["sweep/safe"].shape == (5,)
+                assert f["sweep/psf_safe"].shape == (5,)
                 assert not f["sweep/safe"][4]
+                assert not f["sweep/psf_safe"][4]
                 assert f["sweep/low_signal"][0]
         finally:
             import shutil
@@ -228,7 +238,7 @@ class TestExposureSweepWriter:
                 pf = json.loads(pf_raw)
                 assert pf["scientific_calibration_valid"] is False
                 assert pf["training_ready"] is False
-                assert pf["phase"] == "phase3_exposure_sweep"
+                assert pf["phase"] == "phase3_0_5b_psf_safe_exposure"
                 assert pf["completed"] is True
         finally:
             import shutil
@@ -244,6 +254,7 @@ class TestExposureSweepWriter:
             import h5py
             with h5py.File(p, "r") as f:
                 assert f["sweep"].attrs["frame_dtype_full_scale"] == 65535
+                assert f["sweep/frame_dtype_full_scale"][()] == 65535
         finally:
             import shutil
             shutil.rmtree(d, ignore_errors=True)
@@ -262,8 +273,9 @@ class TestCameraParamsJSON:
             ],
             "saturation": {
                 "percentile": 99.9,
-                "max_pixel_fraction_threshold": 0.85,
-                "saturated_fraction_threshold": 0.001,
+                "max_pixel_fraction_threshold": 0.90,
+                "hard_max_pixel_fraction_threshold": 0.98,
+                "saturated_pixel_count_threshold": 0,
             },
             "signal": {
                 "percentile": 99.0,
@@ -277,13 +289,14 @@ class TestCameraParamsJSON:
         }
         all_results = [
             {"wavelength_nm": 450.0, "max_pixel": 100, "p99_9": 90,
-             "saturated_fraction": 0.0, "saturated": False,
+             "saturated_pixel_count": 0, "saturated_fraction": 0.0,
+             "psf_safe": True, "safe": True, "saturated": False,
              "p_signal": 85, "low_signal": False},
         ]
         result = _build_result(
             plan, exposure_us=3125.0, gain_db=0.0,
             all_results=all_results, full_scale=255.0,
-            selection_reason="gain_min_max_safe_exposure",
+            selection_reason="psf_safe_max_pixel_headroom",
         )
 
         assert result["schema_version"] == "1.0"
@@ -291,8 +304,9 @@ class TestCameraParamsJSON:
         assert result["global_safe_camera"]["exposure_us"] == 3125.0
         assert result["global_safe_camera"]["gain_db"] == 0.0
         assert result["global_safe_camera"]["gain_elevated"] is False
-        assert result["selection_reason"] == "gain_min_max_safe_exposure"
+        assert result["selection_reason"] == "psf_safe_max_pixel_headroom"
         assert result["validity"]["exposure_safety_valid"] is True
+        assert result["validity"]["psf_exposure_safe"] is True
         assert result["validity"]["scientific_calibration_valid"] is False
         assert result["validity"]["training_ready"] is False
         assert "450.0" in result["per_wavelength_metrics"]
@@ -305,8 +319,9 @@ class TestCameraParamsJSON:
             "wavelengths": [{"wavelength_nm": 550.0}],
             "saturation": {
                 "percentile": 99.9,
-                "max_pixel_fraction_threshold": 0.85,
-                "saturated_fraction_threshold": 0.001,
+                "max_pixel_fraction_threshold": 0.90,
+                "hard_max_pixel_fraction_threshold": 0.98,
+                "saturated_pixel_count_threshold": 0,
             },
             "signal": {
                 "percentile": 99.0,
@@ -334,8 +349,9 @@ class TestCameraParamsJSON:
             "wavelengths": [{"wavelength_nm": 550.0}],
             "saturation": {
                 "percentile": 99.9,
-                "max_pixel_fraction_threshold": 0.85,
-                "saturated_fraction_threshold": 0.001,
+                "max_pixel_fraction_threshold": 0.90,
+                "hard_max_pixel_fraction_threshold": 0.98,
+                "saturated_pixel_count_threshold": 0,
             },
             "signal": {
                 "percentile": 99.0,
@@ -377,8 +393,9 @@ class TestDryRun:
             },
             "saturation": {
                 "percentile": 99.9,
-                "max_pixel_fraction_threshold": 0.85,
-                "saturated_fraction_threshold": 0.001,
+                "max_pixel_fraction_threshold": 0.90,
+                "hard_max_pixel_fraction_threshold": 0.98,
+                "saturated_pixel_count_threshold": 0,
             },
             "signal": {
                 "percentile": 99.0,

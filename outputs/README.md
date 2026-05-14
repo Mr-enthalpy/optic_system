@@ -12,6 +12,28 @@ provenance rule below.
 
 ## Output subdirectories
 
+### `outputs/exposure_calibration/`
+
+- **Phase:** 3.0.5b - PSF-safe exposure refinement
+- **Depends on:** `data/raw/bishe_exposure_psf_safe_sweep.h5` produced by
+  `scripts/calibrate_camera_exposure_sweep.py`.
+- **Produces:**
+  - `camera_params_psf_safe.json` - exposure, gain, frame scale, per-wavelength
+    max-pixel diagnostics, and PSF-safe validity flags.
+- **Policy:** The original Phase 3.0.5 exposure sweep was sensor-level coarse
+  safety only. It is not sufficient for PSF, dOTF, or pupil-fit experiments
+  because point-source PSF energy may occupy a very small fraction of the full
+  sensor. A small global saturated fraction can still mean the PSF core is
+  saturated. Phase 3.0.5b introduces PSF-safe exposure selection using
+  max-pixel headroom as the primary constraint.
+- **Downstream default:** Phase 3.1 coarse localization may use previous
+  camera_params.json for first-pass scan only. Phase 3.1.1 fine strip scan,
+  dOTF, PSF dictionary, and PSF repeatability must use
+  camera_params_psf_safe.json by default.
+- **Validity boundary:** PSF-safe exposure only means local overexposure has
+  been rejected by max-pixel headroom. It does not imply scientific calibration
+  validity, optical alignment validity, or training-ready data.
+
 ### `outputs/pupil_scan/`
 
 - **Phase:** 3.1 — Effective LCD pupil scan
