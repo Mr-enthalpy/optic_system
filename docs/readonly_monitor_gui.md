@@ -1,7 +1,7 @@
 # Read-only run-status monitor
 
 In `phase3-bishe-experimental-loop`, this monitor is used for long-running
-thesis capture/calibration tasks.  It does not replace the Phase 3 workflow
+thesis capture/calibration tasks. It does not replace the Phase 3 workflow
 defined in `docs/phase3_workflow.md`.
 
 ## Purpose
@@ -13,7 +13,8 @@ The monitor reads task-published files from a run-status directory:
 
 * `state.json`
 * `current_mask_preview.png` or `current_mask_preview.npy`
-* `latest_frame_preview.png` or `latest_frame_preview.npy`
+* `latest_frame_preview.npy` by default; `.png` is still readable for legacy
+  or explicitly requested previews
 * `frame_stats.json`
 * `log.jsonl`
 
@@ -62,19 +63,28 @@ recent-log panel renders only the newest `--max-log-lines` entries. Preview
 images are scaled to fit their GUI panels while preserving aspect ratio, so a
 large camera frame is not cropped to its upper-left corner.
 
+The frame panel has a preview encoding selector below the image. Because the
+camera service may not expose reliable Bayer-filter metadata, the task
+publishes the latest camera frame as a raw `.npy` array and the monitor applies
+the selected display encoding locally:
+
+* `Raw mono`
+* `Bayer RGGB -> RGB`
+* `Bayer BGGR -> RGB`
+* `Bayer GRBG -> RGB`
+* `Bayer GBRG -> RGB`
+
 ## Limitations
 
-The latest frame is not a video stream. It is the most recent preview image or
-array written by the task.
+The latest frame is not a subscribed camera stream. It is the most recent raw
+preview array written by the task.
 
 The monitor does not subscribe to a live camera stream; `latest_frame_preview`
 means the last preview file explicitly published by the running task.
 
-The GUI view currently displays `.png` preview files. If the publisher falls
-back to `.npy` because image-writing dependencies such as `cv2` are unavailable,
-terminal mode and `RunStatusReader` can still read the array, but the GUI may
-show that preview as unavailable. GUI rendering for `.npy` previews can be
-added later without changing the diagnostics boundary.
+The GUI can display both `.npy` raw arrays and `.png` preview files. Bayer RGB
+preview modes require OpenCV in the experiment venv; raw mono preview still
+works without Bayer decoding.
 
 Refresh rate depends on task publishing frequency and the monitor
 `--poll-interval`.
@@ -90,11 +100,11 @@ should add those calls where live diagnostics are useful.
 
 ## Dependencies
 
-Mask and frame previews are written as PNG images using `cv2` (OpenCV).
-If `cv2` is not installed in the experiment environment, previews fall
-back to `.npy` format.  The terminal monitor (`--no-gui`) can read `.npy`;
-the tkinter GUI shows the preview as unavailable.  Install `opencv-python`
-in the experiment venv for full GUI preview support.
+Mask previews are written as PNG images using `cv2` (OpenCV) when available and
+fall back to `.npy` otherwise. Frame previews are written as raw `.npy` arrays
+by default so the monitor can choose the Bayer display encoding.
 
-Previews are downsampled to a maximum side of 768 pixels before writing.
-Raw HDF5 data is unaffected — this is status-dir policy only.
+Mask PNG previews and explicitly requested frame PNG previews are downsampled
+to a maximum side of 768 pixels before writing. Default raw frame `.npy`
+previews are not downsampled before publishing. Raw HDF5 data is unaffected;
+this is status-dir policy only.

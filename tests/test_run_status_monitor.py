@@ -53,6 +53,22 @@ def test_write_frame_preview_and_reader(tmp_path: Path) -> None:
     np.testing.assert_array_equal(loaded, frame)
 
 
+def test_write_frame_preview_default_preserves_raw_npy(tmp_path: Path) -> None:
+    publisher = RunStatusPublisher(tmp_path, "run_raw")
+    frame = np.arange(20, dtype=np.uint16).reshape(4, 5)
+
+    path = publisher.write_frame_preview(frame)
+
+    assert path.name == "latest_frame_preview.npy"
+    status = RunStatusReader(tmp_path).read()
+    assert status is not None
+    assert status.latest_frame_preview == "latest_frame_preview.npy"
+    loaded = RunStatusReader(tmp_path).read_frame_preview()
+    assert loaded is not None
+    assert loaded.dtype == np.uint16
+    np.testing.assert_array_equal(loaded, frame)
+
+
 def test_write_frame_stats_and_reader(tmp_path: Path) -> None:
     publisher = RunStatusPublisher(tmp_path, "run_004")
     stats = {
@@ -182,3 +198,32 @@ def test_fit_size_does_not_upscale_small_preview() -> None:
     from scripts.monitor_run_status import _fit_size
 
     assert _fit_size(120, 80, 512, 512) == (120, 80)
+
+
+def test_monitor_loads_raw_npy_as_mono_preview(tmp_path: Path) -> None:
+    from scripts.monitor_run_status import RAW_MONO_ENCODING, _load_preview_image
+
+    path = tmp_path / "latest_frame_preview.npy"
+    np.save(path, np.arange(16, dtype=np.uint8).reshape(4, 4))
+
+    image = _load_preview_image(path, frame_encoding=RAW_MONO_ENCODING)
+
+    assert image.mode == "L"
+    assert image.size == (4, 4)
+
+
+def test_monitor_can_debayer_raw_npy_preview(tmp_path: Path) -> None:
+    import pytest
+
+    cv2 = pytest.importorskip("cv2")
+    assert hasattr(cv2, "COLOR_BayerRGGB2RGB")
+
+    from scripts.monitor_run_status import BAYER_RGGB_ENCODING, _load_preview_image
+
+    path = tmp_path / "latest_frame_preview.npy"
+    np.save(path, np.arange(64, dtype=np.uint8).reshape(8, 8))
+
+    image = _load_preview_image(path, frame_encoding=BAYER_RGGB_ENCODING)
+
+    assert image.mode == "RGB"
+    assert image.size == (8, 8)

@@ -60,6 +60,10 @@ The monitor never connects to hardware and never controls the task.  See
 The status directory is transient runtime diagnostics, not thesis evidence.
 `raw_capture.h5` remains the sole experimental record.
 
+For camera preview status, tasks publish raw frame arrays by default and leave
+Bayer display encoding to the read-only monitor. This keeps Bayer-pattern
+assumptions out of capture tasks when camera metadata is unavailable.
+
 ## Effective LCD pupil scan
 
 **Purpose:** Locate the LCD region that actually affects the optical system.

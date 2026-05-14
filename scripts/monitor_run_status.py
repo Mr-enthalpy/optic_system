@@ -7,6 +7,20 @@ from pathlib import Path
 from typing import Any
 
 
+RAW_MONO_ENCODING = "Raw mono"
+BAYER_RGGB_ENCODING = "Bayer RGGB -> RGB"
+BAYER_BGGR_ENCODING = "Bayer BGGR -> RGB"
+BAYER_GRBG_ENCODING = "Bayer GRBG -> RGB"
+BAYER_GBRG_ENCODING = "Bayer GBRG -> RGB"
+FRAME_PREVIEW_ENCODINGS = (
+    RAW_MONO_ENCODING,
+    BAYER_RGGB_ENCODING,
+    BAYER_BGGR_ENCODING,
+    BAYER_GRBG_ENCODING,
+    BAYER_GBRG_ENCODING,
+)
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -173,6 +187,7 @@ def run_tk_gui(args: argparse.Namespace) -> int:
     state_var = tk.StringVar(value="status unavailable")
     frame_var = tk.StringVar(value="latest frame preview: unavailable")
     mask_var = tk.StringVar(value="current mask preview: unavailable")
+    frame_encoding_var = tk.StringVar(value=RAW_MONO_ENCODING)
 
     root.columnconfigure(0, weight=1)
     root.columnconfigure(1, weight=1)
@@ -201,8 +216,18 @@ def run_tk_gui(args: argparse.Namespace) -> int:
 
     frame_box = ttk.LabelFrame(root, text="Latest Frame", padding=8)
     frame_box.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=4)
+    frame_box.rowconfigure(0, weight=1)
+    frame_box.columnconfigure(0, weight=1)
     frame_label = ttk.Label(frame_box, textvariable=frame_var, anchor="center")
-    frame_label.pack(fill="both", expand=True)
+    frame_label.grid(row=0, column=0, sticky="nsew")
+    frame_encoding_menu = ttk.Combobox(
+        frame_box,
+        textvariable=frame_encoding_var,
+        values=FRAME_PREVIEW_ENCODINGS,
+        state="readonly",
+        width=20,
+    )
+    frame_encoding_menu.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
     mask_box = ttk.LabelFrame(root, text="Current Mask", padding=8)
     mask_box.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=4)
@@ -227,7 +252,7 @@ def run_tk_gui(args: argparse.Namespace) -> int:
 
     photos: dict[str, Any] = {}
 
-    def refresh() -> None:
+    def refresh(*, schedule_next: bool = True) -> None:
         status = reader.read()
         stats = reader.read_frame_stats() or {}
         logs = reader.tail_log(max_lines=args.max_log_lines)
@@ -240,6 +265,7 @@ def run_tk_gui(args: argparse.Namespace) -> int:
             key="frame",
             path=_preview_path(Path(args.status_dir), getattr(status, "latest_frame_preview", None)),
             fallback="latest frame preview: unavailable",
+            frame_encoding=frame_encoding_var.get(),
         )
         _update_image_label(
             label=mask_label,
@@ -250,9 +276,16 @@ def run_tk_gui(args: argparse.Namespace) -> int:
             fallback="current mask preview: unavailable",
         )
         _update_logs_text(logs_text, logs, max_log_lines=args.max_log_lines)
-        if not args.once and root.winfo_exists():
-            root.after(max(50, int(float(args.poll_interval) * 1000)), refresh)
+        if schedule_next and not args.once and root.winfo_exists():
+            root.after(
+                max(50, int(float(args.poll_interval) * 1000)),
+                lambda: refresh(schedule_next=True),
+            )
 
+    frame_encoding_menu.bind(
+        "<<ComboboxSelected>>",
+        lambda _event: refresh(schedule_next=False),
+    )
     refresh()
     if args.once:
         root.update_idletasks()
@@ -334,19 +367,21 @@ def _update_image_label(
     key: str,
     path: Path | None,
     fallback: str,
+    frame_encoding: str | None = None,
 ) -> None:
-    if path is None or path.suffix.lower() != ".png" or not path.exists():
+    if path is None or not path.exists():
         label.configure(image="")
         photos.pop(key, None)
         text_var.set(fallback)
         return
     try:
-        from PIL import Image, ImageTk
+        from PIL import ImageTk
 
-        image = Image.open(path)
+        image = _load_preview_image(path, frame_encoding=frame_encoding)
         max_w, max_h = _image_label_target_size(label)
         fit_w, fit_h = _fit_size(image.width, image.height, max_w, max_h)
         if (fit_w, fit_h) != (image.width, image.height):
+            from PIL import Image
             resampling = getattr(Image, "Resampling", Image).LANCZOS
             image = image.resize((fit_w, fit_h), resampling)
         photo = ImageTk.PhotoImage(image)
@@ -372,6 +407,75 @@ def _image_label_target_size(label: Any) -> tuple[int, int]:
     if height <= 1:
         height = 512
     return width, height
+
+
+def _load_preview_image(path: Path, *, frame_encoding: str | None = None) -> Any:
+    from PIL import Image
+
+    if path.suffix.lower() == ".npy":
+        import numpy as np
+
+        array = np.load(str(path))
+        return _array_to_pil_image(array, frame_encoding=frame_encoding)
+    image = Image.open(path)
+    return image.convert("RGB") if image.mode not in {"L", "RGB"} else image
+
+
+def _array_to_pil_image(array: Any, *, frame_encoding: str | None = None) -> Any:
+    from PIL import Image
+
+    import numpy as np
+
+    arr = np.asarray(array)
+    if arr.ndim == 2 and frame_encoding in _BAYER_CV2_CODE_NAMES:
+        try:
+            import cv2
+
+            gray = _as_uint8_display(arr)
+            rgb = cv2.cvtColor(
+                gray,
+                getattr(cv2, _BAYER_CV2_CODE_NAMES[str(frame_encoding)]),
+            )
+            return Image.fromarray(rgb, mode="RGB")
+        except Exception:
+            return Image.fromarray(_as_uint8_display(arr), mode="L")
+    if arr.ndim == 2:
+        return Image.fromarray(_as_uint8_display(arr), mode="L")
+    if arr.ndim == 3 and arr.shape[2] in {3, 4}:
+        arr8 = _as_uint8_display(arr)
+        mode = "RGBA" if arr.shape[2] == 4 else "RGB"
+        return Image.fromarray(arr8, mode=mode)
+    squeezed = np.squeeze(arr)
+    if squeezed.ndim == 2:
+        return Image.fromarray(_as_uint8_display(squeezed), mode="L")
+    raise ValueError(f"unsupported preview array shape: {arr.shape}")
+
+
+_BAYER_CV2_CODE_NAMES = {
+    BAYER_RGGB_ENCODING: "COLOR_BayerRGGB2RGB",
+    BAYER_BGGR_ENCODING: "COLOR_BayerBGGR2RGB",
+    BAYER_GRBG_ENCODING: "COLOR_BayerGRBG2RGB",
+    BAYER_GBRG_ENCODING: "COLOR_BayerGBRG2RGB",
+}
+
+
+def _as_uint8_display(array: Any) -> Any:
+    import numpy as np
+
+    arr = np.asarray(array)
+    if arr.dtype == np.uint8:
+        return arr
+    if arr.size == 0:
+        return arr.astype(np.uint8)
+    finite = arr[np.isfinite(arr)] if np.issubdtype(arr.dtype, np.floating) else arr
+    if finite.size == 0:
+        return np.zeros(arr.shape, dtype=np.uint8)
+    mn = float(np.min(finite))
+    mx = float(np.max(finite))
+    if mx <= mn:
+        return np.zeros(arr.shape, dtype=np.uint8)
+    scaled = (arr.astype(np.float64) - mn) * (255.0 / (mx - mn))
+    return np.clip(scaled, 0, 255).astype(np.uint8)
 
 
 def _fit_size(width: int, height: int, max_width: int, max_height: int) -> tuple[int, int]:
