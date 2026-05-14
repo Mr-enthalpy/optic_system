@@ -4,7 +4,7 @@
 
 The files under `tasks/` originate from early experimental directions and **must not be assumed to define the current architecture.**
 
-This directory currently contains placeholder stubs with no implementation. New minimal capture tasks will be implemented separately in **Phase 2.**
+All legacy empty stubs have been removed. Active tasks are listed below.
 
 Do not silently revive legacy task logic. Do not reuse old task scripts without explicit audit.
 
@@ -36,14 +36,16 @@ Tasks that use pywinauto TLS automation should be marked `deprecated`.
 
 Tasks that do not preserve raw metadata should be marked `needs redesign`.
 
-## Current task files
+## Removed legacy stubs
 
-| File | Status | Notes |
-|------|--------|-------|
-| `aperture_search_task.py` | **legacy** | Empty stub. Original intent was aperture parameter search. Has not been audited against current architecture. Bypasses `SessionController` by design assumption. |
-| `calibration_sequence_task.py` | **legacy** | Empty stub. Original intent was calibration sequence automation. Has not been audited. Full calibration workflow is Phase 4 scope. |
-| `capture_average_task.py` | **legacy** | Empty stub. Original intent was simple frame averaging. Has not been audited. Will be superseded by Phase 2 minimal capture task. |
-| `wavelength_sweep_task.py` | **legacy** | Empty stub. Original intent was wavelength sweep orchestration. Has not been audited. Full wavelength sweep is outside current phase scope. |
+The following empty placeholders were removed — their historical intent is preserved here:
+
+| Removed file | Original intent |
+|------|-------|
+| `aperture_search_task.py` | Aperture parameter search. Never implemented. |
+| `calibration_sequence_task.py` | Calibration sequence automation. Never implemented. Full calibration workflow is Phase 4 scope. |
+| `capture_average_task.py` | Simple frame averaging. Never implemented. Superseded by `capture_forward_dataset.py`. |
+| `wavelength_sweep_task.py` | Wavelength sweep orchestration. Never implemented. Full wavelength sweep is outside current phase scope. |
 
 ## Planned future tasks (Phase 2)
 
@@ -69,7 +71,6 @@ These have been implemented cleanly using `control -> devices` boundaries (via t
 
 ## Policy
 
-- Old tasks should not be deleted without explicit authorization.
 - Old tasks may be referenced for design patterns but must not be assumed correct.
 - New tasks must use control-layer semantics unless a bypass is explicitly justified and documented.
 - New tasks must preserve raw capture metadata.
