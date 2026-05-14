@@ -41,6 +41,12 @@ The active responsibilities are:
 The repository should stay focused on hardware control and data acquisition.
 Training, reconstruction, and differentiable mask optimization belong to `LCD_forward`.
 
+## Thesis branch
+
+The `phase3-bishe-experimental-loop` branch implements the bachelor-thesis
+Phase 3 experimental workflow.  Its roadmap is documented in
+`docs/bishe_plan.md`.
+
 ## System components
 
 ### Camera

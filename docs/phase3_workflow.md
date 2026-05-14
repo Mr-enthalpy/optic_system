@@ -1,5 +1,26 @@
 # Phase 3 technical workflow
 
+## Provenance rule
+
+No thesis-usable result is valid unless it records:
+
+- source `raw_capture.h5` path
+- capture plan ID
+- mask IDs or mask generation recipe
+- wavelength metadata
+- camera parameter source
+- preprocessing parameters
+- script name
+- git commit if available
+
+## Phase 3.0.5b dependency
+
+All downstream capture tasks use:
+
+```text
+outputs/exposure_calibration/camera_params_psf_safe.json
+```
+
 ## Data flow overview
 
 ```text
