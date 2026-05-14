@@ -175,10 +175,8 @@ class PsfSafeExposureWriter:
         _append_scalar(f["sweep/peak_pixel_avg"], peak_pixel_avg)
         _append_scalar(f["sweep/peak_pixel_fraction_burst"], peak_pixel_fraction_burst)
         _append_scalar(f["sweep/peak_margin_to_full_scale"], peak_margin_to_full_scale)
-        if p99_0_avg is not None:
-            _append_scalar(f["sweep/p99_0_avg"], p99_0_avg)
-        if p99_9_avg is not None:
-            _append_scalar(f["sweep/p99_9_avg"], p99_9_avg)
+        _append_scalar(f["sweep/p99_0_avg"], p99_0_avg if p99_0_avg is not None else np.nan)
+        _append_scalar(f["sweep/p99_9_avg"], p99_9_avg if p99_9_avg is not None else np.nan)
         _append_scalar(f["sweep/unsafe_reason"], unsafe_reason or "")
         _append_scalar(f["sweep/psf_safe"], bool(psf_safe))
         _append_scalar(f["sweep/p_signal"], p_signal)

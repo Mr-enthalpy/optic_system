@@ -245,14 +245,14 @@ def _acquire_and_evaluate(
     camera_adapter,
     k: int,
     full_scale: float,
-    sat_cfg: dict,
+    diagnostics_cfg: dict,
     sig_cfg: dict,
 ) -> dict[str, Any]:
     capture = camera_adapter.acquire_burst(k)
     avg = capture.frames_avg
     burst = np.asarray(getattr(capture, "burst", avg[None, :, :]), dtype=np.float64)
 
-    pcts = tuple(float(p) for p in sat_cfg.get("percentiles", [99.0, 99.9]))
+    pcts = tuple(float(p) for p in diagnostics_cfg.get("percentiles", [99.0, 99.9]))
     safety = compute_peak_safety_metrics(
         burst, full_scale, avg_frame=avg, diagnostic_percentiles=pcts,
     )
