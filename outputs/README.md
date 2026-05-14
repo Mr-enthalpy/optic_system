@@ -41,7 +41,7 @@ provenance rule below.
 
 ### `outputs/pupil_scan/`
 
-- **Phase:** 3.1 —Effective LCD pupil scan
+- **Phase:** 3.1 — Effective LCD pupil scan
 - **Depends on:** `data/raw/bishe_pupil_scan.h5` (or user-specified raw
   pupil scan HDF5) produced by `scripts/capture_pupil_scan.py`.
 - **Produces:**
@@ -67,36 +67,36 @@ provenance rule below.
 
 ### `outputs/psf_repeatability/`
 
-- **Phase:** 3.2 —PSF repeatability and ROI alignment
+- **Phase:** 3.2 — PSF repeatability and ROI alignment
 - **Depends on:** `outputs/psf_repeatability/repeatability_raw.h5`
 - **Produces:**
-  - `repeatability_metrics.json` —within-mask RMS, correlation, between-mask
+  - `repeatability_metrics.json` — within-mask RMS, correlation, between-mask
     differences
 - **Script:** repeatability analysis script (to be created in Phase 3.2)
-- **Status:** intermediate —validates determinism, not thesis-final
+- **Status:** intermediate — validates determinism, not thesis-final
 
 ### `outputs/dotf/`
 
-- **Phase:** 3.3 —dOTF diagnostic
+- **Phase:** 3.3 — dOTF diagnostic
 - **Depends on:** `outputs/dotf/dotf_raw.h5`
 - **Produces:**
-  - `dotf_<id>.npy` —complex dOTF arrays (N pairs)
-  - `dotf_magnitude_<id>.png` —magnitude visualizations
-  - `dotf_phase_<id>.png` —phase visualizations
-  - `dotf_summary.json` —parameters and metadata
+  - `dotf_<id>.npy` — complex dOTF arrays (N pairs)
+  - `dotf_magnitude_<id>.png` — magnitude visualizations
+  - `dotf_phase_<id>.png` — phase visualizations
+  - `dotf_summary.json` — parameters and metadata
 - **Script:** dOTF analysis script (to be created in Phase 3.3)
 - **Status:** thesis-figure-ready (after review)
 
 ### `outputs/psf_dictionary/`
 
-- **Phase:** 3.4 —PSF dictionary and LCD_forward export
+- **Phase:** 3.4 — PSF dictionary and LCD_forward export
 - **Depends on:**
   - `outputs/psf_dictionary/psf_dict_single_lambda_raw.h5`
   - `outputs/psf_dictionary/psf_dict_three_lambda_raw.h5`
 - **Produces:**
-  - `psf_dict_lambda_<wl>nm.h5` —LCD_forward-compatible HDF5
-  - `psf_dict_three_lambda.h5` —LCD_forward-compatible HDF5 (3 wavelengths)
-  - `psf_dictionary_metadata.json` —mask list, wavelengths, ROI parameters
+  - `psf_dict_lambda_<wl>nm.h5` — LCD_forward-compatible HDF5
+  - `psf_dict_three_lambda.h5` — LCD_forward-compatible HDF5 (3 wavelengths)
+  - `psf_dictionary_metadata.json` — mask list, wavelengths, ROI parameters
 - **Script:** dictionary export script (to be created in Phase 3.4)
 - **Status:** thesis-figure-ready (consumed by Phase 3.5 and 3.6)
 
@@ -104,18 +104,18 @@ provenance rule below.
 
 - **Phase:** 3.5 (forward model), 3.6 (multiframe reconstruction)
 - **Depends on:**
-  - `outputs/psf_dictionary/` —PSF dictionary
-  - `outputs/linear_recon/multiframe_target_raw.h5` —target captures
+  - `outputs/psf_dictionary/` — PSF dictionary
+  - `outputs/linear_recon/multiframe_target_raw.h5` — target captures
 - **Produces:**
-  - `forward_model_validation.json` —simple convolution validation metrics
-  - `multiframe_recon_results/` —reconstructed scenes as .npy
-  - `reconstruction_metrics.json` —reconstruction quality metrics
+  - `forward_model_validation.json` — simple convolution validation metrics
+  - `multiframe_recon_results/` — reconstructed scenes as .npy
+  - `reconstruction_metrics.json` — reconstruction quality metrics
 - **Script:** reconstruction script (to be created in Phase 3.5/3.6)
 - **Status:** thesis-figure-ready (after review)
 
 ### `outputs/bishe_figures/`
 
-- **Phase:** 3.7 —Thesis figures and report freeze
+- **Phase:** 3.7 — Thesis figures and report freeze
 - **Depends on:** All preceding output directories
 - **Produces:**
   - Figures in publication-quality format (PNG, PDF)

@@ -68,7 +68,7 @@ The following capture plans are defined for the Phase 3 thesis workflow.
 They will be implemented in their respective milestones.
 
 ### `plans/bishe_psf_repeatability.yaml`
-- **Phase:** 3.2 —PSF repeatability and ROI alignment
+- **Phase:** 3.2 — PSF repeatability and ROI alignment
 - **Purpose:** Capture multiple repeats of 2-3 distinct masks to quantify
   within-mask repeat noise and between-mask differences.
 - **Masks:** 2-3 distinct mask patterns (e.g., full-white, full-dark,
@@ -80,7 +80,7 @@ They will be implemented in their respective milestones.
 - **Downstream analysis:** Repeatability analysis -> `repeatability_metrics.json`
 
 ### `plans/bishe_dotf_edge_perturb.yaml`
-- **Phase:** 3.3 —dOTF diagnostic
+- **Phase:** 3.3 — dOTF diagnostic
 - **Purpose:** Capture base mask + perturbation mask PSF pairs for dOTF
   computation.  Perturbations are placed at the edge of the effective pupil
   to probe pupil-plane structure.
@@ -95,7 +95,7 @@ They will be implemented in their respective milestones.
   magnitude/phase visualizations.
 
 ### `plans/bishe_psf_dict_single_lambda.yaml`
-- **Phase:** 3.4 —PSF dictionary (1 wavelength)
+- **Phase:** 3.4 — PSF dictionary (1 wavelength)
 - **Purpose:** Build a mask-to-PSF dictionary at a single wavelength.
 - **Masks:** Gratings at various periods/orientations, checkerboards, radial
   patterns.  ~10-20 distinct masks.
@@ -106,7 +106,7 @@ They will be implemented in their respective milestones.
 - **Downstream analysis:** PSF extraction, normalization, LCD_forward export.
 
 ### `plans/bishe_psf_dict_three_lambda.yaml`
-- **Phase:** 3.4 / 3.6 —PSF dictionary (3 wavelengths)
+- **Phase:** 3.4 / 3.6 — PSF dictionary (3 wavelengths)
 - **Purpose:** Build a mask-to-PSF dictionary at 3 wavelengths for
   multispectral reconstruction.
 - **Masks:** Same mask set as single-lambda dictionary.
@@ -117,7 +117,7 @@ They will be implemented in their respective milestones.
 - **Downstream analysis:** PSF extraction per wavelength, LCD_forward export.
 
 ### `plans/bishe_multiframe_target.yaml`
-- **Phase:** 3.6 —Multiframe reconstruction
+- **Phase:** 3.6 — Multiframe reconstruction
 - **Purpose:** Capture target scene frames for reconstruction validation.
 - **Masks:** 1-2 target scenes (e.g., combined grating patterns, simple
   geometric shapes).
