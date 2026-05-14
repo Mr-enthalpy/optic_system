@@ -87,18 +87,18 @@ class RunStatusPublisher:
     def write_frame_preview(
         self,
         frame: np.ndarray,
-        filename: str = "latest_frame_preview.png",
+        filename: str = "latest_frame_preview.npy",
     ) -> Path:
         self.status_dir.mkdir(parents=True, exist_ok=True)
         requested = self.status_dir / filename
         array = np.asarray(frame)
-        array = _downsample_preview(array)
         if requested.suffix.lower() == ".npy":
             path = requested
             _atomic_save_npy(path, array)
         else:
             try:
                 path = requested
+                array = _downsample_preview(array)
                 _atomic_write_image(path, _as_uint8_preview(array))
             except Exception:
                 path = requested.with_suffix(".npy")
