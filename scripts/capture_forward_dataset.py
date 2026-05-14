@@ -98,7 +98,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--status-dir",
         default=None,
-        help="optional run-status directory for monitor_gui",
+        help="optional run-status directory for scripts/monitor_run_status.py",
     )
     parser.add_argument(
         "--run-id",

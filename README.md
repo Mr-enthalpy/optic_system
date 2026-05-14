@@ -557,16 +557,7 @@ Use `--no-gui` for terminal-only polling. See
 `docs/readonly_monitor_gui.md` for behavior, limitations, and the safety
 boundary.
 
-Current limitation: the GUI view displays `.png` previews. If preview publishing
-falls back to `.npy` because image-writing dependencies are unavailable,
-terminal mode can still read the array through `RunStatusReader`, but the GUI
-may show that preview as unavailable.
 
-The monitor infrastructure only displays diagnostics that a task publishes.
-Future task integrations, including Phase 3.1 diagnostics work, should call
-`write_frame_preview(...)`, `write_frame_stats(...)`, and `append_log(...)`
-where appropriate. Until then, older tasks may show only `state.json` and the
-current mask preview.
 
 ## Current status
 
