@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from scripts import calibrate_camera_exposure_sweep as sweep
+from scripts import calibrate_psf_safe_exposure as sweep
 
 
 def _psf_safe_plan(tmp_path, *, wavelengths=None) -> dict:
@@ -184,7 +184,7 @@ def test_gain_min_exposure_min_overexposed_fails_without_higher_gain(tmp_path, m
     adapter = _RecordingAdapter(lambda exposure_us, gain_db: np.full((20, 20), 255.0))
     monkeypatch.setattr(sweep, "_make_fake_adapter", lambda: adapter)
 
-    _h5_path, result = sweep.run_exposure_sweep(
+    _h5_path, result = sweep.run_psf_safe_exposure(
         _psf_safe_plan(tmp_path),
         None,
         None,
@@ -207,7 +207,7 @@ def test_low_signal_is_required_before_elevating_gain(tmp_path, monkeypatch):
     adapter = _RecordingAdapter(frame_factory)
     monkeypatch.setattr(sweep, "_make_fake_adapter", lambda: adapter)
 
-    _h5_path, result = sweep.run_exposure_sweep(
+    _h5_path, result = sweep.run_psf_safe_exposure(
         _psf_safe_plan(tmp_path),
         None,
         None,

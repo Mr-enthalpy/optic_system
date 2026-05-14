@@ -16,7 +16,7 @@ consume the raw HDF5 to produce processed results.
 |---|---|
 | `hardware_smoke_no_tls.yaml` | Hardware smoke test: camera + LCD, no TLS |
 | `hardware_smoke_with_tls.yaml` | Hardware smoke test: camera + LCD + TLS |
-| `bishe_exposure_psf_safe_sweep.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
+| `bishe_psf_safe_exposure.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
 | `bishe_pupil_scan.yaml` | Phase 3.1 procedural effective LCD pupil scan |
 
 ## Exposure safety policy
@@ -28,10 +28,10 @@ A small global saturated fraction can still mean the PSF core is saturated.
 Phase 3.0.5b introduces PSF-safe exposure selection using max-pixel headroom
 as the primary constraint.
 
-`plans/bishe_exposure_psf_safe_sweep.yaml` writes:
+`plans/bishe_psf_safe_exposure.yaml` writes:
 
 ```text
-data/raw/bishe_exposure_psf_safe_sweep.h5
+data/raw/bishe_psf_safe_exposure.h5
 outputs/exposure_calibration/camera_params_psf_safe.json
 ```
 
@@ -54,10 +54,10 @@ known bad pixels; no implicit hot-pixel exemption is allowed.
   measurably affect camera captures.
 - **Input:** `camera_params_source` from Phase 3.0.5b by default
   (`outputs/exposure_calibration/camera_params_psf_safe.json`).
-- **Coarse-only exception:** Phase 3.1 coarse localization may use previous
-  `camera_params.json` for first-pass scan only. Phase 3.1.1 fine strip scan,
-  dOTF, PSF dictionary, and PSF repeatability must use
-  `camera_params_psf_safe.json` by default.
+- **Camera params policy:** All new Phase 3 captures must use
+  `camera_params_psf_safe.json`. The old `camera_params.json` is revoked and
+  must not be used for coarse localization, fine scan, dOTF, PSF dictionary,
+  PSF repeatability, or pupil-fit work.
 - **Masks:** Generated procedurally at runtime by
   `tasks/pupil_scan_masks.py`; the plan does not list hundreds of mask files.
 - **Output raw HDF5:** `data/raw/bishe_pupil_scan.h5`.
@@ -70,7 +70,7 @@ The following capture plans are defined for the Phase 3 thesis workflow.
 They will be implemented in their respective milestones.
 
 ### `plans/bishe_psf_repeatability.yaml`
-- **Phase:** 3.2 â€” PSF repeatability and ROI alignment
+- **Phase:** 3.2 â€?PSF repeatability and ROI alignment
 - **Purpose:** Capture multiple repeats of 2-3 distinct masks to quantify
   within-mask repeat noise and between-mask differences.
 - **Masks:** 2-3 distinct mask patterns (e.g., full-white, full-dark,
@@ -82,7 +82,7 @@ They will be implemented in their respective milestones.
 - **Downstream analysis:** Repeatability analysis -> `repeatability_metrics.json`
 
 ### `plans/bishe_dotf_edge_perturb.yaml`
-- **Phase:** 3.3 â€” dOTF diagnostic
+- **Phase:** 3.3 â€?dOTF diagnostic
 - **Purpose:** Capture base mask + perturbation mask PSF pairs for dOTF
   computation.  Perturbations are placed at the edge of the effective pupil
   to probe pupil-plane structure.
@@ -97,7 +97,7 @@ They will be implemented in their respective milestones.
   magnitude/phase visualizations.
 
 ### `plans/bishe_psf_dict_single_lambda.yaml`
-- **Phase:** 3.4 â€” PSF dictionary (1 wavelength)
+- **Phase:** 3.4 â€?PSF dictionary (1 wavelength)
 - **Purpose:** Build a mask-to-PSF dictionary at a single wavelength.
 - **Masks:** Gratings at various periods/orientations, checkerboards, radial
   patterns.  ~10-20 distinct masks.
@@ -108,7 +108,7 @@ They will be implemented in their respective milestones.
 - **Downstream analysis:** PSF extraction, normalization, LCD_forward export.
 
 ### `plans/bishe_psf_dict_three_lambda.yaml`
-- **Phase:** 3.4 / 3.6 â€” PSF dictionary (3 wavelengths)
+- **Phase:** 3.4 / 3.6 â€?PSF dictionary (3 wavelengths)
 - **Purpose:** Build a mask-to-PSF dictionary at 3 wavelengths for
   multispectral reconstruction.
 - **Masks:** Same mask set as single-lambda dictionary.
@@ -119,7 +119,7 @@ They will be implemented in their respective milestones.
 - **Downstream analysis:** PSF extraction per wavelength, LCD_forward export.
 
 ### `plans/bishe_multiframe_target.yaml`
-- **Phase:** 3.6 â€” Multiframe reconstruction
+- **Phase:** 3.6 â€?Multiframe reconstruction
 - **Purpose:** Capture target scene frames for reconstruction validation.
 - **Masks:** 1-2 target scenes (e.g., combined grating patterns, simple
   geometric shapes).
@@ -146,3 +146,4 @@ output_filename: <string>  # basename for raw_capture.h5
 
 See `tasks/capture_plan.py` and `tasks/capture_forward_dataset.py` for full
 schema and loading logic.
+

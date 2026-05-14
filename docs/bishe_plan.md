@@ -64,9 +64,9 @@ optical determinism, and demonstrating a simple reconstruction proof-of-concept.
 - Current Phase 3.0.5b has no bad-pixel mask, so any full-scale burst pixel is
   unsafe. Future bad-pixel mask support may exempt only explicitly marked known
   bad pixels; there is no implicit hot-pixel exemption.
-- Phase 3.1 coarse localization may use previous camera_params.json for
-  first-pass scan only. Phase 3.1.1 fine strip scan, dOTF, PSF dictionary, and
-  PSF repeatability must use camera_params_psf_safe.json by default.
+- Any new Phase 3 capture must use camera_params_psf_safe.json. The old
+  camera_params.json is deleted and must not be referenced by capture or
+  analysis plans.
 - The old `outputs/exposure_calibration/camera_params.json` has been revoked
   and is no longer a valid run input. Historical PR #24 data should be
   reproduced from the camera provenance embedded in its raw HDF5, not by

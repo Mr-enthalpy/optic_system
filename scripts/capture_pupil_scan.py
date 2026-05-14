@@ -84,6 +84,16 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         raise ValueError("scan section is required")
     if not plan.get("output", {}).get("raw_h5"):
         raise ValueError("output.raw_h5 is required")
+    if "require_psf_safe_camera_params" in plan:
+        raise ValueError(
+            "require_psf_safe_camera_params is no longer supported; "
+            "Phase 3 capture always requires PSF-safe camera parameters"
+        )
+    if "camera_params_override" in plan:
+        raise ValueError(
+            "camera_params_override is forbidden for Phase 3 pupil scan capture; "
+            "rerun PSF-safe exposure calibration instead"
+        )
     if "exposure_us" in plan.get("camera", {}) or "gain_db" in plan.get("camera", {}):
         raise ValueError(
             "Phase 3.1 plans must use camera_params_source, not handwritten "
@@ -91,27 +101,26 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         )
 
 
-def load_camera_params(
-    source: str | Path,
-    *,
-    require_psf_safe: bool = False,
-) -> tuple[dict[str, Any], Path]:
+def load_camera_params(source: str | Path) -> tuple[dict[str, Any], Path]:
     source_path = Path(source)
+    if source_path.name == "camera_params.json":
+        raise ValueError(
+            f"{source_path} is a revoked legacy coarse exposure parameter file; "
+            "Phase 3 capture requires camera_params_psf_safe.json"
+        )
     if not source_path.is_absolute():
         source_path = _repo_root() / source_path
     if not source_path.exists():
         raise FileNotFoundError(f"camera_params_source not found: {source_path}")
     with open(source_path, "r", encoding="utf-8") as f:
         params = json.load(f)
-    _validate_camera_params(params, source_path, require_psf_safe=require_psf_safe)
+    _validate_camera_params(params, source_path)
     return params, source_path
 
 
 def _validate_camera_params(
     params: dict[str, Any],
     source_path: Path,
-    *,
-    require_psf_safe: bool = False,
 ) -> None:
     validity = params.get("validity", {})
     if validity.get("exposure_safety_valid") is not True:
@@ -119,7 +128,7 @@ def _validate_camera_params(
             f"{source_path} is not exposure-safety valid: "
             "validity.exposure_safety_valid must be true"
         )
-    if require_psf_safe and validity.get("psf_exposure_safe") is not True:
+    if validity.get("psf_exposure_safe") is not True:
         raise ValueError(
             f"{source_path} is not PSF-exposure safe: "
             "validity.psf_exposure_safe must be true"
@@ -149,35 +158,8 @@ def resolve_camera_settings(
     provenance = {
         "source": source,
         "overridden": False,
-        "camera_params_override": {
-            "source": source,
-            "overridden": False,
-            "reason": None,
-        },
         "camera_params": camera_params,
     }
-
-    override = plan.get("camera_params_override")
-    if override:
-        if override.get("overridden") is not True:
-            raise ValueError("camera_params_override must set overridden: true")
-        reason = override.get("reason")
-        if not reason:
-            raise ValueError("camera_params_override.reason is required")
-        if override.get("exposure_us") is None or override.get("gain_db") is None:
-            raise ValueError(
-                "camera_params_override.exposure_us and gain_db are required"
-            )
-        exposure_us = float(override["exposure_us"])
-        gain_db = float(override["gain_db"])
-        provenance["overridden"] = True
-        provenance["camera_params_override"] = {
-            "source": source,
-            "overridden": True,
-            "reason": str(reason),
-            "exposure_us": exposure_us,
-            "gain_db": gain_db,
-        }
 
     return exposure_us, gain_db, int(frames_per_capture), frame_dtype_full_scale, provenance
 
@@ -198,10 +180,7 @@ def run_pupil_scan(
     from tasks.pupil_scan_h5 import PupilScanWriter
     from tasks.pupil_scan_masks import ScanMaskSpec, iter_pupil_scan_masks
 
-    camera_params, _camera_params_path = load_camera_params(
-        plan["camera_params_source"],
-        require_psf_safe=bool(plan.get("require_psf_safe_camera_params", True)),
-    )
+    camera_params, _camera_params_path = load_camera_params(plan["camera_params_source"])
     (
         exposure_us,
         gain_db,

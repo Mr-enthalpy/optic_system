@@ -47,6 +47,7 @@ def analyze_pupil_scan(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     data = _read_pupil_scan_h5(input_path)
+    _reject_legacy_camera_params_source(data["camera_params_source"])
     responses, diagnostics = _compute_responses(
         input_path,
         data["mask_ids"],
@@ -114,15 +115,6 @@ def analyze_pupil_scan(
         }
         warnings.append("No reliable ROI support found; returned full physical LCD extent.")
 
-    camera_params_source_text = str(data["camera_params_source"]).replace("\\", "/")
-    if camera_params_source_text.endswith("camera_params.json"):
-        warnings.append(
-            "This analysis used the original Phase 3.0.5 coarse camera_params.json. "
-            "PR #24 review observed clipping/local saturation, so this result is "
-            "first-pass coarse active-region localization only; final fine scans, "
-            "dOTF, PSF dictionary, and repeatability must use camera_params_psf_safe.json."
-        )
-
     _write_profile_csv(out_dir / "x_profile.csv", x_profile)
     _write_profile_csv(out_dir / "y_profile.csv", y_profile)
     np.save(str(out_dir / "response_map.npy"), response_map)
@@ -170,6 +162,16 @@ def analyze_pupil_scan(
         json.dump(result, f, indent=2, default=str)
     _write_report(out_dir / "pupil_scan_report.md", result, x_profile, y_profile, block_result)
     return result
+
+
+def _reject_legacy_camera_params_source(camera_params_source: str | None) -> None:
+    source = str(camera_params_source or "").replace("\\", "/")
+    if source.endswith("camera_params.json"):
+        raise ValueError(
+            "Refusing to analyze raw HDF5 captured with revoked legacy "
+            "camera_params.json. Historical Phase 3.1 data is not downstream-usable; "
+            "rerun capture with camera_params_psf_safe.json."
+        )
 
 
 def _read_pupil_scan_h5(path: Path) -> dict[str, Any]:

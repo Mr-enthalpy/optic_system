@@ -15,8 +15,8 @@ provenance rule below.
 ### `outputs/exposure_calibration/`
 
 - **Phase:** 3.0.5b - PSF-safe exposure refinement
-- **Depends on:** `data/raw/bishe_exposure_psf_safe_sweep.h5` produced by
-  `scripts/calibrate_camera_exposure_sweep.py`.
+- **Depends on:** `data/raw/bishe_psf_safe_exposure.h5` produced by
+  `scripts/calibrate_psf_safe_exposure.py`.
 - **Produces:**
   - `camera_params_psf_safe.json` - exposure, gain, frame scale, per-wavelength
     max-pixel diagnostics, and PSF-safe validity flags.
@@ -33,10 +33,10 @@ provenance rule below.
 - **Bad pixels:** Current Phase 3.0.5b has no bad-pixel mask. Any full-scale
   burst pixel is unsafe. A future bad-pixel mask may exempt only explicitly
   marked known bad pixels; no implicit hot-pixel exemption is allowed.
-- **Downstream default:** Phase 3.1 coarse localization may use previous
-  camera_params.json for first-pass scan only. Phase 3.1.1 fine strip scan,
-  dOTF, PSF dictionary, and PSF repeatability must use
-  camera_params_psf_safe.json by default.
+- **Downstream default:** All new Phase 3 captures and analyses must use
+  camera_params_psf_safe.json. The old camera_params.json is not an allowed
+  operational input for coarse localization, fine strip scan, dOTF, PSF
+  dictionary, PSF repeatability, or pupil-fit work.
 - **Revoked coarse output:** The old
   `outputs/exposure_calibration/camera_params.json` has been revoked and is no
   longer a run input. Historical PR #24 data should rely on raw HDF5 camera
@@ -47,7 +47,7 @@ provenance rule below.
 
 ### `outputs/pupil_scan/`
 
-- **Phase:** 3.1 â€” Effective LCD pupil scan
+- **Phase:** 3.1 â€?Effective LCD pupil scan
 - **Depends on:** `data/raw/bishe_pupil_scan.h5` (or user-specified raw
   pupil scan HDF5) produced by `scripts/capture_pupil_scan.py`.
 - **Produces:**
@@ -62,38 +62,47 @@ provenance rule below.
 - **Status:** intermediate; estimates active modulation support, not
   scientific calibration validity.
 
+### `outputs/legacy_phase3_1_coarse_pupil_scan/`
+
+- **Status:** historical only; not downstream-usable.
+- **Reason:** These PR #24 artifacts were captured with the revoked
+  `camera_params.json` coarse exposure parameters and may contain
+  clipping/local saturation.
+- **Policy:** Do not use this directory as an operational input. New Phase 3
+  captures must regenerate pupil-scan outputs from PSF-safe camera parameters.
+
 ### `outputs/psf_repeatability/`
 
-- **Phase:** 3.2 â€” PSF repeatability and ROI alignment
+- **Phase:** 3.2 â€?PSF repeatability and ROI alignment
 - **Depends on:** `outputs/psf_repeatability/repeatability_raw.h5`
 - **Produces:**
-  - `repeatability_metrics.json` â€” within-mask RMS, correlation, between-mask
+  - `repeatability_metrics.json` â€?within-mask RMS, correlation, between-mask
     differences
 - **Script:** repeatability analysis script (to be created in Phase 3.2)
-- **Status:** intermediate â€” validates determinism, not thesis-final
+- **Status:** intermediate â€?validates determinism, not thesis-final
 
 ### `outputs/dotf/`
 
-- **Phase:** 3.3 â€” dOTF diagnostic
+- **Phase:** 3.3 â€?dOTF diagnostic
 - **Depends on:** `outputs/dotf/dotf_raw.h5`
 - **Produces:**
-  - `dotf_<id>.npy` â€” complex dOTF arrays (N pairs)
-  - `dotf_magnitude_<id>.png` â€” magnitude visualizations
-  - `dotf_phase_<id>.png` â€” phase visualizations
-  - `dotf_summary.json` â€” parameters and metadata
+  - `dotf_<id>.npy` â€?complex dOTF arrays (N pairs)
+  - `dotf_magnitude_<id>.png` â€?magnitude visualizations
+  - `dotf_phase_<id>.png` â€?phase visualizations
+  - `dotf_summary.json` â€?parameters and metadata
 - **Script:** dOTF analysis script (to be created in Phase 3.3)
 - **Status:** thesis-figure-ready (after review)
 
 ### `outputs/psf_dictionary/`
 
-- **Phase:** 3.4 â€” PSF dictionary and LCD_forward export
+- **Phase:** 3.4 â€?PSF dictionary and LCD_forward export
 - **Depends on:**
   - `outputs/psf_dictionary/psf_dict_single_lambda_raw.h5`
   - `outputs/psf_dictionary/psf_dict_three_lambda_raw.h5`
 - **Produces:**
-  - `psf_dict_lambda_<wl>nm.h5` â€” LCD_forward-compatible HDF5
-  - `psf_dict_three_lambda.h5` â€” LCD_forward-compatible HDF5 (3 wavelengths)
-  - `psf_dictionary_metadata.json` â€” mask list, wavelengths, ROI parameters
+  - `psf_dict_lambda_<wl>nm.h5` â€?LCD_forward-compatible HDF5
+  - `psf_dict_three_lambda.h5` â€?LCD_forward-compatible HDF5 (3 wavelengths)
+  - `psf_dictionary_metadata.json` â€?mask list, wavelengths, ROI parameters
 - **Script:** dictionary export script (to be created in Phase 3.4)
 - **Status:** thesis-figure-ready (consumed by Phase 3.5 and 3.6)
 
@@ -101,18 +110,18 @@ provenance rule below.
 
 - **Phase:** 3.5 (forward model), 3.6 (multiframe reconstruction)
 - **Depends on:**
-  - `outputs/psf_dictionary/` â€” PSF dictionary
-  - `outputs/linear_recon/multiframe_target_raw.h5` â€” target captures
+  - `outputs/psf_dictionary/` â€?PSF dictionary
+  - `outputs/linear_recon/multiframe_target_raw.h5` â€?target captures
 - **Produces:**
-  - `forward_model_validation.json` â€” simple convolution validation metrics
-  - `multiframe_recon_results/` â€” reconstructed scenes as .npy
-  - `reconstruction_metrics.json` â€” reconstruction quality metrics
+  - `forward_model_validation.json` â€?simple convolution validation metrics
+  - `multiframe_recon_results/` â€?reconstructed scenes as .npy
+  - `reconstruction_metrics.json` â€?reconstruction quality metrics
 - **Script:** reconstruction script (to be created in Phase 3.5/3.6)
 - **Status:** thesis-figure-ready (after review)
 
 ### `outputs/bishe_figures/`
 
-- **Phase:** 3.7 â€” Thesis figures and report freeze
+- **Phase:** 3.7 â€?Thesis figures and report freeze
 - **Depends on:** All preceding output directories
 - **Produces:**
   - Figures in publication-quality format (PNG, PDF)
@@ -150,3 +159,4 @@ directories with `os.makedirs(..., exist_ok=True)`.
 
 If raw capture HDF5 files are written to `outputs/`, they should be placed in
 the same subdirectory as their downstream analysis outputs for co-location.
+

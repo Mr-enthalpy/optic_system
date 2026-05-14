@@ -23,7 +23,13 @@ def _write_synthetic_scan(
     low_snr: bool = False,
     outlier: bool = False,
     block_roi: dict[str, int] | None = None,
+    legacy_camera_params: bool = False,
 ) -> None:
+    camera_params_source = (
+        "camera_params.json"
+        if legacy_camera_params
+        else "camera_params_psf_safe.json"
+    )
     spec = ScanMaskSpec(
         physical_shape=PHYSICAL_SHAPE,
         subpixel_axis=1,
@@ -35,14 +41,14 @@ def _write_synthetic_scan(
     )
     with PupilScanWriter(path, plan_id="synthetic_pupil") as writer:
         writer.write_plan_json(
-            {"plan_id": "synthetic_pupil", "camera_params_source": "camera_params.json"}
+            {"plan_id": "synthetic_pupil", "camera_params_source": camera_params_source}
         )
         writer.write_lcd_metadata({"physical_shape": list(PHYSICAL_SHAPE), "subpixel_axis": 1})
         writer.write_camera_metadata(
             exposure_us=50000.0,
             gain_db=0.0,
             frame_dtype_full_scale=255,
-            camera_params_source={"source": "camera_params.json", "overridden": False},
+            camera_params_source={"source": camera_params_source, "overridden": False},
         )
         writer.write_tls_metadata(wavelength_nm=550.0, grating=1, status={})
 
@@ -211,7 +217,7 @@ def test_effective_lcd_roi_json_provenance_fields(tmp_path: Path) -> None:
         saved = json.load(f)
     assert saved["source_raw_capture_h5"] == str(h5_path)
     assert saved["capture_plan_id"] == "synthetic_pupil"
-    assert saved["camera_params_source"] == "camera_params.json"
+    assert saved["camera_params_source"] == "camera_params_psf_safe.json"
     assert saved["wavelength_nm"] == 550.0
     assert saved["validity"]["scientific_calibration_valid"] is False
     assert saved["validity"]["training_ready"] is False
@@ -228,3 +234,14 @@ def test_analysis_traces_to_raw_h5(tmp_path: Path) -> None:
     with h5py.File(h5_path, "r") as f:
         assert f["raw/frames_avg"].shape[0] > 0
         assert f["scan/mask_recipe_json"].shape[0] == f["raw/frames_avg"].shape[0]
+
+
+def test_legacy_camera_params_json_is_rejected(tmp_path: Path) -> None:
+    h5_path = tmp_path / "legacy.h5"
+    out_dir = tmp_path / "out"
+    _write_synthetic_scan(h5_path, modes=["blocks"], legacy_camera_params=True)
+
+    import pytest
+
+    with pytest.raises(ValueError, match="revoked legacy camera_params.json"):
+        analyze_pupil_scan(h5_path, out_dir, smooth_window=3, min_component_size=2)

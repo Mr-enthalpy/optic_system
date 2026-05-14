@@ -13,7 +13,7 @@ _repo_root = Path(__file__).resolve().parents[1]
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from scripts.calibrate_camera_exposure_sweep import (
+from scripts.calibrate_psf_safe_exposure import (
     compute_saturation_metrics,
     compute_signal_metrics,
     infer_full_scale,
@@ -139,7 +139,7 @@ class TestSweepDecisionLogic:
             {"saturated": False, "p_signal": 150.0, "low_signal": False},
             {"saturated": False, "p_signal": 140.0, "low_signal": False},
         ]
-        from scripts.calibrate_camera_exposure_sweep import _all_wavelengths_safe
+        from scripts.calibrate_psf_safe_exposure import _all_wavelengths_safe
         assert _all_wavelengths_safe(results) is True
 
     def test_one_saturated_rejects(self):
@@ -147,7 +147,7 @@ class TestSweepDecisionLogic:
             {"saturated": False, "p_signal": 150.0, "low_signal": False},
             {"saturated": True, "p_signal": 255.0, "low_signal": False},
         ]
-        from scripts.calibrate_camera_exposure_sweep import _all_wavelengths_safe
+        from scripts.calibrate_psf_safe_exposure import _all_wavelengths_safe
         assert _all_wavelengths_safe(results) is False
 
     def test_worst_signal_identified(self):
@@ -156,18 +156,18 @@ class TestSweepDecisionLogic:
             {"saturated": False, "p_signal": 20.0},
             {"saturated": False, "p_signal": 100.0},
         ]
-        from scripts.calibrate_camera_exposure_sweep import _worst_signal_wavelength
+        from scripts.calibrate_psf_safe_exposure import _worst_signal_wavelength
         worst = _worst_signal_wavelength(results)
         assert worst["p_signal"] == 20.0
 
 
-class TestExposureSweepWriter:
+class TestPsfSafeExposureWriter:
     def test_writer_creates_h5(self):
-        from tasks.exposure_sweep_h5 import ExposureSweepWriter
+        from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
         d = tempfile.mkdtemp(prefix="optsys_sw_")
         p = Path(d) / "test_sweep.h5"
         try:
-            with ExposureSweepWriter(p, plan_id="test") as w:
+            with PsfSafeExposureWriter(p, plan_id="test") as w:
                 w.write_plan_json({"plan_id": "test"})
                 frame = np.ones((100, 100), dtype=np.float64) * 128
                 w.append_sweep_row(
@@ -190,11 +190,11 @@ class TestExposureSweepWriter:
             shutil.rmtree(d, ignore_errors=True)
 
     def test_writer_multiple_rows(self):
-        from tasks.exposure_sweep_h5 import ExposureSweepWriter
+        from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
         d = tempfile.mkdtemp(prefix="optsys_sw_")
         p = Path(d) / "test_multi.h5"
         try:
-            with ExposureSweepWriter(p, plan_id="multi") as w:
+            with PsfSafeExposureWriter(p, plan_id="multi") as w:
                 for i in range(5):
                     frame = np.ones((50, 50), dtype=np.float64) * (i * 40)
                     w.append_sweep_row(
@@ -224,11 +224,11 @@ class TestExposureSweepWriter:
             shutil.rmtree(d, ignore_errors=True)
 
     def test_processing_flags(self):
-        from tasks.exposure_sweep_h5 import ExposureSweepWriter
+        from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
         d = tempfile.mkdtemp(prefix="optsys_sw_")
         p = Path(d) / "test_pf.h5"
         try:
-            with ExposureSweepWriter(p, plan_id="pf_test") as w:
+            with PsfSafeExposureWriter(p, plan_id="pf_test") as w:
                 pass
             import h5py
             with h5py.File(p, "r") as f:
@@ -245,11 +245,11 @@ class TestExposureSweepWriter:
             shutil.rmtree(d, ignore_errors=True)
 
     def test_full_scale_setting(self):
-        from tasks.exposure_sweep_h5 import ExposureSweepWriter
+        from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
         d = tempfile.mkdtemp(prefix="optsys_sw_")
         p = Path(d) / "test_fs.h5"
         try:
-            with ExposureSweepWriter(p, plan_id="fs_test") as w:
+            with PsfSafeExposureWriter(p, plan_id="fs_test") as w:
                 w.set_full_scale(65535)
             import h5py
             with h5py.File(p, "r") as f:
@@ -262,7 +262,7 @@ class TestExposureSweepWriter:
 
 class TestCameraParamsJSON:
     def test_schema_complete(self):
-        from scripts.calibrate_camera_exposure_sweep import _build_result
+        from scripts.calibrate_psf_safe_exposure import _build_result
         plan = {
             "plan_id": "test",
             "output": {"raw_h5": "data/raw/test.h5"},
@@ -312,7 +312,7 @@ class TestCameraParamsJSON:
         assert "450.0" in result["per_wavelength_metrics"]
 
     def test_gain_elevated_true(self):
-        from scripts.calibrate_camera_exposure_sweep import _build_result
+        from scripts.calibrate_psf_safe_exposure import _build_result
         plan = {
             "plan_id": "test",
             "output": {"raw_h5": "data/raw/test.h5"},
@@ -342,7 +342,7 @@ class TestCameraParamsJSON:
         assert result["selection_reason"] == "elevated_gain_due_to_low_signal"
 
     def test_failure_no_safe_setting(self):
-        from scripts.calibrate_camera_exposure_sweep import _build_result
+        from scripts.calibrate_psf_safe_exposure import _build_result
         plan = {
             "plan_id": "test",
             "output": {"raw_h5": "data/raw/test.h5"},
@@ -409,8 +409,8 @@ class TestDryRun:
             "lock_file": str(tmp_path / "lock_test.lock"),
         }
 
-        from scripts.calibrate_camera_exposure_sweep import run_exposure_sweep
-        h5_path, result = run_exposure_sweep(
+        from scripts.calibrate_psf_safe_exposure import run_psf_safe_exposure
+        h5_path, result = run_psf_safe_exposure(
             plan_dict, None, None, None, dry_run=True,
         )
 
