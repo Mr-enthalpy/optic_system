@@ -51,6 +51,8 @@ class OptionalRunStatus:
 
     def __init__(self, status_dir: Path | None, run_id: str):
         self._publisher = None
+        self._initialized_ok = True
+        self._run_id = run_id
         if status_dir is not None:
             from diagnostics.run_status import RunStatusPublisher
             self._publisher = RunStatusPublisher(status_dir, run_id)
@@ -60,7 +62,13 @@ class OptionalRunStatus:
             try:
                 self._publisher.update(**kwargs)
             except Exception:
-                pass
+                if self._initialized_ok:
+                    print(
+                        f"[{self._run_id}] status-dir: failed to write state.json, "
+                        f"run-status publishing disabled",
+                        file=sys.stderr,
+                    )
+                    self._initialized_ok = False
 
     def append_log(self, level: str, message: str, **fields: Any) -> None:
         if self._publisher is not None:
