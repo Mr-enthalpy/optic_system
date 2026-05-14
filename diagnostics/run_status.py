@@ -68,6 +68,7 @@ class RunStatusPublisher:
         self.status_dir.mkdir(parents=True, exist_ok=True)
         requested = self.status_dir / filename
         array = np.asarray(mask)
+        array = _downsample_preview(array)
         if requested.suffix.lower() == ".npy":
             path = requested
             _atomic_save_npy(path, array)
@@ -97,6 +98,7 @@ class RunStatusPublisher:
         else:
             try:
                 path = requested
+                array = _downsample_preview(array)
                 _atomic_write_image(path, _as_uint8_preview(array))
             except Exception:
                 path = requested.with_suffix(".npy")
@@ -306,6 +308,21 @@ def _read_image(path: Path) -> np.ndarray | None:
         return None
     image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
     return None if image is None else image
+
+
+def _downsample_preview(arr: np.ndarray, max_side: int = 768) -> np.ndarray:
+    a = np.asarray(arr)
+    h, w = a.shape[:2]
+    if max(h, w) <= max_side:
+        return a
+    scale = max_side / max(h, w)
+    new_h, new_w = max(1, int(h * scale)), max(1, int(w * scale))
+    try:
+        import cv2
+        return cv2.resize(a, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    except ImportError:
+        ry, rx = max(1, h // new_h), max(1, w // new_w)
+        return a[::ry, ::rx]
 
 
 def _as_uint8_preview(array: np.ndarray) -> np.ndarray:

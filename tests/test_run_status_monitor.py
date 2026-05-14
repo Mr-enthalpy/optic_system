@@ -169,3 +169,45 @@ def test_no_gui_once_mode_runs_against_temp_status_dir(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "run_id: run_008" in result.stdout
     assert "[INFO] status ready" in result.stdout
+
+
+def test_fit_size_downsamples_large_preview_without_crop() -> None:
+    from scripts.monitor_run_status import _fit_size
+
+    assert _fit_size(768, 642, 384, 321) == (384, 321)
+    assert _fit_size(2048, 2448, 512, 512) == (428, 512)
+
+
+def test_fit_size_does_not_upscale_small_preview() -> None:
+    from scripts.monitor_run_status import _fit_size
+
+    assert _fit_size(120, 80, 512, 512) == (120, 80)
+
+
+def test_monitor_loads_raw_npy_as_mono_preview(tmp_path: Path) -> None:
+    from scripts.monitor_run_status import RAW_MONO_ENCODING, _load_preview_image
+
+    path = tmp_path / "latest_frame_preview.npy"
+    np.save(path, np.arange(16, dtype=np.uint8).reshape(4, 4))
+
+    image = _load_preview_image(path, frame_encoding=RAW_MONO_ENCODING)
+
+    assert image.mode == "L"
+    assert image.size == (4, 4)
+
+
+def test_monitor_can_debayer_raw_npy_preview(tmp_path: Path) -> None:
+    import pytest
+
+    cv2 = pytest.importorskip("cv2")
+    assert hasattr(cv2, "COLOR_BayerRGGB2RGB")
+
+    from scripts.monitor_run_status import BAYER_RGGB_ENCODING, _load_preview_image
+
+    path = tmp_path / "latest_frame_preview.npy"
+    np.save(path, np.arange(64, dtype=np.uint8).reshape(8, 8))
+
+    image = _load_preview_image(path, frame_encoding=BAYER_RGGB_ENCODING)
+
+    assert image.mode == "RGB"
+    assert image.size == (8, 8)
