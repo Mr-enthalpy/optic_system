@@ -261,6 +261,36 @@ calibrated data.  ``processing_flags_json`` always records::
 }
 ```
 
+### Phase 2C -- GUI / diagnostics / architecture consolidation
+
+**In progress.**
+
+After Phase 2B proved that the camera, mono LCD, and optional TLS can be
+controlled in a deterministic capture sequence, the mainline entered an
+architecture-consolidation stage.
+
+This phase focuses on reducing duplicated entry points, clarifying GUI roles,
+and stabilizing file-only diagnostics for long-running capture tasks.
+
+Goals:
+
+* keep `app/main_gui.py` as the manual/debug control GUI
+* keep `scripts/monitor_run_status.py` as the only supported read-only monitor
+* remove unsafe or duplicated monitor paths
+* keep monitor behavior file-only and hardware-free
+* stabilize `RunStatusPublisher` / `RunStatusReader` as the diagnostics boundary
+* reduce legacy task stubs and stale documentation
+* prepare reusable GUI / diagnostics infrastructure for future task branches
+
+Non-goals:
+
+* no dOTF implementation
+* no pupil scan implementation
+* no PSF dictionary implementation
+* no neural training
+* no LCD_forward conversion implementation inside this phase
+* no GenerMask optimization
+
 ### Raw capture HDF5 schema
 
 ```
@@ -300,6 +330,10 @@ calibrated data.  ``processing_flags_json`` always records::
 ### Phase 3  --  Raw capture to LCD_forward conversion
 
 **Planned.**
+
+This is the long-term mainline Phase 3. It is distinct from the
+bachelor-thesis experimental branch, which has its own thesis-specific
+Phase 3.0--3.7 workflow.
 
 Goal:
 
@@ -342,6 +376,30 @@ This phase may include:
 * controlled mask design experiments
 
 This phase should only begin after Phase 1-3 are stable.
+
+### Bachelor-thesis experimental branch
+
+A separate bachelor-thesis experimental branch starts from the post-Phase-2B
+baseline. It uses the Phase 2 capture infrastructure and periodically receives
+mainline GUI / diagnostics / architecture updates.
+
+That branch owns its own thesis-specific workflow:
+
+```text
+Phase 3.0   branch bootstrap and old-project knowledge migration
+Phase 3.0.5 exposure/gain safety sweep
+Phase 3.1   effective LCD pupil / active region scan
+Phase 3.2   PSF ROI, alignment, and repeatability
+Phase 3.3   dOTF diagnostic
+Phase 3.4   measured PSF dictionary and LCD_forward export
+Phase 3.5   simple forward model validation
+Phase 3.6   three-wavelength multiframe linear reconstruction
+Phase 3.7   thesis figures and report freeze
+```
+
+This thesis workflow does not redefine the mainline roadmap.
+Thesis-specific scripts and plans should stay on the thesis branch unless they
+are explicitly promoted as reusable infrastructure.
 
 ## Active scope
 
@@ -570,9 +628,11 @@ The repository currently has:
 * **completed TLS SDK integration** — tls_c1 via TLSService, SessionController TLS handling, TLSPanel GUI, opt-in TLS hardware smoke tests
 * **completed Phase 2A** — minimal capture task layer with raw HDF5 export, CaptureDeviceBundle protocol, no-hardware tests
 * **completed Phase 2B** — hardware smoke capture validation for current local setup, axis-aware LCDService, opt-in hardware tests, HDF5 metadata audit
+* **Phase 2C in progress** — GUI / diagnostics / architecture consolidation
 * hardware-free test infrastructure for all layers
 
 The repository still needs:
 
-* conversion path toward `LCD_forward` (Phase 3)
+* continuation of Phase 2C consolidation work
+* raw capture to LCD_forward conversion (Phase 3, after Phase 2C stabilization)
 * family-aware GenerMask calibration (Phase 4)

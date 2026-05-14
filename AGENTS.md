@@ -32,22 +32,20 @@ Those belong to `LCD_forward` or later experiment-specific layers.
 
 ## Current phase
 
-Current phase: Phase 2A complete / Phase 2B complete / Phase 3 planned.
+Current mainline phase: Phase 2C -- GUI / diagnostics / architecture consolidation.
 
 Meaning:
 
-- Camera base path exists and is stable.
-- LCD base path exists and is stable (axis-aware subpixel model).
-- TLS SDK integration is complete — ``tls_c1`` is the sole active TLS backend,
-  ``TLSService`` wraps it, ``SessionController`` dispatches TLS commands/events,
-  and an optional ``TLSPanel`` provides GUI access.  Pywinauto TLS automation is
-  fully removed from active code paths.
-- Phase 2A minimal capture task layer is implemented:
-  plan loading, dry-run capture, raw HDF5 writer, hardware-free tests.
-- Phase 2B hardware smoke capture validation is implemented:
-  real camera / LCD / optional TLS control, raw HDF5 verification.
-  Phase 2B does **not** validate optical scientific correctness.
-- Phase 3 conversion into ``LCD_forward`` format is planned.
+- Phase 2A minimal capture task layer is complete.
+- Phase 2B hardware smoke capture validation is complete.
+- The mainline is now consolidating GUI roles, diagnostics boundaries,
+  file-only monitoring, and stale entry points before the long-term
+  LCD_forward conversion phase.
+- ``app/main_gui.py`` is the manual/debug control GUI and may control hardware.
+- ``scripts/monitor_run_status.py`` is the only supported read-only monitor.
+  It reads task-published run-status files and must remain hardware-free.
+- The bachelor-thesis experimental branch is separate and owns its own
+  Phase 3.0--3.7 task workflow.
 
 Do not assume the repository is already a full calibration system.
 Do not assume Phase 2B output data is training-ready or scientifically valid.
@@ -172,6 +170,33 @@ Phase 2B must keep ``processing_flags_json`` as::
 Passing hardware smoke tests does **not** imply the optical system is
 calibrated or scientifically valid.
 
+### Phase 2C -- GUI / diagnostics / architecture consolidation
+
+Primary goal:
+
+Stabilize the GUI and diagnostics architecture after hardware smoke validation
+and before long-term raw-capture conversion work.
+
+Allowed work:
+
+- remove duplicated or unsafe GUI/monitor entry points
+- clarify that ``app/main_gui.py`` is the control GUI
+- clarify that ``scripts/monitor_run_status.py`` is the file-only read-only monitor
+- improve ``RunStatusPublisher`` / ``RunStatusReader``
+- improve documentation around diagnostics boundaries
+- clean empty legacy stubs and stale documentation
+- keep default tests hardware-free
+
+Non-goals:
+
+- pupil scan
+- dOTF
+- PSF dictionary
+- thesis-specific experiment scripts
+- LCD_forward conversion
+- neural training
+- GenerMask optimization
+
 ### Phase 3  --  Raw capture to LCD_forward conversion
 
 Primary goal:
@@ -209,6 +234,42 @@ Possible work:
 * controlled mask-design experiments
 
 Do not start Phase 4 before Phase 1-3 are stable unless explicitly requested.
+
+## Mainline / thesis branch relationship
+
+The bachelor-thesis branch starts from the post-Phase-2B baseline and uses a
+distilled experimental workflow for thesis delivery.
+
+Mainline and thesis branch have different responsibilities:
+
+Mainline provides reusable infrastructure:
+
+- camera / LCD / TLS services
+- capture task foundations
+- raw HDF5 conventions
+- run-status diagnostics
+- read-only monitor
+- GUI and architecture cleanup
+
+The thesis branch consumes this infrastructure and implements thesis-specific
+task workflows:
+
+- exposure safety sweep
+- effective LCD pupil scan
+- PSF repeatability and ROI alignment
+- dOTF diagnostic
+- measured PSF dictionary
+- minimal linear reconstruction demo
+- thesis figures
+
+Synchronization rule:
+
+- mainline architecture fixes may be periodically merged or rebased into the
+  thesis branch.
+- thesis-specific task code should not be moved into mainline unless explicitly
+  promoted as reusable infrastructure.
+- mainline documentation should not replace its long-term Phase 3/4 roadmap
+  with the thesis Phase 3.0--3.7 workflow.
 
 ## Architecture rules
 
@@ -539,13 +600,17 @@ Do not:
 
 Completed:
 
-* TLS SDK integration closure
-* Phase 2A minimal capture task layer
-* raw capture HDF5 export
-* Phase 2B hardware smoke capture validation
+- TLS SDK integration closure
+- Phase 2A minimal capture task layer
+- raw capture HDF5 export
+- Phase 2B hardware smoke capture validation
+- file-only read-only monitor
+- removal of legacy monitor GUI path and empty task stubs
 
-Next:
+Current mainline priority:
 
-1. Raw capture to ``LCD_forward`` conversion.
-2. Family-aware GenerMask capture support.
-3. Larger closed-loop experiment automation only after the above are stable.
+1. Continue Phase 2C GUI / diagnostics / architecture consolidation as needed.
+2. Keep diagnostics file-only and hardware-free.
+3. Keep ``app/main_gui.py`` and ``scripts/monitor_run_status.py`` roles distinct.
+4. After Phase 2C stabilizes, resume long-term Phase 3 raw-capture to
+   LCD_forward conversion.

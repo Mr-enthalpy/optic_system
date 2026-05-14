@@ -215,7 +215,9 @@ Raw capture HDF5 and training-ready HDF5 are distinct formats. Do not conflate t
 
 Historical files under `tasks/` are not assumed to define the current architecture.
 
-New minimal capture tasks will be implemented separately in Phase 2.
+Phase 2A and Phase 2B delivered a minimal capture task layer with raw HDF5 export
+and hardware smoke validation. Phase 2C is consolidating GUI roles and
+diagnostics boundaries. New capture tasks use the `CaptureDeviceBundle` protocol.
 
 Before reusing any old task:
 
@@ -259,9 +261,9 @@ In scope:
 - LCD physical mono mask display
 - TLS SDK service wrapper through `tls_c1`
 - Control-layer command / event / state definitions
-- Minimal synchronized capture tasks (Phase 2)
+- Minimal synchronized capture tasks (Phases 2A-2B)
 - Raw capture HDF5 export (Phase 2)
-- Conversion boundary toward `LCD_forward` (Phase 3)
+- Conversion boundary toward `LCD_forward` (Phase 3, after Phase 2C stabilization)
 - Hardware-free tests
 - Opt-in hardware smoke tests
 

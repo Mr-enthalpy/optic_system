@@ -2,10 +2,13 @@
 
 ## Current phase
 
-Phase 1 is substantially complete.  Phase 2 (minimal capture task layer) may begin.
+Phase 2A (minimal capture task layer) and Phase 2B (hardware smoke capture validation)
+are complete.  Phase 2C (GUI / diagnostics / architecture consolidation) is in progress.
 
-The repository has exited Phase 0 (documentation and boundary reset).  Camera, LCD,
-and TLS paths are stable.  The task layer and HDF5 export are the next priorities.
+The repository has exited Phase 0 (documentation and boundary reset) and Phase 1
+(TLS SDK integration closure).  Camera, LCD, and TLS paths are stable.  The mainline
+is consolidating entry points and diagnostics before resuming long-term Phase 3
+(raw capture to LCD_forward conversion).
 
 ---
 
@@ -91,6 +94,19 @@ Make the `tls_c1` backend usable through the normal application/control path. Re
 
 ## Phase 2  --  Minimal capture task layer
 
+**Phase 2A and Phase 2B complete.  Phase 2C in progress.**
+
+Phase 2A created the minimal capture path: ``tasks/capture_plan.py``,
+``tasks/raw_capture_h5.py``, ``tasks/capture_forward_dataset.py``, and the
+CLI entry point ``scripts/capture_forward_dataset.py``.
+
+Phase 2B validated real-hardware smoke capture: camera, mono LCD (axis-aware
+subpixel model), and optional TLS in a deterministic sequence producing
+``raw_capture.h5``.
+
+Phase 2C is consolidating GUI roles, diagnostics boundaries, file-only
+monitoring, and stale entry points before long-term Phase 3 conversion work.
+
 ### Goal
 
 Create a clean minimal capture path instead of reviving historical task scripts.
@@ -127,6 +143,51 @@ Create a clean minimal capture path instead of reviving historical task scripts.
 - Task code uses control-layer semantics
 - No-hardware capture tests pass by default
 
+### Completion criteria
+
+Phase 2A:
+- [x] A minimal capture plan can be loaded and executed
+- [x] Raw frames are acquired through the device path
+- [x] Raw capture HDF5 is written with masks, frames, and full metadata
+- [x] No-hardware capture tests pass by default
+
+Phase 2B:
+- [x] Real camera / LCD smoke capture produces valid ``raw_capture.h5``
+- [x] Axis-aware LCD LCDService records full metadata
+- [x] Opt-in hardware smoke tests pass
+
+Phase 2C is in progress  --  see AGENTS.md Phase 2C section for goals and
+non-goals.
+
+---
+
+### Phase 2C  --  GUI / diagnostics / architecture consolidation
+
+**In progress.**
+
+Primary goal: stabilize the GUI and diagnostics architecture after hardware
+smoke validation and before long-term raw-capture conversion work.
+
+Allowed work:
+
+- remove duplicated or unsafe GUI/monitor entry points
+- clarify that ``app/main_gui.py`` is the control GUI
+- clarify that ``scripts/monitor_run_status.py`` is the file-only read-only monitor
+- improve ``RunStatusPublisher`` / ``RunStatusReader``
+- improve documentation around diagnostics boundaries
+- clean empty legacy stubs and stale documentation
+- keep default tests hardware-free
+
+Non-goals:
+
+- pupil scan
+- dOTF
+- PSF dictionary
+- thesis-specific experiment scripts
+- LCD_forward conversion
+- neural training
+- GenerMask optimization
+
 ---
 
 ## Phase 3  --  Raw capture to `LCD_forward` conversion
@@ -134,6 +195,10 @@ Create a clean minimal capture path instead of reviving historical task scripts.
 ### Goal
 
 Convert raw experimental captures into training-ready HDF5 for `LCD_forward`.
+
+This is the long-term mainline Phase 3. It is distinct from the
+bachelor-thesis experimental branch, which has its own thesis-specific
+Phase 3.0--3.7 workflow.
 
 ### Allowed work
 
