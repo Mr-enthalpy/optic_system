@@ -48,7 +48,7 @@ def test_exposure_sweep_hardware() -> None:
     from devices.camera_service import CameraServiceClient
     from devices.lcd_service import LCDService
 
-    plan_path = _REPO / "plans" / "bishe_exposure_sweep.yaml"
+    plan_path = _REPO / "plans" / "bishe_exposure_psf_safe_sweep.yaml"
     if not plan_path.exists():
         pytest.skip(f"plan not found: {plan_path}")
 
@@ -93,11 +93,17 @@ def test_exposure_sweep_hardware() -> None:
         assert h5_path.exists()
         with h5py.File(h5_path, "r") as f:
             assert f["sweep/exposure_us"].shape[0] > 0
+            full_scale = float(f["sweep"].attrs["frame_dtype_full_scale"])
+            assert full_scale > 0
+            assert "saturated_pixel_count" in f["sweep"]
+            assert "psf_safe" in f["sweep"]
             pf_raw = f["capture/processing_flags_json"][()]
             if isinstance(pf_raw, bytes):
                 pf_raw = pf_raw.decode()
             pf = json.loads(pf_raw)
             assert pf["scientific_calibration_valid"] is False
+            assert pf["training_ready"] is False
+            assert pf["phase"] == "phase3_0_5b_psf_safe_exposure"
 
         gsc = result.get("global_safe_camera", {})
         if gsc.get("exposure_us") is not None:
@@ -105,18 +111,32 @@ def test_exposure_sweep_hardware() -> None:
                   f"gain={gsc['gain_db']} dB  "
                   f"gain_elevated={gsc.get('gain_elevated')}")
             assert result["validity"]["exposure_safety_valid"] is True
+            assert result["validity"]["psf_exposure_safe"] is True
+            full_scale = float(result["frame_dtype_full_scale"])
+            for wl, metrics in result["per_wavelength_metrics"].items():
+                print(
+                    f"  wl={wl} max={metrics['max_pixel']} "
+                    f"p99.9={metrics['p99_9']} "
+                    f"sat_count={metrics['saturated_pixel_count']} "
+                    f"psf_safe={metrics['psf_safe']}"
+                )
+                assert metrics["max_pixel"] < full_scale
+                assert metrics["max_pixel"] <= full_scale * 0.90
+                assert metrics["saturated_pixel_count"] == 0
+                assert metrics["psf_safe"] is True
         else:
             print(f"\nSAFE params not found: {result.get('selection_reason')}")
             print(f"  error: {result.get('error')}")
             assert result["selection_reason"] is not None
 
-        json_path = _REPO / "outputs/exposure_calibration/camera_params.json"
         params_path = Path(plan["output"]["camera_params_json"])
         assert params_path.exists()
         with open(params_path, "r") as f:
             saved = json.load(f)
         assert "global_safe_camera" in saved
         assert "selection_reason" in saved
+        assert saved["validity"]["scientific_calibration_valid"] is False
+        assert saved["validity"]["training_ready"] is False
 
     finally:
         try:

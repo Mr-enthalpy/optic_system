@@ -12,6 +12,39 @@ provenance rule below.
 
 ## Output subdirectories
 
+### `outputs/exposure_calibration/`
+
+- **Phase:** 3.0.5b - PSF-safe exposure refinement
+- **Depends on:** `data/raw/bishe_exposure_psf_safe_sweep.h5` produced by
+  `scripts/calibrate_camera_exposure_sweep.py`.
+- **Produces:**
+  - `camera_params_psf_safe.json` - exposure, gain, frame scale, per-wavelength
+    max-pixel diagnostics, and PSF-safe validity flags.
+- **Policy:** The original Phase 3.0.5 exposure sweep was sensor-level coarse
+  safety only. It is not sufficient for PSF, dOTF, or pupil-fit experiments
+  because point-source PSF energy may occupy a very small fraction of the full
+  sensor. A small global saturated fraction can still mean the PSF core is
+  saturated. Phase 3.0.5b introduces PSF-safe exposure selection using
+  max-pixel headroom as the primary constraint.
+- **Burst safety:** PSF-safe max-pixel headroom is evaluated over raw burst
+  frames. Outputs distinguish `max_pixel_avg`, `max_pixel_burst`, and
+  `saturated_pixel_count_burst`; averaged-frame p99.9 and signal metrics remain
+  diagnostics.
+- **Bad pixels:** Current Phase 3.0.5b has no bad-pixel mask. Any full-scale
+  burst pixel is unsafe. A future bad-pixel mask may exempt only explicitly
+  marked known bad pixels; no implicit hot-pixel exemption is allowed.
+- **Downstream default:** Phase 3.1 coarse localization may use previous
+  camera_params.json for first-pass scan only. Phase 3.1.1 fine strip scan,
+  dOTF, PSF dictionary, and PSF repeatability must use
+  camera_params_psf_safe.json by default.
+- **Revoked coarse output:** The old
+  `outputs/exposure_calibration/camera_params.json` has been revoked and is no
+  longer a run input. Historical PR #24 data should rely on raw HDF5 camera
+  provenance instead of restoring that unsafe JSON.
+- **Validity boundary:** PSF-safe exposure only means local overexposure has
+  been rejected by max-pixel headroom. It does not imply scientific calibration
+  validity, optical alignment validity, or training-ready data.
+
 ### `outputs/pupil_scan/`
 
 - **Phase:** 3.1 — Effective LCD pupil scan

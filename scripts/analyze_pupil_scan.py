@@ -114,6 +114,15 @@ def analyze_pupil_scan(
         }
         warnings.append("No reliable ROI support found; returned full physical LCD extent.")
 
+    camera_params_source_text = str(data["camera_params_source"]).replace("\\", "/")
+    if camera_params_source_text.endswith("camera_params.json"):
+        warnings.append(
+            "This analysis used the original Phase 3.0.5 coarse camera_params.json. "
+            "PR #24 review observed clipping/local saturation, so this result is "
+            "first-pass coarse active-region localization only; final fine scans, "
+            "dOTF, PSF dictionary, and repeatability must use camera_params_psf_safe.json."
+        )
+
     _write_profile_csv(out_dir / "x_profile.csv", x_profile)
     _write_profile_csv(out_dir / "y_profile.csv", y_profile)
     np.save(str(out_dir / "response_map.npy"), response_map)

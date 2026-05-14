@@ -14,8 +14,8 @@ from scripts.capture_pupil_scan import load_pupil_scan_plan, run_pupil_scan
 def _camera_params(path: Path) -> Path:
     payload = {
         "schema_version": "1.0",
-        "plan_id": "bishe_exposure_sweep",
-        "source_raw_capture_h5": "data/raw/bishe_exposure_sweep.h5",
+        "plan_id": "bishe_exposure_psf_safe_sweep",
+        "source_raw_capture_h5": "data/raw/bishe_exposure_psf_safe_sweep.h5",
         "frame_dtype_full_scale": 255,
         "global_safe_camera": {
             "exposure_us": 50000.0,
@@ -25,6 +25,7 @@ def _camera_params(path: Path) -> Path:
         },
         "validity": {
             "exposure_safety_valid": True,
+            "psf_exposure_safe": True,
             "scientific_calibration_valid": False,
             "training_ready": False,
         },
@@ -37,6 +38,7 @@ def _plan(tmp_path: Path, camera_params_path: Path) -> dict:
     return {
         "plan_id": "dry_pupil",
         "camera_params_source": str(camera_params_path),
+        "require_psf_safe_camera_params": True,
         "wavelength": {"wavelength_nm": 550.0, "grating": 1, "settle_ms": 0},
         "lcd": {
             "settle_ms": 0,

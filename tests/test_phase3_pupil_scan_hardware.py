@@ -42,14 +42,19 @@ def test_phase3_pupil_scan_hardware_smoke() -> None:
     from scripts.analyze_pupil_scan import analyze_pupil_scan
     from scripts.capture_pupil_scan import run_pupil_scan
 
-    camera_params_source = _REPO / "outputs" / "exposure_calibration" / "camera_params.json"
+    camera_params_source = _REPO / "outputs" / "exposure_calibration" / "camera_params_psf_safe.json"
     if not camera_params_source.exists():
         pytest.skip(f"camera params not found: {camera_params_source}")
+    with open(camera_params_source, "r", encoding="utf-8") as f:
+        camera_params = json.load(f)
+    if camera_params.get("validity", {}).get("psf_exposure_safe") is not True:
+        pytest.skip(f"camera params are not PSF-safe: {camera_params_source}")
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="optsys_pupil_hw_"))
     plan = {
         "plan_id": "phase3_pupil_hw_smoke",
         "camera_params_source": str(camera_params_source),
+        "require_psf_safe_camera_params": True,
         "wavelength": {"wavelength_nm": 550.0, "grating": 1, "settle_ms": 0},
         "lcd": {
             "settle_ms": 50,

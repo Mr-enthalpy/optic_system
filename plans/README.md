@@ -16,15 +16,48 @@ consume the raw HDF5 to produce processed results.
 |---|---|
 | `hardware_smoke_no_tls.yaml` | Hardware smoke test: camera + LCD, no TLS |
 | `hardware_smoke_with_tls.yaml` | Hardware smoke test: camera + LCD + TLS |
-| `bishe_exposure_sweep.yaml` | Phase 3.0.5 exposure/gain safety sweep |
+| `bishe_exposure_psf_safe_sweep.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
 | `bishe_pupil_scan.yaml` | Phase 3.1 procedural effective LCD pupil scan |
+
+## Exposure safety policy
+
+The original Phase 3.0.5 exposure sweep was sensor-level coarse safety only.
+It is not sufficient for PSF, dOTF, or pupil-fit experiments because
+point-source PSF energy may occupy a very small fraction of the full sensor.
+A small global saturated fraction can still mean the PSF core is saturated.
+Phase 3.0.5b introduces PSF-safe exposure selection using max-pixel headroom
+as the primary constraint.
+
+`plans/bishe_exposure_psf_safe_sweep.yaml` writes:
+
+```text
+data/raw/bishe_exposure_psf_safe_sweep.h5
+outputs/exposure_calibration/camera_params_psf_safe.json
+```
+
+`saturated_fraction` is diagnostic only. A setting is not PSF-safe when any
+target wavelength reaches full scale, crosses the hard max-pixel threshold, or
+crosses the PSF-safe max-pixel headroom threshold.
+
+PSF-safe max-pixel checks are evaluated over the raw burst frames, not only the
+averaged frame. The HDF5 and JSON outputs distinguish `max_pixel_avg`,
+`max_pixel_burst`, and `saturated_pixel_count_burst`; `p99_9` and `p_signal`
+remain averaged-frame diagnostics.
+
+Current Phase 3.0.5b has no bad-pixel mask. Therefore any full-scale burst
+pixel is unsafe. A future bad-pixel mask may exempt only explicitly marked
+known bad pixels; no implicit hot-pixel exemption is allowed.
 
 ### `plans/bishe_pupil_scan.yaml`
 - **Phase:** 3.1 - Effective LCD pupil / active modulation region scan
 - **Purpose:** Locate the physical LCD region where procedural mask changes
   measurably affect camera captures.
-- **Input:** `camera_params_source` from Phase 3.0.5
-  (`outputs/exposure_calibration/camera_params.json`).
+- **Input:** `camera_params_source` from Phase 3.0.5b by default
+  (`outputs/exposure_calibration/camera_params_psf_safe.json`).
+- **Coarse-only exception:** Phase 3.1 coarse localization may use previous
+  `camera_params.json` for first-pass scan only. Phase 3.1.1 fine strip scan,
+  dOTF, PSF dictionary, and PSF repeatability must use
+  `camera_params_psf_safe.json` by default.
 - **Masks:** Generated procedurally at runtime by
   `tasks/pupil_scan_masks.py`; the plan does not list hundreds of mask files.
 - **Output raw HDF5:** `data/raw/bishe_pupil_scan.h5`.
@@ -44,6 +77,7 @@ They will be implemented in their respective milestones.
   grating).  Each repeated K times (K >= 3).
 - **Wavelengths:** Single wavelength.
 - **Camera:** Burst of frames per capture (`frames_per_capture` >= 10).
+- **Camera params:** `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - **Expected output raw HDF5:** `outputs/psf_repeatability/repeatability_raw.h5`
 - **Downstream analysis:** Repeatability analysis -> `repeatability_metrics.json`
 
@@ -57,6 +91,7 @@ They will be implemented in their respective milestones.
   a perturbation mask script.
 - **Wavelengths:** Single wavelength.
 - **Camera:** Averaged frames per mask.
+- **Camera params:** `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - **Expected output raw HDF5:** `outputs/dotf/dotf_raw.h5`
 - **Downstream analysis:** dOTF computation -> dOTF complex arrays,
   magnitude/phase visualizations.
@@ -68,6 +103,7 @@ They will be implemented in their respective milestones.
   patterns.  ~10-20 distinct masks.
 - **Wavelengths:** Single wavelength.
 - **Camera:** Averaged frames per mask.
+- **Camera params:** `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - **Expected output raw HDF5:** `outputs/psf_dictionary/psf_dict_single_lambda_raw.h5`
 - **Downstream analysis:** PSF extraction, normalization, LCD_forward export.
 
@@ -78,6 +114,7 @@ They will be implemented in their respective milestones.
 - **Masks:** Same mask set as single-lambda dictionary.
 - **Wavelengths:** 3 wavelengths (e.g., 480 nm, 555 nm, 630 nm).
 - **Camera:** Averaged frames per mask.
+- **Camera params:** `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - **Expected output raw HDF5:** `outputs/psf_dictionary/psf_dict_three_lambda_raw.h5`
 - **Downstream analysis:** PSF extraction per wavelength, LCD_forward export.
 

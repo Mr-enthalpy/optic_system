@@ -1,4 +1,4 @@
-plan_id: bishe_exposure_sweep
+plan_id: bishe_exposure_psf_safe_sweep
 
 wavelengths:
   - wavelength_nm: 450.0
@@ -34,8 +34,9 @@ camera_search:
 
 saturation:
   percentile: 99.9
-  max_pixel_fraction_threshold: 0.85
-  saturated_fraction_threshold: 0.001
+  max_pixel_fraction_threshold: 0.90
+  hard_max_pixel_fraction_threshold: 0.98
+  saturated_pixel_count_threshold: 0
 
 signal:
   percentile: 99.0
@@ -45,5 +46,5 @@ signal:
 lock_file: outputs/run_status/capture_hardware.lock
 
 output:
-  raw_h5: data/raw/bishe_exposure_sweep.h5
-  camera_params_json: outputs/exposure_calibration/camera_params.json
+  raw_h5: data/raw/bishe_exposure_psf_safe_sweep.h5
+  camera_params_json: outputs/exposure_calibration/camera_params_psf_safe.json
