@@ -47,9 +47,15 @@ def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
                 "exposure_us": 5000.0,
                 "gain_db": 0.0,
                 "max_pixel": 218.0,
+                "max_pixel_avg": 180.0,
+                "max_pixel_burst": 218.0,
                 "p99_9": 120.0,
                 "saturated_pixel_count": 0,
+                "saturated_pixel_count_avg": 0,
+                "saturated_pixel_count_burst": 0,
                 "saturated_fraction": 0.0,
+                "saturated_fraction_avg": 0.0,
+                "saturated_fraction_burst": 0.0,
                 "p_signal": 110.0,
                 "safe": True,
                 "psf_safe": True,
@@ -78,12 +84,21 @@ def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
         "hard_max_pixel_fraction_threshold": 0.98,
         "saturated_pixel_count_threshold": 0,
         "saturated_fraction_diagnostic_only": True,
+        "psf_safe_uses_burst_max_pixel": True,
+        "bad_pixel_mask": None,
+        "bad_pixel_mask_policy": "none; any full-scale burst pixel is unsafe",
     }
     wl = result["per_wavelength_metrics"]["550.0"]
     assert wl["max_pixel"] == 218.0
+    assert wl["max_pixel_avg"] == 180.0
+    assert wl["max_pixel_burst"] == 218.0
     assert wl["p99_9"] == 120.0
     assert wl["saturated_pixel_count"] == 0
+    assert wl["saturated_pixel_count_avg"] == 0
+    assert wl["saturated_pixel_count_burst"] == 0
     assert wl["saturated_fraction"] == 0.0
+    assert wl["saturated_fraction_avg"] == 0.0
+    assert wl["saturated_fraction_burst"] == 0.0
     assert wl["safe"] is True
     assert wl["psf_safe"] is True
     assert wl["low_signal"] is False
@@ -120,9 +135,15 @@ def test_exposure_sweep_h5_psf_safe_schema_and_processing_flags(tmp_path: Path) 
         assert f["sweep"].attrs["frame_dtype_full_scale"] == 255
         assert f["sweep/frame_dtype_full_scale"][()] == 255
         assert f["sweep/max_pixel"].shape == (1,)
+        assert f["sweep/max_pixel_avg"].shape == (1,)
+        assert f["sweep/max_pixel_burst"].shape == (1,)
         assert f["sweep/p99_9"].shape == (1,)
         assert f["sweep/saturated_pixel_count"].shape == (1,)
+        assert f["sweep/saturated_pixel_count_avg"].shape == (1,)
+        assert f["sweep/saturated_pixel_count_burst"].shape == (1,)
         assert f["sweep/saturated_fraction"].shape == (1,)
+        assert f["sweep/saturated_fraction_avg"].shape == (1,)
+        assert f["sweep/saturated_fraction_burst"].shape == (1,)
         assert f["sweep/psf_safe"].shape == (1,)
         assert f["sweep/safe"].shape == (1,)
         assert f["sweep/exposure_us"].shape == (1,)

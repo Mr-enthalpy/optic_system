@@ -82,6 +82,46 @@ def test_p99_9_safe_but_max_pixel_saturated_is_unsafe():
     assert metrics["psf_safe"] is False
 
 
+def test_burst_saturated_frame_fails_even_if_average_is_below_full_scale():
+    burst = np.full((3, 32, 32), 80.0, dtype=np.float64)
+    burst[0, 12, 12] = 255.0
+    avg = burst.mean(axis=0)
+    assert float(avg.max()) < 255.0
+
+    adapter = _RecordingAdapter(lambda _exposure_us, _gain_db: avg)
+
+    def acquire_burst(k: int):
+        return SimpleNamespace(
+            frames_avg=avg,
+            burst=burst,
+            metadata={"frame_dtype_full_scale": 255},
+        )
+
+    adapter.acquire_burst = acquire_burst
+    row = sweep._acquire_and_evaluate(
+        adapter,
+        3,
+        255.0,
+        {
+            "percentile": 99.9,
+            "max_pixel_fraction_threshold": 0.90,
+            "hard_max_pixel_fraction_threshold": 0.98,
+            "saturated_pixel_count_threshold": 0,
+        },
+        {
+            "percentile": 99.0,
+            "min_signal_fraction_threshold": 0.10,
+            "min_dynamic_range_fraction": 0.08,
+        },
+    )
+
+    assert row["max_pixel_avg"] < 255.0
+    assert row["max_pixel_burst"] == 255.0
+    assert row["saturated_pixel_count_avg"] == 0
+    assert row["saturated_pixel_count_burst"] == 1
+    assert row["psf_safe"] is False
+
+
 def test_saturated_fraction_is_diagnostic_and_cannot_override_hard_fail():
     frame = np.full((1000, 1000), 20.0, dtype=np.float64)
     frame[1, 1] = 255.0

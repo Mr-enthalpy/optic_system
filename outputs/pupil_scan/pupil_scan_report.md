@@ -14,6 +14,9 @@
 - Final fine strip scan, dOTF, PSF dictionary, and PSF repeatability must use
   `outputs/exposure_calibration/camera_params_psf_safe.json` after rerunning
   Phase 3.0.5b PSF-safe exposure refinement.
+- The old `outputs/exposure_calibration/camera_params.json` has been revoked as
+  a run input. Historical parameters for this report are preserved in raw HDF5
+  camera provenance.
 
 ## Inputs
 - x_profile_available: True

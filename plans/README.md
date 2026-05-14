@@ -16,7 +16,7 @@ consume the raw HDF5 to produce processed results.
 |---|---|
 | `hardware_smoke_no_tls.yaml` | Hardware smoke test: camera + LCD, no TLS |
 | `hardware_smoke_with_tls.yaml` | Hardware smoke test: camera + LCD + TLS |
-| `bishe_exposure_sweep.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
+| `bishe_exposure_psf_safe_sweep.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
 | `bishe_pupil_scan.yaml` | Phase 3.1 procedural effective LCD pupil scan |
 
 ## Exposure safety policy
@@ -28,7 +28,7 @@ A small global saturated fraction can still mean the PSF core is saturated.
 Phase 3.0.5b introduces PSF-safe exposure selection using max-pixel headroom
 as the primary constraint.
 
-`plans/bishe_exposure_sweep.yaml` now writes:
+`plans/bishe_exposure_psf_safe_sweep.yaml` writes:
 
 ```text
 data/raw/bishe_exposure_psf_safe_sweep.h5
@@ -38,6 +38,15 @@ outputs/exposure_calibration/camera_params_psf_safe.json
 `saturated_fraction` is diagnostic only. A setting is not PSF-safe when any
 target wavelength reaches full scale, crosses the hard max-pixel threshold, or
 crosses the PSF-safe max-pixel headroom threshold.
+
+PSF-safe max-pixel checks are evaluated over the raw burst frames, not only the
+averaged frame. The HDF5 and JSON outputs distinguish `max_pixel_avg`,
+`max_pixel_burst`, and `saturated_pixel_count_burst`; `p99_9` and `p_signal`
+remain averaged-frame diagnostics.
+
+Current Phase 3.0.5b has no bad-pixel mask. Therefore any full-scale burst
+pixel is unsafe. A future bad-pixel mask may exempt only explicitly marked
+known bad pixels; no implicit hot-pixel exemption is allowed.
 
 ### `plans/bishe_pupil_scan.yaml`
 - **Phase:** 3.1 - Effective LCD pupil / active modulation region scan

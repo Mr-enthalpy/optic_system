@@ -202,8 +202,16 @@ def _acquire_and_evaluate(
 ) -> dict[str, Any]:
     capture = camera_adapter.acquire_burst(k)
     frame = capture.frames_avg
-    sat = compute_saturation_metrics(
+    burst = np.asarray(getattr(capture, "burst", frame[None, :, :]), dtype=np.float64)
+    sat_avg = compute_saturation_metrics(
         frame, full_scale,
+        percentile=sat_cfg["percentile"],
+        max_pixel_fraction_threshold=sat_cfg["max_pixel_fraction_threshold"],
+        hard_max_pixel_fraction_threshold=sat_cfg["hard_max_pixel_fraction_threshold"],
+        saturated_pixel_count_threshold=sat_cfg["saturated_pixel_count_threshold"],
+    )
+    sat_burst = compute_saturation_metrics(
+        burst, full_scale,
         percentile=sat_cfg["percentile"],
         max_pixel_fraction_threshold=sat_cfg["max_pixel_fraction_threshold"],
         hard_max_pixel_fraction_threshold=sat_cfg["hard_max_pixel_fraction_threshold"],
@@ -217,14 +225,20 @@ def _acquire_and_evaluate(
     )
     return {
         "frame": frame,
-        "max_pixel": sat["max_pixel"],
-        "p99_9": sat["p99_9"],
-        "saturated_pixel_count": sat["saturated_pixel_count"],
-        "saturated_fraction": sat["saturated_fraction"],
-        "psf_safe": sat["psf_safe"],
-        "safe": sat["safe"],
-        "saturated": sat["saturated"],
-        "saturation_reasons": sat["saturation_reasons"],
+        "max_pixel": sat_burst["max_pixel"],
+        "max_pixel_avg": sat_avg["max_pixel"],
+        "max_pixel_burst": sat_burst["max_pixel"],
+        "p99_9": sat_avg["p99_9"],
+        "saturated_pixel_count": sat_burst["saturated_pixel_count"],
+        "saturated_pixel_count_avg": sat_avg["saturated_pixel_count"],
+        "saturated_pixel_count_burst": sat_burst["saturated_pixel_count"],
+        "saturated_fraction": sat_burst["saturated_fraction"],
+        "saturated_fraction_avg": sat_avg["saturated_fraction"],
+        "saturated_fraction_burst": sat_burst["saturated_fraction"],
+        "psf_safe": sat_burst["psf_safe"],
+        "safe": sat_burst["safe"],
+        "saturated": sat_burst["saturated"],
+        "saturation_reasons": sat_burst["saturation_reasons"],
         "p_signal": sig["p_signal"],
         "low_signal": not sig["usable"],
     }
@@ -343,9 +357,15 @@ def run_exposure_sweep(
                     gain_db=at_gain,
                     frames_avg=row["frame"],
                     max_pixel=row["max_pixel"],
+                    max_pixel_avg=row["max_pixel_avg"],
+                    max_pixel_burst=row["max_pixel_burst"],
                     p99_9=row["p99_9"],
                     saturated_pixel_count=row["saturated_pixel_count"],
+                    saturated_pixel_count_avg=row["saturated_pixel_count_avg"],
+                    saturated_pixel_count_burst=row["saturated_pixel_count_burst"],
                     saturated_fraction=row["saturated_fraction"],
+                    saturated_fraction_avg=row["saturated_fraction_avg"],
+                    saturated_fraction_burst=row["saturated_fraction_burst"],
                     safe=safe_flag,
                     psf_safe=row["psf_safe"],
                     p_signal=row["p_signal"],
@@ -357,7 +377,8 @@ def run_exposure_sweep(
                 sat_label = "SAT" if row["saturated"] else "ok"
                 sig_label = "LO" if row["low_signal"] else "ok"
                 print(f"  exp={at_exposure:8.1f}  gain={at_gain:5.1f}  "
-                      f"wl={wl_label:>7s}  max={row['max_pixel']:6.1f}  "
+                      f"wl={wl_label:>7s}  max_burst={row['max_pixel_burst']:6.1f}  "
+                      f"max_avg={row['max_pixel_avg']:6.1f}  "
                       f"p99.9={row['p99_9']:6.1f}  sat_count={row['saturated_pixel_count']:4d}  "
                       f"sat_frac={row['saturated_fraction']:.4f}  "
                       f"p_sig={row['p_signal']:6.1f}  [{sat_label}] [{sig_label}]")
@@ -506,9 +527,27 @@ def _build_result(
             last = matching[-1]
             wl_metrics[wl_nm] = {
                 "max_pixel": last["max_pixel"],
+                "max_pixel_avg": last.get("max_pixel_avg", last["max_pixel"]),
+                "max_pixel_burst": last.get("max_pixel_burst", last["max_pixel"]),
                 "p99_9": last["p99_9"],
                 "saturated_pixel_count": last.get("saturated_pixel_count", 0),
+                "saturated_pixel_count_avg": last.get(
+                    "saturated_pixel_count_avg",
+                    last.get("saturated_pixel_count", 0),
+                ),
+                "saturated_pixel_count_burst": last.get(
+                    "saturated_pixel_count_burst",
+                    last.get("saturated_pixel_count", 0),
+                ),
                 "saturated_fraction": last["saturated_fraction"],
+                "saturated_fraction_avg": last.get(
+                    "saturated_fraction_avg",
+                    last["saturated_fraction"],
+                ),
+                "saturated_fraction_burst": last.get(
+                    "saturated_fraction_burst",
+                    last["saturated_fraction"],
+                ),
                 "p_signal": last["p_signal"],
                 "safe": bool(last.get("safe", not last["saturated"])),
                 "psf_safe": bool(last.get("psf_safe", not last["saturated"])),
@@ -543,6 +582,9 @@ def _build_result(
             "hard_max_pixel_fraction_threshold": sat_cfg["hard_max_pixel_fraction_threshold"],
             "saturated_pixel_count_threshold": sat_cfg["saturated_pixel_count_threshold"],
             "saturated_fraction_diagnostic_only": True,
+            "psf_safe_uses_burst_max_pixel": True,
+            "bad_pixel_mask": None,
+            "bad_pixel_mask_policy": "none; any full-scale burst pixel is unsafe",
         },
         "signal_policy": {
             "percentile": plan["signal"]["percentile"],
@@ -578,7 +620,7 @@ def main() -> None:
         description="Phase 3.0.5b PSF-safe camera exposure/gain refinement",
     )
     parser.add_argument(
-        "--plan", default="plans/bishe_exposure_sweep.yaml",
+        "--plan", default="plans/bishe_exposure_psf_safe_sweep.yaml",
         help="Path to exposure sweep plan YAML",
     )
     parser.add_argument(

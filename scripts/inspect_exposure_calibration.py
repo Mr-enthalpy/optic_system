@@ -62,15 +62,17 @@ def main() -> None:
         print()
 
         if not args.short:
-            print(f"{'WL(nm)':>7s}  {'Exp(us)':>10s}  {'Gain(dB)':>8s}  {'Max':>7s}  "
-                  f"{'P99.9':>7s}  {'SatCnt':>6s}  {'SatFrac':>8s}  "
+            print(f"{'WL(nm)':>7s}  {'Exp(us)':>10s}  {'Gain(dB)':>8s}  "
+                  f"{'MaxBurst':>8s}  {'MaxAvg':>7s}  {'P99.9':>7s}  "
+                  f"{'SatCntB':>7s}  {'SatFracB':>8s}  "
                   f"{'pSig':>7s}  {'PSFSafe':>7s}  {'LowSig':>7s}")
-            print("-" * 100)
+            print("-" * 112)
 
             exp_arr = f["sweep/exposure_us"][:]
             gain_arr = f["sweep/gain_db"][:]
             wl_arr = f["sweep/wavelength_nm"][:]
             max_arr = f["sweep/max_pixel"][:]
+            max_avg_arr = f["sweep/max_pixel_avg"][:] if "max_pixel_avg" in f["sweep"] else max_arr
             p99_arr = f["sweep/p99_9"][:]
             sat_count_arr = f["sweep/saturated_pixel_count"][:]
             sf_arr = f["sweep/saturated_fraction"][:]
@@ -80,7 +82,8 @@ def main() -> None:
 
             for i in range(n):
                 print(f"{wl_arr[i]:7.1f}  {exp_arr[i]:10.1f}  {gain_arr[i]:8.1f}  "
-                      f"{max_arr[i]:7.1f}  {p99_arr[i]:7.1f}  {int(sat_count_arr[i]):6d}  "
+                      f"{max_arr[i]:8.1f}  {max_avg_arr[i]:7.1f}  "
+                      f"{p99_arr[i]:7.1f}  {int(sat_count_arr[i]):7d}  "
                       f"{sf_arr[i]:8.4f}  {psig_arr[i]:7.1f}  "
                       f"{str(psf_safe_arr[i]):>7s}  {str(low_arr[i]):>7s}")
 

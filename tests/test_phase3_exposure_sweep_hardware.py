@@ -48,7 +48,7 @@ def test_exposure_sweep_hardware() -> None:
     from devices.camera_service import CameraServiceClient
     from devices.lcd_service import LCDService
 
-    plan_path = _REPO / "plans" / "bishe_exposure_sweep.yaml"
+    plan_path = _REPO / "plans" / "bishe_exposure_psf_safe_sweep.yaml"
     if not plan_path.exists():
         pytest.skip(f"plan not found: {plan_path}")
 
