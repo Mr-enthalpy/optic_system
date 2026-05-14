@@ -32,25 +32,13 @@ Those belong to `LCD_forward` or later experiment-specific layers.
 
 ## Current phase
 
-Current phase: Phase 2A complete / Phase 2B complete / Phase 3 planned.
+Thesis branch (`phase3-bishe-experimental-loop`) phase:
+Phase 3.0.5b implemented, Phase 3.1 in progress.
 
-Meaning:
+Active roadmap: `docs/bishe_plan.md`.
 
-- Camera base path exists and is stable.
-- LCD base path exists and is stable (axis-aware subpixel model).
-- TLS SDK integration is complete — ``tls_c1`` is the sole active TLS backend,
-  ``TLSService`` wraps it, ``SessionController`` dispatches TLS commands/events,
-  and an optional ``TLSPanel`` provides GUI access.  Pywinauto TLS automation is
-  fully removed from active code paths.
-- Phase 2A minimal capture task layer is implemented:
-  plan loading, dry-run capture, raw HDF5 writer, hardware-free tests.
-- Phase 2B hardware smoke capture validation is implemented:
-  real camera / LCD / optional TLS control, raw HDF5 verification.
-  Phase 2B does **not** validate optical scientific correctness.
-- Phase 3 conversion into ``LCD_forward`` format is planned.
-
-Do not assume the repository is already a full calibration system.
-Do not assume Phase 2B output data is training-ready or scientifically valid.
+Mainline GUI / diagnostics / architecture fixes may be periodically merged
+into this branch.
 
 ## Roadmap
 
@@ -171,44 +159,6 @@ Phase 2B must keep ``processing_flags_json`` as::
 
 Passing hardware smoke tests does **not** imply the optical system is
 calibrated or scientifically valid.
-
-### Phase 3  --  Raw capture to LCD_forward conversion
-
-Primary goal:
-
-Convert raw experimental captures into training-ready HDF5 for `LCD_forward`.
-
-Expected conversion target:
-
-```text
-Forward calibration:
-masks: [N, T, 1, Hm, Wm]
-psfs:  [N, T, L, Hp, Wp]
-
-Reconstruction:
-objects: [N, L, H, W]
-frames:  [N, T, 1, H, W]
-masks:   [N, T, 1, Hm, Wm]
-````
-
-The raw capture format must preserve enough metadata to allow reprocessing.
-
-### Phase 4  --  Family-aware GenerMask calibration and closed-loop experiments
-
-Primary goal:
-
-Support structured mask-family calibration and later closed-loop experiments.
-
-Possible work:
-
-* GenerMask family registry
-* family-aware capture plans
-* held-out family validation
-* perturbation robustness audit
-* repeated forward-surrogate retraining through `LCD_forward`
-* controlled mask-design experiments
-
-Do not start Phase 4 before Phase 1-3 are stable unless explicitly requested.
 
 ## Architecture rules
 
@@ -418,7 +368,7 @@ Rules:
 
 ## GenerMask rules
 
-GenerMask work is Phase 4 or later unless explicitly requested.
+GenerMask work is outside the thesis branch scope.
 
 When GenerMask appears in `optic_system`, its role is to produce physical LCD masks or capture plans, not to train neural networks.
 
@@ -519,13 +469,18 @@ Do not:
 
 Completed:
 
-* TLS SDK integration closure
-* Phase 2A minimal capture task layer
-* raw capture HDF5 export
-* Phase 2B hardware smoke capture validation
+- TLS SDK integration closure
+- Phase 2A minimal capture task layer
+- raw capture HDF5 export
+- Phase 2B hardware smoke capture validation
+- Phase 3.0.5b PSF-safe exposure calibration
+- Phase 3.1 effective LCD pupil scan (in progress)
 
-Next:
+Next (thesis branch):
 
-1. Raw capture to ``LCD_forward`` conversion.
-2. Family-aware GenerMask capture support.
-3. Larger closed-loop experiment automation only after the above are stable.
+1. Phase 3.2 PSF repeatability and ROI alignment.
+2. Phase 3.3 dOTF diagnostic.
+3. Phase 3.4 measured PSF dictionary and LCD_forward export.
+4. Phase 3.5 simple forward model validation.
+5. Phase 3.6 three-wavelength multiframe linear reconstruction.
+6. Phase 3.7 thesis figures and report freeze.

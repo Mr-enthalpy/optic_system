@@ -1,161 +1,505 @@
 # Bachelor thesis experimental plan
 
+## Branch role
+
+This branch (`phase3-bishe-experimental-loop`) is the bachelor-thesis
+experimental branch of `optic_system`.
+
+It starts from the post-Phase-2B hardware-capture baseline and consumes
+mainline infrastructure updates.  It does not redefine the mainline
+long-term roadmap.
+
+## Relationship to mainline
+
+Mainline provides:
+- camera / LCD / TLS services
+- raw HDF5 conventions
+- capture task foundations
+- run-status diagnostics
+- read-only monitor
+- GUI / architecture cleanup
+
+This branch implements thesis-specific task workflows.  Generic
+infrastructure fixes from mainline may be periodically merged into this
+branch.  Thesis-specific task code stays in this branch unless explicitly
+promoted.
+
 ## Thesis goal
 
-Build a minimal mono-LCD programmable diffractive imaging prototype:
+Build and demonstrate a minimal mono-LCD programmable diffractive imaging
+prototype:
 
-1. **Stable hardware capture** — reproducible mask-to-PSF acquisition using
-   the Phase 2 capture stack (camera + mono LCD + optional TLS wavelength
-   control).
-2. **PSF repeatability verification** — reacquire and quantify the old finding
-   that PSF differences across masks exceed frame-to-frame repeat noise.
-3. **dOTF diagnostic analysis** — use differential optical transfer function
-   to reveal low-dimensional / sparse pupil or LCD-induced structure.
-4. **Measured PSF dictionary** — build a mask-to-PSF lookup table and export
-   to `LCD_forward`-compatible HDF5.
-5. **Simple forward model** — validate that measured PSFs and mask
-   convolution yield plausible blurred estimates.
-6. **Three-wavelength multiframe linear reconstruction** — demonstrate
-   multispectral recovery using measured PSFs and simple linear inverse
-   reconstruction.
+- stable hardware capture using existing Phase 2 infrastructure
+- PSF-safe exposure/gain calibration
+- effective LCD active-region scan
+- PSF repeatability verification
+- dOTF diagnostic evidence for low-dimensional / sparse pupil or
+  LCD-induced structure
+- measured PSF dictionary
+- simple forward-model validation
+- three-wavelength multiframe linear reconstruction demo
+- thesis figures and report-ready results
 
-## Relation to long-term research
+## Phase 3 thesis roadmap
 
-The thesis is a **reduced experimental loop** of the long-term research
-program (LCD_forward / GenerMask / forward-surrogate route).
+### Phase 3.0 — Branch bootstrap and old-project knowledge migration
 
-This thesis does **not** require:
+**Status: complete**
 
-- neural-network training
-- differentiable mask optimization
-- forward surrogate learning
-- full calibration against a known ground truth
+Purpose:
+- document old-project findings as design priors
+- preserve old project as reference only
+- forbid old-code resurrection
+- define thesis branch workflow
 
-It focuses on establishing the hardware capture pipeline, verifying basic
-optical determinism, and demonstrating a simple reconstruction proof-of-concept.
+Old project facts as priors:
 
-## Phase 3 milestones
+1. PSF differences exceed repeat noise.
+2. Different masks produce stable PSFs.
+3. dOTF reveals visible pupil pixel / stripe structure.
+4. dOTF full pupil stitching was not reliable.
 
-### M0 — Branch bootstrap and old-project migration
-**Status: current**
+These are design priors only.  Old raw data is lost; all thesis evidence
+must be reacquired under the current framework.
 
-- Create `phase3-bishe-experimental-loop` branch from post-Phase 2B master.
-- Audit old project knowledge (`docs/old_experiment_audit.md`).
-- Define thesis experimental plan (this document).
-- Define technical workflows (`docs/phase3_workflow.md`).
-- Define planned capture plans (`plans/README.md`).
-- Define output directory structure (`outputs/README.md`).
-- Establish provenance rule: every processed result must trace back to
-  `raw_capture.h5`.
+Old code under `old/` may be inspected for experimental ordering and
+mask/task ideas, but must not be imported, called, or revived.
 
-### M1 — Effective LCD pupil scan
-**Status: implemented / in progress**
+Outputs:
+- `docs/old_experiment_audit.md`
+- `docs/phase3_workflow.md`
+- `plans/README.md`
+- `outputs/README.md`
 
-- The original Phase 3.0.5 exposure sweep was sensor-level coarse safety only.
-  It is not sufficient for PSF, dOTF, or pupil-fit experiments because
-  point-source PSF energy may occupy a very small fraction of the full sensor.
-  A small global saturated fraction can still mean the PSF core is saturated.
-  Phase 3.0.5b introduces PSF-safe exposure selection using max-pixel headroom
-  as the primary constraint.
-- Phase 3.0.5b evaluates PSF-safe max-pixel headroom over the raw burst frames,
-  not only the averaged frame. The averaged frame remains useful for p99.9 and
-  signal diagnostics, while burst max-pixel and burst saturated-pixel count
-  decide PSF safety.
-- Current Phase 3.0.5b has no bad-pixel mask, so any full-scale burst pixel is
-  unsafe. Future bad-pixel mask support may exempt only explicitly marked known
-  bad pixels; there is no implicit hot-pixel exemption.
-- Any new Phase 3 capture must use `camera_params_psf_safe.json`.
-- The Phase 3.1 data currently reviewed in PR #24 is first-pass coarse
-  active-region localization only. It must not be described as final pupil
-  geometry, final effective pupil, calibrated active pupil, or a PSF-safe scan.
-  The review observed clipping/local saturation, so final fine scans must use
-  lower exposure or the Phase 3.0.5b PSF-safe criterion before pupil
-  characterization.
-- Depends by default on Phase 3.0.5b
-  `outputs/exposure_calibration/camera_params_psf_safe.json` for exposure,
-  gain, frames-per-capture defaults, and raw frame full scale.
-- Implement procedural bar/block scan capture: generate masks at runtime,
-  display each physical LCD mask, capture camera response, and write raw HDF5
-  first.
-- Estimate the effective LCD physical-coordinate ROI from robust response
-  support using smoothed bar profiles and/or the largest 2D block-map
-  component.
-- This phase locates the LCD region where mask changes measurably affect the
-  camera image. It is not a scientific calibration validity claim.
-- Output: `outputs/pupil_scan/effective_lcd_roi.json`
+Exit criteria:
+1. Old experimental tasks identified for re-implementation.
+2. Old code paths marked as forbidden.
+3. All new data acquired through Phase 2 raw capture HDF5 pipeline.
 
-### M2 — PSF repeatability and ROI alignment
+---
+
+### Phase 3.0.5b — PSF-safe exposure/gain calibration
+
+**Status: implemented**
+
+Purpose:
+- determine PSF-safe camera exposure/gain across thesis wavelengths
+- reject settings where any burst pixel reaches full scale
+- produce per-wavelength safe camera parameters
+
+Entry points:
+- `scripts/calibrate_psf_safe_exposure.py`
+- `plans/bishe_psf_safe_exposure.yaml`
+
+Outputs:
+- `data/raw/bishe_psf_safe_exposure.h5`
+- `outputs/exposure_calibration/camera_params_psf_safe.json`
+
+Downstream default:
+All Phase 3 captures use `outputs/exposure_calibration/camera_params_psf_safe.json`.
+
+---
+
+### Phase 3.1 — Effective LCD pupil / active region scan
+
+**Status: in progress**
+
+Purpose:
+- locate the LCD physical-coordinate region that measurably affects the
+  camera image
+- produce `effective_lcd_roi.json` as the coordinate baseline for all
+  subsequent experiments
+- use PSF-safe camera parameters from Phase 3.0.5b
+
+Scripts:
+- `tasks/pupil_scan_masks.py` — procedural mask generation
+- `scripts/capture_pupil_scan.py` — acquisition
+- `scripts/analyze_pupil_scan.py` — response analysis and ROI extraction
+- `plans/bishe_pupil_scan.yaml`
+
+Flow:
+```
+generate bar / block / aperture scan masks
+  → capture raw_capture.h5
+  → analyze response strength / PSF variation
+  → output effective_lcd_roi.json
+```
+
+Outputs:
+```
+data/raw/bishe_pupil_scan.h5
+outputs/pupil_scan/
+  response_map.npy
+  response_map.png
+  effective_lcd_roi.json
+  pupil_scan_report.md
+```
+
+Acceptance criteria:
+1. Effective modulation region identified.
+2. ROI returned.
+3. Mask changes within ROI produce measurable PSF or brightness changes.
+4. Signal outside ROI is significantly weaker or explainable.
+5. All downstream experiments reference this ROI by default.
+
+Fallback:
+If the response map is unclear, adjust optics, exposure, point source,
+LCD position, or ROI size before entering complex dOTF work.  This phase
+is the coordinate baseline for all later experiments — it cannot be skipped.
+
+---
+
+### Phase 3.2 — PSF ROI, alignment and repeatability
+
 **Status: planned**
 
-- Capture multiple repeats of the same mask at a single wavelength.
-- Use `outputs/exposure_calibration/camera_params_psf_safe.json` by default.
-- Quantify frame-to-frame and capture-to-capture variation.
-- Establish energy-based ROI selection for downstream PSF extraction.
-- Output: `outputs/psf_repeatability/repeatability_metrics.json`
+Purpose:
+- reacquire the two key old-project findings with new data:
+  1. Same-mask repeat captures yield stable PSFs.
+  2. Between-mask PSF differences exceed repeat noise.
 
-### M3 — dOTF diagnostic
+Scripts:
+- `scripts/extract_psf_roi.py`
+- `scripts/align_psf_stack.py`
+- `scripts/evaluate_psf_repeatability.py`
+- `plans/bishe_psf_repeatability.yaml`
+
+Flow:
+```
+representative mask set
+  → K repeats per mask
+  → raw_capture.h5
+  → automated ROI extraction
+  → sub-pixel alignment
+  → mean / variance / difference matrix
+```
+
+Suggested masks:
+```
+all_open
+all_closed
+coarse_vertical_stripes
+coarse_horizontal_stripes
+stripe_phase_shift_0
+stripe_phase_shift_1
+coarse_checkerboard
+low_freq_random_block
+```
+
+Outputs:
+```
+outputs/psf_repeatability/
+  psfs_aligned.npy
+  psfs_mean.npy
+  psfs_std.npy
+  mask_difference_matrix.npy
+  mask_difference_matrix.png
+  repeatability_metrics.json
+  psf_repeatability_report.md
+```
+
+Core metrics:
+```
+within_mask_variance
+between_mask_distance
+SNR-like ratio = between_mask_distance / within_mask_std
+ROI extraction success rate
+alignment residual
+```
+
+Exit criteria:
+1. Within-mask PSF variance smaller than between-mask difference.
+2. Automated ROI extraction and alignment are stable.
+3. Representative mask PSF comparison figure ready for thesis.
+
+This is the first critical milestone.  If it fails, dOTF, forward
+model, and reconstruction should not proceed.
+
+---
+
+### Phase 3.3 — dOTF diagnostic
+
 **Status: planned**
 
-- Generate base mask + perturbation mask pairs.
-- Use `outputs/exposure_calibration/camera_params_psf_safe.json` by default.
-- Capture PSF pairs.
-- Compute dOTF (complex OTF difference with least-squares flux scaling).
-- Visualize dOTF magnitude and phase.
-- Interpret observed structure as low-dimensional / sparse pupil or LCD-induced
-  features.
+Purpose:
+- use dOTF to provide evidence for low-dimensional / sparse pupil or
+  LCD-induced structure
+- full pupil stitching is NOT the minimum success criterion
 
-Explicit success criterion: Observe clear, reproducible structure in dOTF.
-**Full pupil stitching is not required** for this milestone to pass.
+Scripts:
+- `scripts/make_dotf_masks.py`
+- `scripts/compute_dotf.py`
+- `scripts/plot_dotf_report.py`
+- `plans/bishe_dotf_edge_perturb.yaml`
 
-### M4 — PSF dictionary and LCD_forward export
+Flow:
+```
+base mask + edge perturbation masks
+  → capture ref / perturbed PSF pairs
+  → ROI / align / average
+  → FFT → OTF
+  → dOTF = OTF_perturbed - OTF_ref
+  → amplitude / phase / sparsity / structure diagnostics
+```
+
+Outputs:
+```
+outputs/dotf/
+  psf_ref.npy
+  psf_perturbed.npy
+  otf_ref.npy
+  otf_perturbed.npy
+  dotf_complex.npy
+  dotf_amp.png
+  dotf_phase.png
+  dotf_structure_overlay.png
+  dotf_sparsity_metrics.json
+  dotf_report.md
+```
+
+Two-tier acceptance:
+
+**Tier A:**
+- Two pupil-plane structures visible in dOTF.
+- Non-overlapping regions explainable.
+- Multi-perturbation stitching gives a rough pupil estimate.
+
+**Tier B:**
+- Full pupil stitching unsatisfactory, BUT:
+- LCD sub-pixel / stripe / array structure stably visible in dOTF
+  amplitude and phase across perturbations.
+- Can support the conclusion that LCD encoding effects are low-dimensional,
+  sparse, and calibratable.
+
+The thesis minimum requirement is Tier B.  Do not tie the entire thesis
+to Tier A full-pupil stitching.
+
+---
+
+### Phase 3.4 — Measured PSF dictionary and LCD_forward export
+
 **Status: planned**
 
-- Select a set of representative masks (e.g., gratings at various orientations
-  and periods, checkerboards, radial patterns).
-- Use `outputs/exposure_calibration/camera_params_psf_safe.json` by default.
-- Capture PSF for each mask at a single wavelength.
-- Export mask-to-PSF pairs in `LCD_forward`-compatible HDF5 format.
-- Output: `outputs/psf_dictionary/psf_dict_lambda_<wl>nm.h5`
+Purpose:
+- build a measured mask-to-PSF dictionary as the foundation for forward
+  modelling
+- export selected data into `LCD_forward`-compatible HDF5
 
-### M5 — Simple forward model
+Scripts:
+- `scripts/make_psf_dictionary_masks.py`
+- `scripts/build_psf_dictionary.py`
+- `scripts/convert_to_lcd_forward_h5.py`
+- `plans/bishe_psf_dict_single_lambda.yaml`
+- `plans/bishe_psf_dict_three_lambda.yaml`
+
+Flow:
+```
+representative mask families
+  → single / three-wavelength PSF acquisition
+  → ROI / align / average
+  → PSF dictionary
+  → train / val / test split
+  → LCD_forward-compatible HDF5
+```
+
+`optic_system` side outputs:
+```
+data/raw/bishe_psf_dict_*.h5
+outputs/psf_dictionary/
+  masks_physical.npy
+  masks_downsampled.npy
+  psfs_mean.npy
+  psfs_std.npy
+  wavelengths.npy
+  dictionary_metadata.json
+```
+
+`LCD_forward` side format:
+```
+data/bishe_forward/train.h5
+data/bishe_forward/val.h5
+data/bishe_forward/test.h5
+
+masks: [N, T, 1, Hm, Wm]
+psfs:  [N, T, L, Hp, Wp]
+```
+
+Exit criteria:
+1. Single-wavelength PSF dictionary usable.
+2. Three-wavelength PSF dictionary usable (if TLS stable).
+3. Data readable by LCD_forward's `ForwardH5Dataset`.
+4. A simple mask-to-PSF forward baseline can be trained or fitted.
+
+After this phase, the thesis has the "hardware acquisition → data format
+→ forward modelling" main chain.
+
+---
+
+### Phase 3.5 — Simple forward model validation
+
 **Status: planned**
 
-- For a held-out mask, use its measured PSF (from the dictionary) to render
-  a target/object frame via convolution.
-- Compare the rendered frame against the measured camera frame (qualitative +
-  simple metrics).
-- Also validate mask-to-PSF prediction consistency across the dictionary
-  (held-out mask PSF vs. interpolated/predicted PSF).
-- Output: `outputs/linear_recon/forward_model_validation.json`
+Purpose:
+- validate that measured PSFs explain typical mask-dependent PSF differences
+- do not require a complex neural model
 
-### M6 — Three-wavelength multiframe linear reconstruction
+Three-tier model complexity:
+```
+baseline 0: measured PSF lookup / dictionary
+baseline 1: low-rank PSF basis
+baseline 2: mask statistics / low-dimensional descriptor → PSF basis coefficients
+```
+
+Can be implemented in `LCD_forward` or as standalone analysis scripts.
+
+Suggested additions:
+```
+LCD_forward/configs/forward_bishe_single_lambda.yaml
+LCD_forward/configs/forward_bishe_three_lambda.yaml
+LCD_forward/scripts/eval_measured_psf_dictionary.py
+LCD_forward/scripts/fit_psf_basis_forward.py
+LCD_forward/scripts/plot_forward_bishe_report.py
+```
+
+Validation metrics:
+```
+pixel L1 / MSE
+frequency-domain error
+centroid / main lobe shift
+dominant diffraction order position
+PSF energy normalization
+held-out mask family error
+```
+
+Exit criteria:
+1. Model explains main PSF differences for typical masks.
+2. Forward error smaller than between-mask differences.
+3. At least one held-out mask family tested.
+4. "Predicted PSF vs measured PSF" thesis figure ready.
+
+Risk control:
+If complex field basis models are unsatisfactory, the thesis can
+still stand on PSF dictionary / PSF basis baselines.
+
+---
+
+### Phase 3.6 — Three-wavelength multiframe linear reconstruction
+
 **Status: planned**
 
-- Select 3 wavelengths.
-- Capture PSF dictionary at each wavelength (same mask set).
-- Capture one or more "unknown" target scenes.
-- Apply simple linear inverse reconstruction using the measured PSF set.
-- Compare reconstructed scene against known mask.
-- Output: `outputs/linear_recon/multiframe_recon_results/`
+Purpose:
+- demonstrate that multi-mask encoding improves multispectral recovery
+- complete the thesis end-to-end demo
 
-### M7 — Thesis figures and report freeze
+Scripts:
+- `plans/bishe_multiframe_target.yaml`
+- `scripts/build_linear_forward_matrix.py`
+- `scripts/solve_linear_multispectral_recon.py`
+- `scripts/plot_multiframe_recon_report.py`
+
+Acquisition design:
+```
+wavelengths: 3 representative wavelengths
+masks: 3-5 stable representative masks
+targets: colour blocks / filter combinations / simple transmissive targets
+frames: multi-mask multi-frame per target
+```
+
+Reconstruction model (linear inverse):
+```
+x_hat = argmin ||A x - y||^2 + λR(x)
+```
+
+Priorities:
+```
+Tikhonov least squares
+non-negative clipping
+optional TV or Laplacian smoothing
+```
+
+Outputs:
+```
+outputs/linear_recon/
+  A_matrix_info.json
+  condition_number_report.json
+  recon_single_frame.npy
+  recon_multiframe.npy
+  recon_error.npy
+  recon_comparison.png
+  linear_recon_report.md
+```
+
+Exit criteria:
+1. At least three-wavelength data available.
+2. Single-frame vs multi-frame comparison produced.
+3. Multi-frame recovery quality better than single-frame, or condition
+   number / channel separation improved.
+4. Final thesis demonstration figure ready.
+
+---
+
+### Phase 3.7 — Thesis figures and report freeze
+
 **Status: planned**
 
-- Produce publication-quality figures from all preceding milestones.
-- Write thesis report.
-- Freeze analysis scripts and commit hashes for reproducibility.
-- Output: `outputs/bishe_figures/`
+Purpose:
+- freeze experiments
+- prepare thesis figures
+- prepare thesis text and defense slides
+
+Outputs:
+```
+outputs/bishe_figures/
+  system_pipeline.png
+  psf_mask_examples.png
+  dotf_amp_phase.png
+  forward_prediction_vs_measurement.png
+  multiframe_recon_comparison.png
+
+docs/bishe_thesis_outline.md
+docs/bishe_results_summary.md
+docs/bishe_limitations.md
+```
+
+Recommended thesis narrative:
+1. Mono LCD programmable diffractive imaging system setup.
+2. Raw capture HDF5 and automated acquisition workflow.
+3. PSF stability and LCD encoding response analysis.
+4. dOTF diagnostic and low-dimensional pupil structure evidence.
+5. Measured PSF dictionary and simple forward model.
+6. Three-wavelength multi-frame linear reconstruction demo.
+7. Limitations and future research directions.
+
+---
+
+## Branch acceptance criteria
+
+When this branch closes, the following must hold:
+
+1. PSF difference exceeds repeat noise — re-verified under current framework.
+2. PSF stability across masks — re-verified under current framework.
+3. Effective LCD pupil / active region scan complete.
+4. dOTF diagnostic complete — at minimum proving low-dimensional sparse
+   pupil-plane structure (Tier B).
+5. Measured PSF dictionary complete.
+6. `LCD_forward`-compatible HDF5 export working.
+7. Simple forward baseline complete.
+8. Three-wavelength multi-frame linear reconstruction demo complete.
+9. All thesis figures traceable to `raw_capture.h5`.
+10. No old data used as thesis evidence; no old-project acquisition paths
+    revived.
 
 ## Non-goals
 
-- No neural-network training (forward surrogate, reconstruction network, etc.).
-- No full physical first-principles model of the optical system.
-- No claim of complete complex pupil recovery unless data supports it.
-- No old data reuse — all evidence must come from new Phase 2 captures.
-- No GenerMask optimization — mask design is manual or script-driven for this
-  thesis.
-- No automated calibration scheduler.
-- No full wavelength sweep above 3 wavelengths unless explicitly scoped in.
+This thesis branch does not implement:
+
+- full GenerMask optimization
+- full neural reconstruction
+- full closed-loop mask learning
+- full physical first-principles LCD model
+- complete complex-pupil recovery as a required success criterion
+- general experiment scheduler
+- mainline Phase 4+ work
 
 ## Provenance rule
 

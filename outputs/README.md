@@ -20,19 +20,6 @@ provenance rule below.
 - **Produces:**
   - `camera_params_psf_safe.json` - exposure, gain, frame scale, per-wavelength
     max-pixel diagnostics, and PSF-safe validity flags.
-- **Policy:** The original Phase 3.0.5 exposure sweep was sensor-level coarse
-  safety only. It is not sufficient for PSF, dOTF, or pupil-fit experiments
-  because point-source PSF energy may occupy a very small fraction of the full
-  sensor. A small global saturated fraction can still mean the PSF core is
-  saturated. Phase 3.0.5b introduces PSF-safe exposure selection using
-  max-pixel headroom as the primary constraint.
-- **Burst safety:** PSF-safe max-pixel headroom is evaluated over raw burst
-  frames. Outputs distinguish `max_pixel_avg`, `max_pixel_burst`, and
-  `saturated_pixel_count_burst`; averaged-frame p99.9 and signal metrics remain
-  diagnostics.
-- **Bad pixels:** Current Phase 3.0.5b has no bad-pixel mask. Any full-scale
-  burst pixel is unsafe. A future bad-pixel mask may exempt only explicitly
-  marked known bad pixels; no implicit hot-pixel exemption is allowed.
 - **Downstream default:** All Phase 3 captures and analyses must use
   `camera_params_psf_safe.json`.
 - **Validity boundary:** PSF-safe exposure only means local overexposure has
@@ -70,35 +57,50 @@ provenance rule below.
 - **Phase:** 3.2 — PSF repeatability and ROI alignment
 - **Depends on:** `outputs/psf_repeatability/repeatability_raw.h5`
 - **Produces:**
-  - `repeatability_metrics.json` — within-mask RMS, correlation, between-mask
-    differences
-- **Script:** repeatability analysis script (to be created in Phase 3.2)
-- **Status:** intermediate — validates determinism, not thesis-final
+  - `psfs_aligned.npy` — aligned PSF stack
+  - `psfs_mean.npy` — per-mask mean PSF
+  - `psfs_std.npy` — per-mask PSF standard deviation
+  - `mask_difference_matrix.npy` — between-mask distance matrix
+  - `mask_difference_matrix.png` — visualisation
+  - `repeatability_metrics.json` — within-mask variance, between-mask distance, SNR-like ratio
+  - `psf_repeatability_report.md`
+- **Script:** repeatability analysis scripts (to be created in Phase 3.2)
+- **Status:** planned
 
 ### `outputs/dotf/`
 
 - **Phase:** 3.3 — dOTF diagnostic
 - **Depends on:** `outputs/dotf/dotf_raw.h5`
 - **Produces:**
-  - `dotf_<id>.npy` — complex dOTF arrays (N pairs)
-  - `dotf_magnitude_<id>.png` — magnitude visualizations
-  - `dotf_phase_<id>.png` — phase visualizations
-  - `dotf_summary.json` — parameters and metadata
-- **Script:** dOTF analysis script (to be created in Phase 3.3)
-- **Status:** thesis-figure-ready (after review)
+  - `psf_ref.npy` — reference PSF
+  - `psf_perturbed.npy` — perturbed PSF
+  - `otf_ref.npy` — reference OTF
+  - `otf_perturbed.npy` — perturbed OTF
+  - `dotf_complex.npy` — complex dOTF
+  - `dotf_amp.png` — dOTF amplitude
+  - `dotf_phase.png` — dOTF phase
+  - `dotf_structure_overlay.png` — structure overlay
+  - `dotf_sparsity_metrics.json` — sparsity / structure diagnostics
+  - `dotf_report.md`
+- **Script:** dOTF analysis scripts (to be created in Phase 3.3)
+- **Status:** planned
 
 ### `outputs/psf_dictionary/`
 
 - **Phase:** 3.4 — PSF dictionary and LCD_forward export
 - **Depends on:**
-  - `outputs/psf_dictionary/psf_dict_single_lambda_raw.h5`
-  - `outputs/psf_dictionary/psf_dict_three_lambda_raw.h5`
+  - `data/raw/bishe_psf_dict_*.h5`
 - **Produces:**
-  - `psf_dict_lambda_<wl>nm.h5` — LCD_forward-compatible HDF5
+  - `masks_physical.npy` — physical mask arrays
+  - `masks_downsampled.npy` — downsampled masks
+  - `psfs_mean.npy` — per-mask mean PSF
+  - `psfs_std.npy` — per-mask PSF standard deviation
+  - `wavelengths.npy` — wavelength list
+  - `dictionary_metadata.json`
+  - `psf_dict_lambda_<wl>nm.h5` — LCD_forward-compatible HDF5 (single lambda)
   - `psf_dict_three_lambda.h5` — LCD_forward-compatible HDF5 (3 wavelengths)
-  - `psf_dictionary_metadata.json` — mask list, wavelengths, ROI parameters
-- **Script:** dictionary export script (to be created in Phase 3.4)
-- **Status:** thesis-figure-ready (consumed by Phase 3.5 and 3.6)
+- **Script:** dictionary export scripts (to be created in Phase 3.4)
+- **Status:** planned
 
 ### `outputs/linear_recon/`
 
@@ -107,11 +109,15 @@ provenance rule below.
   - `outputs/psf_dictionary/` — PSF dictionary
   - `outputs/linear_recon/multiframe_target_raw.h5` — target captures
 - **Produces:**
-  - `forward_model_validation.json` — simple convolution validation metrics
-  - `multiframe_recon_results/` — reconstructed scenes as .npy
-  - `reconstruction_metrics.json` — reconstruction quality metrics
-- **Script:** reconstruction script (to be created in Phase 3.5/3.6)
-- **Status:** thesis-figure-ready (after review)
+  - `A_matrix_info.json` — forward matrix metadata
+  - `condition_number_report.json` — channel condition analysis
+  - `recon_single_frame.npy` — single-frame reconstruction
+  - `recon_multiframe.npy` — multi-frame reconstruction
+  - `recon_error.npy` — reconstruction error map
+  - `recon_comparison.png` — single vs multi-frame comparison
+  - `linear_recon_report.md`
+- **Script:** reconstruction scripts (to be created in Phase 3.5/3.6)
+- **Status:** planned
 
 ### `outputs/bishe_figures/`
 

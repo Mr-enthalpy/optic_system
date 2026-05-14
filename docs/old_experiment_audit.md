@@ -104,6 +104,14 @@ bar-scan -> circle fit -> ellipse estimation -> angle scan.  The workflow
 logic is informative but the implementation depends on old LCD/camera
 classes (`LCDDisplay`, `Video`).
 
+## Migration rule
+
+Old code under `old/` may be inspected for experimental ordering and mask/task
+ideas, but must not be imported, called, or revived in active code paths.
+
+All thesis evidence must be reacquired under the current framework.  Old data
+is lost.
+
 ## Forbidden migrations
 
 The following must **never** be revived:

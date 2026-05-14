@@ -2,15 +2,17 @@
 
 ## Role
 
-Capture plans define the parameters for a single `capture_forward_dataset.py`
-invocation.  Each plan specifies masks, wavelengths, camera settings, and
-settle timing.  The capture script reads a plan, initializes devices,
-executes the acquisition sequence, and writes a `raw_capture.h5` file.
+Capture plans define parameters for one capture or calibration task invocation.
+Some plans are consumed by task-specific scripts (e.g. `calibrate_psf_safe_exposure.py`,
+`capture_pupil_scan.py`) rather than `capture_forward_dataset.py`.
+Each plan specifies masks, wavelengths, camera settings, and settle timing.
+The capture script reads a plan, initializes devices, executes the acquisition
+sequence, and writes a `raw_capture.h5` file.
 
 **All plans produce raw capture HDF5 first.**  Downstream analysis scripts
 consume the raw HDF5 to produce processed results.
 
-## Existing plans (Phase 2B hardware smoke)
+## Active plans
 
 | File | Purpose |
 |---|---|
@@ -19,43 +21,12 @@ consume the raw HDF5 to produce processed results.
 | `bishe_psf_safe_exposure.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
 | `bishe_pupil_scan.yaml` | Phase 3.1 procedural effective LCD pupil scan |
 
-## Exposure safety policy
-
-The original Phase 3.0.5 exposure sweep was sensor-level coarse safety only.
-It is not sufficient for PSF, dOTF, or pupil-fit experiments because
-point-source PSF energy may occupy a very small fraction of the full sensor.
-A small global saturated fraction can still mean the PSF core is saturated.
-Phase 3.0.5b introduces PSF-safe exposure selection using max-pixel headroom
-as the primary constraint.
-
-`plans/bishe_psf_safe_exposure.yaml` writes:
-
-```text
-data/raw/bishe_psf_safe_exposure.h5
-outputs/exposure_calibration/camera_params_psf_safe.json
-```
-
-`saturated_fraction` is diagnostic only. A setting is not PSF-safe when any
-target wavelength reaches full scale, crosses the hard max-pixel threshold, or
-crosses the PSF-safe max-pixel headroom threshold.
-
-PSF-safe max-pixel checks are evaluated over the raw burst frames, not only the
-averaged frame. The HDF5 and JSON outputs distinguish `max_pixel_avg`,
-`max_pixel_burst`, and `saturated_pixel_count_burst`; `p99_9` and `p_signal`
-remain averaged-frame diagnostics.
-
-Current Phase 3.0.5b has no bad-pixel mask. Therefore any full-scale burst
-pixel is unsafe. A future bad-pixel mask may exempt only explicitly marked
-known bad pixels; no implicit hot-pixel exemption is allowed.
-
 ### `plans/bishe_pupil_scan.yaml`
 - **Phase:** 3.1 - Effective LCD pupil / active modulation region scan
 - **Purpose:** Locate the physical LCD region where procedural mask changes
   measurably affect camera captures.
 - **Input:** `camera_params_source` from Phase 3.0.5b by default
   (`outputs/exposure_calibration/camera_params_psf_safe.json`).
-- **Camera params policy:** All Phase 3 captures must use
-  `camera_params_psf_safe.json`.
 - **Masks:** Generated procedurally at runtime by
   `tasks/pupil_scan_masks.py`; the plan does not list hundreds of mask files.
 - **Output raw HDF5:** `data/raw/bishe_pupil_scan.h5`.
@@ -129,19 +100,10 @@ They will be implemented in their respective milestones.
 
 ## Plan format
 
-All plans follow the schema defined by `tasks/capture_plan.py`.  Key fields:
+Plans are task-specific YAML files.  Common fields include `plan_id`,
+`wavelength` or `wavelengths`, camera settings, and output paths.
+Task-specific fields (e.g. `scan.scan_modes`, `camera_params_source`,
+`signal`) vary by plan.
 
-```yaml
-plan_id: <string>
-masks: <list of mask specifications>
-wavelengths_nm: <list of floats>
-camera:
-  frames_per_capture: <int>
-  burst_mode: "average" | "store_all"
-settle_ms: <int>
-output_filename: <string>  # basename for raw_capture.h5
-```
-
-See `tasks/capture_plan.py` and `tasks/capture_forward_dataset.py` for full
-schema and loading logic.
+See individual plan files under `plans/` for current schemas.
 
