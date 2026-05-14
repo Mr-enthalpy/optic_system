@@ -26,7 +26,7 @@ def _psf_safe_plan(tmp_path: Path, *, wavelengths=None) -> dict:
             "gain_db_step_db": 6.0,
             "frames_per_setting": 3,
         },
-        "psf_safety": {},
+        "psf_safety": {"rule": "all_frames_all_pixels_strictly_below_full_scale"},
         "signal": {
             "percentile": 99.0,
             "min_signal_fraction_threshold": 0.05,

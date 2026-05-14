@@ -191,6 +191,14 @@ def _validate_camera_params(
         raise ValueError(
             f"{source_path}: psf_safety_policy.allow_full_scale_pixel must be False"
         )
+    if psf_policy.get("evaluated_on") != "raw_burst_frames":
+        raise ValueError(
+            f"{source_path}: psf_safety_policy.evaluated_on must be 'raw_burst_frames'"
+        )
+    if psf_policy.get("allow_non_finite_pixel") is not False:
+        raise ValueError(
+            f"{source_path}: psf_safety_policy.allow_non_finite_pixel must be False"
+        )
 
 
 def resolve_camera_settings(

@@ -115,6 +115,11 @@ def _validate_plan(plan: dict[str, Any]) -> None:
     assert plan.get("lcd"), "lcd section required"
     assert plan.get("camera_search"), "camera_search section required"
     assert plan.get("psf_safety"), "psf_safety section required"
+    psf_safety = plan.get("psf_safety") or {}
+    if psf_safety.get("rule") != "all_frames_all_pixels_strictly_below_full_scale":
+        raise ValueError(
+            "psf_safety.rule must be 'all_frames_all_pixels_strictly_below_full_scale'"
+        )
     assert plan.get("signal"), "signal section required"
 
 
@@ -303,7 +308,7 @@ def run_psf_safe_exposure(
     wls = plan["wavelengths"]
     lcd_cfg = plan["lcd"]
     search_cfg = plan["camera_search"]
-    safety_cfg = plan["psf_safety"]
+    diagnostics_cfg = plan.get("diagnostics", {})
     sig_cfg = plan["signal"]
 
     exposure_start = float(search_cfg["exposure_us_start"])
@@ -395,7 +400,7 @@ def run_psf_safe_exposure(
                         time.sleep(settle / 1000.0)
 
                 row = _acquire_and_evaluate(
-                    camera_adapter, k, full_scale, safety_cfg, sig_cfg,
+                    camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg,
                 )
                 row["wavelength_nm"] = wl_nm
                 row["exposure_us"] = at_exposure
@@ -471,7 +476,6 @@ def run_psf_safe_exposure(
         gain = gain_min
         exposure = exposure_start
         max_safe_exposure: float | None = None
-        exposure_min_saturated = True
 
         while exposure >= exposure_min:
             print(f"\n  trying exposure={exposure}")
@@ -498,15 +502,13 @@ def run_psf_safe_exposure(
                 error=msg,
             )
 
-        exposure_min_saturated = False
-
         worst = _worst_signal_wavelength([r for r in all_results
                                            if r["exposure_us"] == max_safe_exposure
                                            and r["gain_db"] == gain])
         if not worst["low_signal"]:
             safe_exposure = max_safe_exposure
             safe_gain = gain
-            selection_reason = "psf_safe_max_pixel_headroom"
+            selection_reason = "all_burst_pixels_below_full_scale"
             print(f"\n  ACCEPT: exposure={safe_exposure} gain={safe_gain} "
                   f"({selection_reason})")
         else:
@@ -544,7 +546,7 @@ def run_psf_safe_exposure(
                     else:
                         print(f"  safe but still low signal at gain={gain}")
                 else:
-                    print(f"  saturated even at min exposure at gain={gain}")
+                    print(f"  full-scale pixel encountered even at min exposure at gain={gain}")
 
                 gain += gain_step
 
