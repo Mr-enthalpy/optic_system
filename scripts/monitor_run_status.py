@@ -341,9 +341,15 @@ def _update_image_label(
         text_var.set(fallback)
         return
     try:
-        import tkinter as tk
+        from PIL import Image, ImageTk
 
-        photo = tk.PhotoImage(file=str(path))
+        image = Image.open(path)
+        max_w, max_h = _image_label_target_size(label)
+        fit_w, fit_h = _fit_size(image.width, image.height, max_w, max_h)
+        if (fit_w, fit_h) != (image.width, image.height):
+            resampling = getattr(Image, "Resampling", Image).LANCZOS
+            image = image.resize((fit_w, fit_h), resampling)
+        photo = ImageTk.PhotoImage(image)
     except Exception:
         label.configure(image="")
         photos.pop(key, None)
@@ -352,6 +358,29 @@ def _update_image_label(
     photos[key] = photo
     text_var.set("")
     label.configure(image=photo)
+
+
+def _image_label_target_size(label: Any) -> tuple[int, int]:
+    width = int(getattr(label, "winfo_width")())
+    height = int(getattr(label, "winfo_height")())
+    parent = getattr(label, "master", None)
+    if parent is not None:
+        width = max(width, int(parent.winfo_width()) - 16)
+        height = max(height, int(parent.winfo_height()) - 16)
+    if width <= 1:
+        width = 512
+    if height <= 1:
+        height = 512
+    return width, height
+
+
+def _fit_size(width: int, height: int, max_width: int, max_height: int) -> tuple[int, int]:
+    width = max(1, int(width))
+    height = max(1, int(height))
+    max_width = max(1, int(max_width))
+    max_height = max(1, int(max_height))
+    scale = min(max_width / width, max_height / height, 1.0)
+    return max(1, int(width * scale)), max(1, int(height * scale))
 
 
 def _preview_path(status_dir: Path, value: str | None) -> Path | None:

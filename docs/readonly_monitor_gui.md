@@ -58,7 +58,9 @@ or modify task state.
 
 The GUI keeps task metadata in a separate top-right panel with its own scroll
 area. Frame and mask previews are displayed in the main middle panels, and the
-recent-log panel renders only the newest `--max-log-lines` entries.
+recent-log panel renders only the newest `--max-log-lines` entries. Preview
+images are scaled to fit their GUI panels while preserving aspect ratio, so a
+large camera frame is not cropped to its upper-left corner.
 
 ## Limitations
 
