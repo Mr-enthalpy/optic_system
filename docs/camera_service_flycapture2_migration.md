@@ -461,7 +461,7 @@ Both the sidecar and the main process must be able to see them.
 PyCharm run configurations have their own environment variable section.
 Configuring the system or shell environment is **not enough** -- you must also:
 
-1. Open **Run → Edit Configurations**.
+1. Open **Run -> Edit Configurations**.
 2. Select the run configuration (e.g. the hardware test, `app.main_gui`, or
    the camera service impl).
 3. In **Environment variables**, add (one per line):

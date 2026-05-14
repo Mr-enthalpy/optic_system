@@ -42,11 +42,11 @@ No intermediate step re-acquires hardware data directly.
 Long-running capture and calibration tasks support an optional `--status-dir`
 argument.  When provided, the task publishes runtime diagnostics:
 
-- `state.json` — task identity, phase, progress, completion
-- `current_mask_preview.png` or `.npy` — downsample preview of active LCD mask
-- `latest_frame_preview.png` or `.npy` — latest camera frame preview
-- `frame_stats.json` — max, p99.9, saturated fraction, dtype scale
-- `log.jsonl` — structured event log
+- `state.json` - task identity, phase, progress, completion
+- `current_mask_preview.png` or `.npy` - downsample preview of active LCD mask
+- `latest_frame_preview.png` or `.npy` - latest camera frame preview
+- `frame_stats.json` - max, p99.9, saturated fraction, dtype scale
+- `log.jsonl` - structured event log
 
 A read-only monitor reads these files:
 
@@ -82,7 +82,7 @@ assumptions out of capture tasks when camera metadata is unavailable.
 
 ### Analysis
 
-1. Load `raw_capture.h5` — extract averaged frames for each bar position.
+1. Load `raw_capture.h5` - extract averaged frames for each bar position.
 2. For each frame, compute energy (sum of pixel intensities).
 3. Fit circle parameters (center, radius) from X and Y energy-difference
    profiles (`old/circle.py:_fit_circle_from_profile` provides the algorithm).
@@ -117,7 +117,7 @@ averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
 
 ### Analysis
 
-1. Load `raw_capture.h5` — extract frames for each mask × repetition.
+1. Load `raw_capture.h5` - extract frames for each mask x repetition.
 2. Apply energy-based ROI cropping.
 3. Compute within-mask repeatability metrics (e.g., normalized RMS difference,
    correlation).
@@ -156,7 +156,7 @@ and/or phase is sufficient for this milestone.
 
 ### Analysis
 
-1. Load `raw_capture.h5` — extract base PSF and perturbed PSF.
+1. Load `raw_capture.h5` - extract base PSF and perturbed PSF.
 2. Optionally subtract dark frame.
 3. Crop ROI from PSF pair (energy-based or using pupil scan results).
 4. Pad ROI for fine frequency resolution.
@@ -185,8 +185,8 @@ outputs/dotf/
 
 ### Capture plans
 
-- `plans/bishe_psf_dict_single_lambda.yaml` — dictionary at one wavelength.
-- `plans/bishe_psf_dict_three_lambda.yaml` — dictionary at three wavelengths.
+- `plans/bishe_psf_dict_single_lambda.yaml` - dictionary at one wavelength.
+- `plans/bishe_psf_dict_three_lambda.yaml` - dictionary at three wavelengths.
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - Masks: gratings at various periods and orientations, checkerboards, radial
   patterns.
@@ -194,7 +194,7 @@ outputs/dotf/
 
 ### Analysis
 
-1. Load `raw_capture.h5` — extract averaged PSF for each mask.
+1. Load `raw_capture.h5` - extract averaged PSF for each mask.
 2. Apply ROI cropping and possible dark-frame subtraction.
 3. Normalize if needed.
 4. Package as `LCD_forward`-compatible HDF5:
@@ -249,13 +249,13 @@ outputs/linear_recon/
 
 Phases should be implemented sequentially:
 
-1. **Phase 3.1** — Effective LCD pupil scan
-2. **Phase 3.2** — PSF repeatability and ROI alignment
-3. **Phase 3.3** — dOTF diagnostic
-4. **Phase 3.4** — PSF dictionary and export
-5. **Phase 3.5** — Simple forward model validation
-6. **Phase 3.6** — Three-wavelength multiframe linear reconstruction
-7. **Phase 3.7** — Thesis figures and report freeze
+1. **Phase 3.1** - Effective LCD pupil scan
+2. **Phase 3.2** - PSF repeatability and ROI alignment
+3. **Phase 3.3** - dOTF diagnostic
+4. **Phase 3.4** - PSF dictionary and export
+5. **Phase 3.5** - Simple forward model validation
+6. **Phase 3.6** - Three-wavelength multiframe linear reconstruction
+7. **Phase 3.7** - Thesis figures and report freeze
 
 Each phase depends on the outputs of the previous phases but not on
 implementation details.  Phase 3.2 needs the pupil ROI from 3.1; Phase 3.3

@@ -15,4 +15,4 @@ camera:
   average_burst: false
 lcd_settle_ms: 200
 store_burst: true
-notes: Phase 2B camera+LCD hardware smoke — no TLS
+notes: Phase 2B camera+LCD hardware smoke - no TLS

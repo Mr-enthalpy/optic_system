@@ -42,7 +42,7 @@ prototype:
 
 ## Phase 3 thesis roadmap
 
-### Phase 3.0 — Branch bootstrap and old-project knowledge migration
+### Phase 3.0 - Branch bootstrap and old-project knowledge migration
 
 **Status: complete**
 
@@ -78,7 +78,7 @@ Exit criteria:
 
 ---
 
-### Phase 3.0.5b — PSF-safe exposure/gain calibration
+### Phase 3.0.5b - PSF-safe exposure/gain calibration
 
 **Status: implemented**
 
@@ -100,7 +100,7 @@ All Phase 3 captures use `outputs/exposure_calibration/camera_params_psf_safe.js
 
 ---
 
-### Phase 3.1 — Effective LCD pupil / active region scan
+### Phase 3.1 - Effective LCD pupil / active region scan
 
 **Status: in progress**
 
@@ -112,17 +112,17 @@ Purpose:
 - use PSF-safe camera parameters from Phase 3.0.5b
 
 Scripts:
-- `tasks/pupil_scan_masks.py` — procedural mask generation
-- `scripts/capture_pupil_scan.py` — acquisition
-- `scripts/analyze_pupil_scan.py` — response analysis and ROI extraction
+- `tasks/pupil_scan_masks.py` - procedural mask generation
+- `scripts/capture_pupil_scan.py` - acquisition
+- `scripts/analyze_pupil_scan.py` - response analysis and ROI extraction
 - `plans/bishe_pupil_scan.yaml`
 
 Flow:
 ```
 generate bar / block / aperture scan masks
-  → capture raw_capture.h5
-  → analyze response strength / PSF variation
-  → output effective_lcd_roi.json
+  -> capture raw_capture.h5
+  -> analyze response strength / PSF variation
+  -> output effective_lcd_roi.json
 ```
 
 Outputs:
@@ -145,11 +145,11 @@ Acceptance criteria:
 Fallback:
 If the response map is unclear, adjust optics, exposure, point source,
 LCD position, or ROI size before entering complex dOTF work.  This phase
-is the coordinate baseline for all later experiments — it cannot be skipped.
+is the coordinate baseline for all later experiments - it cannot be skipped.
 
 ---
 
-### Phase 3.2 — PSF ROI, alignment and repeatability
+### Phase 3.2 - PSF ROI, alignment and repeatability
 
 **Status: planned**
 
@@ -167,11 +167,11 @@ Scripts:
 Flow:
 ```
 representative mask set
-  → K repeats per mask
-  → raw_capture.h5
-  → automated ROI extraction
-  → sub-pixel alignment
-  → mean / variance / difference matrix
+  -> K repeats per mask
+  -> raw_capture.h5
+  -> automated ROI extraction
+  -> sub-pixel alignment
+  -> mean / variance / difference matrix
 ```
 
 Suggested masks:
@@ -217,7 +217,7 @@ model, and reconstruction should not proceed.
 
 ---
 
-### Phase 3.3 — dOTF diagnostic
+### Phase 3.3 - dOTF diagnostic
 
 **Status: planned**
 
@@ -235,11 +235,11 @@ Scripts:
 Flow:
 ```
 base mask + edge perturbation masks
-  → capture ref / perturbed PSF pairs
-  → ROI / align / average
-  → FFT → OTF
-  → dOTF = OTF_perturbed - OTF_ref
-  → amplitude / phase / sparsity / structure diagnostics
+  -> capture ref / perturbed PSF pairs
+  -> ROI / align / average
+  -> FFT -> OTF
+  -> dOTF = OTF_perturbed - OTF_ref
+  -> amplitude / phase / sparsity / structure diagnostics
 ```
 
 Outputs:
@@ -276,7 +276,7 @@ to Tier A full-pupil stitching.
 
 ---
 
-### Phase 3.4 — Measured PSF dictionary and LCD_forward export
+### Phase 3.4 - Measured PSF dictionary and LCD_forward export
 
 **Status: planned**
 
@@ -295,11 +295,11 @@ Scripts:
 Flow:
 ```
 representative mask families
-  → single / three-wavelength PSF acquisition
-  → ROI / align / average
-  → PSF dictionary
-  → train / val / test split
-  → LCD_forward-compatible HDF5
+  -> single / three-wavelength PSF acquisition
+  -> ROI / align / average
+  -> PSF dictionary
+  -> train / val / test split
+  -> LCD_forward-compatible HDF5
 ```
 
 `optic_system` side outputs:
@@ -330,12 +330,12 @@ Exit criteria:
 3. Data readable by LCD_forward's `ForwardH5Dataset`.
 4. A simple mask-to-PSF forward baseline can be trained or fitted.
 
-After this phase, the thesis has the "hardware acquisition → data format
-→ forward modelling" main chain.
+After this phase, the thesis has the "hardware acquisition -> data format
+-> forward modelling" main chain.
 
 ---
 
-### Phase 3.5 — Simple forward model validation
+### Phase 3.5 - Simple forward model validation
 
 **Status: planned**
 
@@ -347,7 +347,7 @@ Three-tier model complexity:
 ```
 baseline 0: measured PSF lookup / dictionary
 baseline 1: low-rank PSF basis
-baseline 2: mask statistics / low-dimensional descriptor → PSF basis coefficients
+baseline 2: mask statistics / low-dimensional descriptor -> PSF basis coefficients
 ```
 
 Can be implemented in `LCD_forward` or as standalone analysis scripts.
@@ -383,7 +383,7 @@ still stand on PSF dictionary / PSF basis baselines.
 
 ---
 
-### Phase 3.6 — Three-wavelength multiframe linear reconstruction
+### Phase 3.6 - Three-wavelength multiframe linear reconstruction
 
 **Status: planned**
 
@@ -407,7 +407,7 @@ frames: multi-mask multi-frame per target
 
 Reconstruction model (linear inverse):
 ```
-x_hat = argmin ||A x - y||^2 + λR(x)
+x_hat = argmin ||A x - y||^2 + lambda * R(x)
 ```
 
 Priorities:
@@ -438,7 +438,7 @@ Exit criteria:
 
 ---
 
-### Phase 3.7 — Thesis figures and report freeze
+### Phase 3.7 - Thesis figures and report freeze
 
 **Status: planned**
 
@@ -476,10 +476,10 @@ Recommended thesis narrative:
 
 When this branch closes, the following must hold:
 
-1. PSF difference exceeds repeat noise — re-verified under current framework.
-2. PSF stability across masks — re-verified under current framework.
+1. PSF difference exceeds repeat noise - re-verified under current framework.
+2. PSF stability across masks - re-verified under current framework.
 3. Effective LCD pupil / active region scan complete.
-4. dOTF diagnostic complete — at minimum proving low-dimensional sparse
+4. dOTF diagnostic complete - at minimum proving low-dimensional sparse
    pupil-plane structure (Tier B).
 5. Measured PSF dictionary complete.
 6. `LCD_forward`-compatible HDF5 export working.

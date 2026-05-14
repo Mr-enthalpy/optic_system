@@ -1,4 +1,4 @@
-# Hardware Smoke Capture Guide — Phase 2B
+# Hardware Smoke Capture Guide - Phase 2B
 
 This document describes how to run hardware smoke capture validation on the
 current local experimental setup.
@@ -25,15 +25,15 @@ The software only checks internal consistency and records metadata.
 ## Current Local Hardware Setup
 
 The following values describe the **current local setup** used for Phase 2B
-smoke validation.  They are not universal defaults — replace with your own
+smoke validation.  They are not universal defaults - replace with your own
 hardware configuration.
 
 | Component | Detail |
 |-----------|--------|
-| Camera | FlyCapture2 PT Grey Grasshopper3, serial `15471217`, 2448×2048, raw8 |
+| Camera | FlyCapture2 PT Grey Grasshopper3, serial `15471217`, 2448x2048, raw8 |
 | Camera SDK | ``C:\Program Files\Point Grey Research\FlyCapture2`` |
 | LCD | SDL display index `1`, reported `(2560, 540, 3)`, physical `(2560, 1620)`, subpixel_axis=1 |
-| TLS | Zolix Omni-λ, serial `OM319069`, USB |
+| TLS | Zolix Omni-lambda, serial `OM319069`, USB |
 | TLS SDK | ``tls_c1`` (local deployment) |
 
 ## Environment Variables
@@ -101,7 +101,7 @@ Generated files (``[2560, 1620]`` physical mono, ``uint8``):
 python scripts/capture_forward_dataset.py --plan plans/hardware_smoke_no_tls.yaml --output out.h5 --dry-run
 ```
 
-### 3. Hardware Capture — Camera + LCD
+### 3. Hardware Capture - Camera + LCD
 
 ```cmd
 :: cmd.exe
@@ -129,7 +129,7 @@ python scripts/capture_forward_dataset.py `
   --lcd-subpixel-axis 1
 ```
 
-### 4. Hardware Capture — Camera + LCD + TLS
+### 4. Hardware Capture - Camera + LCD + TLS
 
 ```cmd
 :: cmd.exe
@@ -207,7 +207,7 @@ pytest tests/test_phase2_hardware_smoke.py -v
 Expected hardware test results (current local setup)::
 
 ```
-test_camera_capture_one_hardware   PASSED   serial=15471217  2448×2048
+test_camera_capture_one_hardware   PASSED   serial=15471217  2448x2048
 test_lcd_show_mask_hardware        PASSED   display=1  physical=(2560,1620)
 test_tls_status_hardware           PASSED   device=0  grating=1
 test_capture_no_tls_hardware       PASSED   3 captures  HDF5 valid
