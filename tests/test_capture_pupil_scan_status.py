@@ -23,9 +23,18 @@ def _camera_params(path: Path) -> Path:
         "psf_safety_policy": {
             "rule": "all_frames_all_pixels_strictly_below_full_scale",
             "evaluated_on": "raw_burst_frames",
+            "evaluated_domain": "valid_camera_pixel_domain",
             "allow_full_scale_pixel": False,
             "allow_non_finite_pixel": False,
             "frame_dtype_full_scale": 255,
+            "valid_pixel_domain": {
+                "type": "exclude_top_rows",
+                "top_rows": 1,
+                "source": "unit_test",
+                "frame_shape": [4, 4],
+                "valid_pixel_count": 12,
+                "invalid_pixel_count": 4,
+            },
         },
         "validity": {
             "exposure_safety_valid": True,
@@ -130,6 +139,7 @@ def test_dry_run_writes_frame_stats(tmp_path: Path) -> None:
 
     assert (status_dir / "frame_stats.json").exists()
     stats = json.loads((status_dir / "frame_stats.json").read_text(encoding="utf-8"))
-    assert "max_pixel" in stats
+    assert "max_pixel" not in stats
+    assert "peak_pixel" in stats
     assert "p99_9" in stats
     assert "shape" in stats

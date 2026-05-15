@@ -163,6 +163,83 @@ def test_hardware_mode_without_tls_fails_by_default(tmp_path: Path) -> None:
     assert "cannot prove cross-wavelength safety" in state["error"]
 
 
+def test_hardware_mode_rejects_missing_valid_pixel_artifact_for_exclusion_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _psf_safe_plan(tmp_path)
+    plan["valid_pixel_domain"] = {
+        "type": "exclude_top_rows",
+        "top_rows": 1,
+        "source": "unit_test",
+        "source_artifact": str(tmp_path / "missing_valid_pixel_artifact.json"),
+        "allow_missing_source_artifact": True,
+        "reason": "unit test missing artifact",
+    }
+    status_dir = tmp_path / "status"
+
+    class FakeFrameStreamClient:
+        def __init__(self, recv_timeout_ms: int):
+            self.recv_timeout_ms = recv_timeout_ms
+
+    class FakeFrameCaptureHelper:
+        def __init__(self, frame_stream):
+            self.frame_stream = frame_stream
+
+    class FakeCameraService:
+        def start_stream(self):
+            pass
+
+        def stop_stream(self):
+            pass
+
+    class FakeCameraAdapter:
+        def __init__(self, capture_helper, camera_service):
+            pass
+
+        def acquire_burst(self, k: int):
+            frame = np.full((4, 4), 100.0, dtype=np.float64)
+            burst = np.stack([frame for _ in range(k)], axis=0)
+            return SimpleNamespace(
+                frames_avg=frame,
+                burst=burst,
+                metadata={"frame_dtype_full_scale": 255},
+            )
+
+    class FakeLCD:
+        def make_all_transmissive_mask(self):
+            return np.full((4, 12), 255, dtype=np.uint8)
+
+        def show_mono_mask(self, mask, *, mask_id=None, mode="mono_mask"):
+            return np.zeros((4, 4, 3), dtype=np.uint8)
+
+        def get_metadata(self):
+            return {
+                "display_index": 1,
+                "logical_shape": (4, 4),
+                "physical_shape": (4, 12),
+                "subpixel_axis": 1,
+            }
+
+    monkeypatch.setattr("devices.frame_stream.FrameStreamClient", FakeFrameStreamClient)
+    monkeypatch.setattr("capture.frame_capture.FrameCaptureHelper", FakeFrameCaptureHelper)
+    monkeypatch.setattr("tasks.capture_forward_dataset.CameraCaptureAdapter", FakeCameraAdapter)
+
+    with pytest.raises(RuntimeError, match="source_artifact"):
+        run_psf_safe_exposure(
+            plan,
+            camera_service=FakeCameraService(),
+            lcd_service=FakeLCD(),
+            tls_service=SimpleNamespace(),
+            dry_run=False,
+            status_dir=status_dir,
+        )
+
+    state = json.loads((status_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["completed"] is False
+    assert "artifact_hash" in state["error"]
+
+
 def test_tls_moves_once_per_wavelength_not_per_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

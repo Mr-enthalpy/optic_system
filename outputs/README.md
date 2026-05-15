@@ -19,12 +19,19 @@ provenance rule below.
   `scripts/calibrate_psf_safe_exposure.py`.
 - **Produces:**
   - `camera_params_psf_safe.json` - exposure, gain, frame scale, per-wavelength
-    max-pixel diagnostics, and PSF-safe validity flags.
+    valid-domain peak-pixel diagnostics, invalid-domain artifact diagnostics,
+    and PSF-safe validity flags.
 - **Downstream default:** All Phase 3 captures and analyses must use
   `camera_params_psf_safe.json`.
-- **Validity boundary:** PSF-safe exposure only means local overexposure has
-  been rejected by max-pixel headroom. It does not imply scientific calibration
-  validity, optical alignment validity, or training-ready data.
+- **Validity boundary:** PSF-safe exposure only means every raw burst pixel
+  inside the recorded valid camera pixel domain was strictly below
+  `frame_dtype_full_scale` for the planned wavelengths, and that usable-signal
+  checks were computed over that same domain. It does not imply scientific
+  calibration validity, optical alignment validity, or training-ready data.
+- **Required provenance:** `camera_params_psf_safe.json` must record
+  `psf_safety_policy.evaluated_domain == "valid_camera_pixel_domain"` and a
+  `valid_pixel_domain` block. The raw sweep HDF5 records the same policy under
+  `/valid_pixel_domain`.
 
 ### `outputs/pupil_scan/`
 

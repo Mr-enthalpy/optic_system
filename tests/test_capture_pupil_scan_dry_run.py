@@ -26,9 +26,18 @@ def _camera_params(path: Path) -> Path:
         "psf_safety_policy": {
             "rule": "all_frames_all_pixels_strictly_below_full_scale",
             "evaluated_on": "raw_burst_frames",
+            "evaluated_domain": "valid_camera_pixel_domain",
             "allow_full_scale_pixel": False,
             "allow_non_finite_pixel": False,
             "frame_dtype_full_scale": 255,
+            "valid_pixel_domain": {
+                "type": "exclude_top_rows",
+                "top_rows": 1,
+                "source": "unit_test",
+                "frame_shape": [4, 4],
+                "valid_pixel_count": 12,
+                "invalid_pixel_count": 4,
+            },
         },
         "validity": {
             "exposure_safety_valid": True,
@@ -149,6 +158,26 @@ def test_non_psf_safe_camera_params_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="psf_exposure_safe"):
         run_pupil_scan(plan, dry_run=True)
+
+
+def test_capture_pupil_scan_rejects_missing_valid_pixel_domain(tmp_path: Path) -> None:
+    params = _camera_params(tmp_path / "camera_params_psf_safe.json")
+    payload = json.loads(params.read_text(encoding="utf-8"))
+    del payload["psf_safety_policy"]["valid_pixel_domain"]
+    params.write_text(json.dumps(payload), encoding="utf-8")
+    plan = _plan(tmp_path, params)
+
+    with pytest.raises(ValueError, match="valid_pixel_domain is required"):
+        run_pupil_scan(plan, dry_run=True)
+
+
+def test_capture_pupil_scan_accepts_exclude_top_rows_policy(tmp_path: Path) -> None:
+    params = _camera_params(tmp_path / "camera_params_psf_safe.json")
+    plan = _plan(tmp_path, params)
+
+    out = run_pupil_scan(plan, dry_run=True)
+
+    assert out.exists()
 
 
 def test_accept_psf_safe_camera_params_regardless_of_filename(tmp_path: Path) -> None:

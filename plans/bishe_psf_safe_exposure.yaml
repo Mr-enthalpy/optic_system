@@ -40,6 +40,16 @@ camera_search:
 psf_safety:
   rule: all_frames_all_pixels_strictly_below_full_scale
 
+valid_pixel_domain:
+  type: exclude_top_rows
+  top_rows: 1
+  source: manual_hardware_diagnostic
+  # Before a canonical hardware rerun, refresh this path with
+  # scripts/diagnose_valid_pixel_domain.py so the JSON exists locally.
+  # Missing source_artifact is an intentional fail-fast condition.
+  source_artifact: outputs/diagnostics/shutter_gain_peak_probe/probe_awake_20260515_003644.json
+  reason: unstable top-row full-scale artifacts observed on camera 15471217
+
 diagnostics:
   percentiles: [99.0, 99.9]
 

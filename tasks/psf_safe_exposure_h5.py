@@ -28,7 +28,8 @@ class PsfSafeExposureWriter:
 
     Records wavelength x exposure x gain test rows with strict peak-pixel
     PSF safety metrics.  A setting is PSF-safe only when every raw burst
-    frame pixel is strictly below the dtype full scale.
+    frame pixel within the recorded valid camera pixel domain is strictly
+    below the dtype full scale.
     """
 
     def __init__(self, output_path: str | Path, plan_id: str = "psf_safe_exposure",
@@ -96,6 +97,26 @@ class PsfSafeExposureWriter:
         sweep.create_dataset("p_signal", shape=(0,), maxshape=(None,), dtype=np.float64)
         sweep.create_dataset("dynamic_range", shape=(0,), maxshape=(None,), dtype=np.float64)
         sweep.create_dataset("low_signal", shape=(0,), maxshape=(None,), dtype=bool)
+        sweep.create_dataset("valid_pixel_count", shape=(0,), maxshape=(None,), dtype=np.int64)
+        sweep.create_dataset("invalid_pixel_count", shape=(0,), maxshape=(None,), dtype=np.int64)
+        sweep.create_dataset(
+            "invalid_domain_peak_pixel_burst",
+            shape=(0,),
+            maxshape=(None,),
+            dtype=np.float64,
+        )
+        sweep.create_dataset(
+            "invalid_domain_full_scale_pixel_count",
+            shape=(0,),
+            maxshape=(None,),
+            dtype=np.int64,
+        )
+        sweep.create_dataset(
+            "invalid_domain_nonfinite_pixel_count",
+            shape=(0,),
+            maxshape=(None,),
+            dtype=np.int64,
+        )
         sweep.create_dataset("frame_dtype_full_scale", data=self._full_scale)
         sweep.create_dataset(
             "frame_dtype_full_scale_source",
@@ -107,6 +128,12 @@ class PsfSafeExposureWriter:
 
         lcd_grp = f.require_group("lcd")
         lcd_grp.create_dataset("metadata_json", shape=(1,), dtype=string_dtype)
+
+        vpd_grp = f.require_group("valid_pixel_domain")
+        vpd_grp.create_dataset("policy_json", shape=(1,), dtype=string_dtype)
+        vpd_grp.create_dataset("valid_pixel_count", shape=(1,), dtype=np.int64)
+        vpd_grp.create_dataset("invalid_pixel_count", shape=(1,), dtype=np.int64)
+        vpd_grp.create_dataset("frame_shape", shape=(2,), dtype=np.int64)
 
         cap_grp = f.require_group("capture")
         cap_grp.create_dataset("plan_json", shape=(1,), dtype=string_dtype)
@@ -141,6 +168,19 @@ class PsfSafeExposureWriter:
         _ensure_open(self._file)
         self._file["capture/plan_json"][0] = _json_str(plan_dict)
 
+    def write_valid_pixel_domain(self, policy: dict[str, Any]) -> None:
+        _ensure_open(self._file)
+        group = self._file["valid_pixel_domain"]
+        group["policy_json"][0] = _json_str(policy)
+        group["valid_pixel_count"][0] = int(policy["valid_pixel_count"])
+        group["invalid_pixel_count"][0] = int(policy["invalid_pixel_count"])
+        frame_shape = policy.get("frame_shape")
+        if frame_shape is None or len(frame_shape) != 2:
+            raise PsfSafeExposureWriteError(
+                f"valid pixel domain frame_shape must be length-2, got {frame_shape}"
+            )
+        group["frame_shape"][:] = np.asarray(frame_shape, dtype=np.int64)
+
     def append_sweep_row(
         self,
         wavelength_nm: float,
@@ -158,6 +198,11 @@ class PsfSafeExposureWriter:
         p_signal: float,
         dynamic_range: float,
         low_signal: bool,
+        valid_pixel_count: int,
+        invalid_pixel_count: int,
+        invalid_domain_peak_pixel_burst: float | None,
+        invalid_domain_full_scale_pixel_count: int,
+        invalid_domain_nonfinite_pixel_count: int,
     ) -> None:
         _ensure_open(self._file)
         if self._closed:
@@ -193,6 +238,21 @@ class PsfSafeExposureWriter:
         _append_scalar(f["sweep/p_signal"], p_signal)
         _append_scalar(f["sweep/dynamic_range"], dynamic_range)
         _append_scalar(f["sweep/low_signal"], bool(low_signal))
+        _append_scalar(f["sweep/valid_pixel_count"], int(valid_pixel_count))
+        _append_scalar(f["sweep/invalid_pixel_count"], int(invalid_pixel_count))
+        _append_scalar(
+            f["sweep/invalid_domain_peak_pixel_burst"],
+            invalid_domain_peak_pixel_burst
+            if invalid_domain_peak_pixel_burst is not None else np.nan,
+        )
+        _append_scalar(
+            f["sweep/invalid_domain_full_scale_pixel_count"],
+            int(invalid_domain_full_scale_pixel_count),
+        )
+        _append_scalar(
+            f["sweep/invalid_domain_nonfinite_pixel_count"],
+            int(invalid_domain_nonfinite_pixel_count),
+        )
 
         raw_grp = f["raw"]
         raw_grp.attrs["frame_height"] = avg.shape[0]

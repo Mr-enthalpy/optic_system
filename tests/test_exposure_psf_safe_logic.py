@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from scripts import calibrate_psf_safe_exposure as sweep
 
@@ -14,7 +15,7 @@ def test_full_scale_single_pixel_fails():
     burst = frame[None, :, :]
     metrics = sweep.compute_peak_safety_metrics(burst, FULL)
     assert metrics["psf_safe"] == False
-    assert metrics["unsafe_reason"] == "peak_pixel_at_or_above_full_scale"
+    assert metrics["unsafe_reason"] == "peak_pixel_at_or_above_full_scale_in_valid_domain"
 
 
 def test_all_pixels_strictly_below_full_scale_passes():
@@ -46,7 +47,95 @@ def test_nonfinite_pixel_fails():
     burst = np.array([[[0.0]], [[float("nan")]]], dtype=np.float64)
     metrics = sweep.compute_peak_safety_metrics(burst, FULL)
     assert metrics["psf_safe"] == False
-    assert metrics["unsafe_reason"] == "non_finite_pixel"
+    assert metrics["unsafe_reason"] == "non_finite_pixel_in_valid_domain"
+
+
+def test_invalid_top_row_full_scale_passes_when_excluded():
+    burst = np.zeros((2, 4, 4), dtype=np.float64)
+    burst[:, 0, 3] = 255.0
+    mask = np.ones((4, 4), dtype=bool)
+    mask[0, :] = False
+
+    metrics = sweep.compute_peak_safety_metrics(burst, FULL, valid_pixel_mask=mask)
+
+    assert metrics["psf_safe"] is True
+    assert metrics["invalid_domain_full_scale_pixel_count"] == 2
+    assert metrics["invalid_domain_peak_pixel_burst"] == 255.0
+
+
+def test_valid_domain_full_scale_still_fails_when_top_row_excluded():
+    burst = np.zeros((2, 4, 4), dtype=np.float64)
+    burst[:, 0, 3] = 255.0
+    burst[:, 2, 2] = 255.0
+    mask = np.ones((4, 4), dtype=bool)
+    mask[0, :] = False
+
+    metrics = sweep.compute_peak_safety_metrics(burst, FULL, valid_pixel_mask=mask)
+
+    assert metrics["psf_safe"] is False
+    assert metrics["unsafe_reason"] == "peak_pixel_at_or_above_full_scale_in_valid_domain"
+
+
+def test_nonfinite_in_invalid_domain_is_diagnostic_only():
+    burst = np.zeros((2, 4, 4), dtype=np.float64)
+    burst[:, 0, 1] = float("nan")
+    mask = np.ones((4, 4), dtype=bool)
+    mask[0, :] = False
+
+    metrics = sweep.compute_peak_safety_metrics(burst, FULL, valid_pixel_mask=mask)
+
+    assert metrics["psf_safe"] is True
+    assert metrics["invalid_domain_nonfinite_pixel_count"] == 2
+
+
+def test_nonfinite_in_valid_domain_fails_even_with_exclusion_policy():
+    burst = np.zeros((2, 4, 4), dtype=np.float64)
+    burst[:, 2, 1] = float("nan")
+    mask = np.ones((4, 4), dtype=bool)
+    mask[0, :] = False
+
+    metrics = sweep.compute_peak_safety_metrics(burst, FULL, valid_pixel_mask=mask)
+
+    assert metrics["psf_safe"] is False
+    assert metrics["unsafe_reason"] == "non_finite_pixel_in_valid_domain"
+
+
+def test_signal_metrics_use_valid_domain_pixels():
+    frame = np.array([
+        [10.0, 200.0],
+        [20.0, 210.0],
+    ])
+    left_mask = np.array([
+        [True, False],
+        [True, False],
+    ])
+    right_mask = ~left_mask
+
+    left = sweep.compute_signal_metrics(frame, FULL, valid_pixel_mask=left_mask)
+    right = sweep.compute_signal_metrics(frame, FULL, valid_pixel_mask=right_mask)
+
+    assert left["p_signal"] < right["p_signal"]
+    assert left["dynamic_range"] == pytest.approx(right["dynamic_range"])
+
+
+def test_signal_metrics_ignore_invalid_domain_artifact():
+    frame = np.full((4, 4), 5.0, dtype=np.float64)
+    frame[0, :] = 255.0
+    mask = np.ones((4, 4), dtype=bool)
+    mask[0, :] = False
+
+    metrics = sweep.compute_signal_metrics(
+        frame,
+        FULL,
+        valid_pixel_mask=mask,
+        signal_percentile=99.0,
+        min_signal_fraction_threshold=0.10,
+        min_dynamic_range_fraction=0.01,
+    )
+
+    assert metrics["p_signal"] == 5.0
+    assert metrics["dynamic_range"] == 0.0
+    assert metrics["usable"] is False
 
 
 def test_p99_9_does_not_affect_psf_safety():

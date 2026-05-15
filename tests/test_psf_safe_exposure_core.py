@@ -40,7 +40,7 @@ class TestPeakSafetyMetrics:
         burst[0, 0, 0] = 255.0
         result = compute_peak_safety_metrics(burst, FULL)
         assert result["psf_safe"] == False
-        assert result["unsafe_reason"] == "peak_pixel_at_or_above_full_scale"
+        assert result["unsafe_reason"] == "peak_pixel_at_or_above_full_scale_in_valid_domain"
 
     def test_one_pixel_above_full_scale_fails(self):
         burst = np.ones((3, 20, 20), dtype=np.float64) * 200
@@ -53,7 +53,7 @@ class TestPeakSafetyMetrics:
         burst[0, 0, 0] = float("nan")
         result = compute_peak_safety_metrics(burst, FULL)
         assert result["psf_safe"] == False
-        assert result["unsafe_reason"] == "non_finite_pixel"
+        assert result["unsafe_reason"] == "non_finite_pixel_in_valid_domain"
 
     def test_peak_pixel_burst_is_max_of_all_frames(self):
         burst = np.array([
@@ -81,7 +81,7 @@ class TestPeakSafetyMetrics:
         assert result["peak_pixel_fraction_burst"] == pytest.approx(128.0 / 255.0)
 
     def test_p99_0_and_p99_9_from_avg(self):
-        burst = np.array([[[128.0]]], dtype=np.float64)
+        burst = np.full((1, 10, 10), 128.0, dtype=np.float64)
         avg = np.arange(100, dtype=np.float64).reshape(10, 10)
         result = compute_peak_safety_metrics(
             burst, FULL, avg_frame=avg, diagnostic_percentiles=(99.0, 99.9),
@@ -98,6 +98,43 @@ class TestPeakSafetyMetrics:
         burst = np.full((3, 20, 20), 65534, dtype=np.uint16)
         result = compute_peak_safety_metrics(burst, 65535.0)
         assert result["psf_safe"] == True
+
+    def test_invalid_top_row_full_scale_passes_when_excluded(self):
+        burst = np.zeros((2, 4, 4), dtype=np.float64)
+        burst[:, 0, 1] = 255.0
+        mask = np.ones((4, 4), dtype=bool)
+        mask[0, :] = False
+        result = compute_peak_safety_metrics(burst, FULL, valid_pixel_mask=mask)
+        assert result["psf_safe"] is True
+        assert result["invalid_domain_full_scale_pixel_count"] == 2
+
+    def test_valid_domain_full_scale_fails_with_exclusion_policy(self):
+        burst = np.zeros((2, 4, 4), dtype=np.float64)
+        burst[:, 0, 1] = 255.0
+        burst[:, 2, 2] = 255.0
+        mask = np.ones((4, 4), dtype=bool)
+        mask[0, :] = False
+        result = compute_peak_safety_metrics(burst, FULL, valid_pixel_mask=mask)
+        assert result["psf_safe"] is False
+        assert result["unsafe_reason"] == "peak_pixel_at_or_above_full_scale_in_valid_domain"
+
+    def test_nonfinite_in_invalid_domain_is_diagnostic_only(self):
+        burst = np.zeros((2, 4, 4), dtype=np.float64)
+        burst[:, 0, 1] = float("nan")
+        mask = np.ones((4, 4), dtype=bool)
+        mask[0, :] = False
+        result = compute_peak_safety_metrics(burst, FULL, valid_pixel_mask=mask)
+        assert result["psf_safe"] is True
+        assert result["invalid_domain_nonfinite_pixel_count"] == 2
+
+    def test_nonfinite_in_valid_domain_fails_with_exclusion_policy(self):
+        burst = np.zeros((2, 4, 4), dtype=np.float64)
+        burst[:, 2, 1] = float("nan")
+        mask = np.ones((4, 4), dtype=bool)
+        mask[0, :] = False
+        result = compute_peak_safety_metrics(burst, FULL, valid_pixel_mask=mask)
+        assert result["psf_safe"] is False
+        assert result["unsafe_reason"] == "non_finite_pixel_in_valid_domain"
 
 
 class TestAllWavelengthsSafe:
@@ -122,6 +159,42 @@ class TestAllWavelengthsSafe:
         ]
         worst = _worst_signal_wavelength(results)
         assert worst["p_signal"] == 20.0
+
+
+def test_acquire_and_evaluate_keeps_invalid_artifact_out_of_low_signal():
+    from types import SimpleNamespace
+
+    from scripts.calibrate_psf_safe_exposure import _acquire_and_evaluate
+
+    class FakeCamera:
+        def acquire_burst(self, k: int):
+            burst = np.full((k, 4, 4), 5.0, dtype=np.float64)
+            burst[:, 0, :] = 255.0
+            return SimpleNamespace(
+                frames_avg=burst.mean(axis=0, dtype=np.float64),
+                burst=burst,
+            )
+
+    mask = np.ones((4, 4), dtype=bool)
+    mask[0, :] = False
+
+    row = _acquire_and_evaluate(
+        FakeCamera(),
+        k=3,
+        full_scale=255.0,
+        diagnostics_cfg={},
+        sig_cfg={
+            "percentile": 99.0,
+            "min_signal_fraction_threshold": 0.10,
+            "min_dynamic_range_fraction": 0.01,
+        },
+        valid_pixel_mask=mask,
+    )
+
+    assert row["psf_safe"] is True
+    assert row["low_signal"] is True
+    assert row["p_signal"] == 5.0
+    assert row["invalid_domain_full_scale_pixel_count"] == 12
 
 
 def test_binary_search_returns_last_safe_row_not_last_probe():
@@ -196,6 +269,14 @@ class TestPsfSafeExposureWriter:
         try:
             with PsfSafeExposureWriter(p, plan_id="test") as w:
                 w.write_plan_json({"plan_id": "test"})
+                w.write_valid_pixel_domain(
+                    {
+                        "type": "full_frame",
+                        "frame_shape": [100, 100],
+                        "valid_pixel_count": 10000,
+                        "invalid_pixel_count": 0,
+                    }
+                )
                 frame = np.ones((100, 100), dtype=np.float64) * 128
                 w.append_sweep_row(
                     wavelength_nm=550.0, exposure_us=50000.0, gain_db=0.0,
@@ -205,6 +286,10 @@ class TestPsfSafeExposureWriter:
                     p99_0_avg=127.0, p99_9_avg=127.0,
                     unsafe_reason=None, psf_safe=True,
                     p_signal=128.0, dynamic_range=100.0, low_signal=False,
+                    valid_pixel_count=10000, invalid_pixel_count=0,
+                    invalid_domain_peak_pixel_burst=None,
+                    invalid_domain_full_scale_pixel_count=0,
+                    invalid_domain_nonfinite_pixel_count=0,
                 )
             import h5py
             with h5py.File(p, "r") as f:
@@ -224,6 +309,14 @@ class TestPsfSafeExposureWriter:
         p = Path(d) / "test_multi.h5"
         try:
             with PsfSafeExposureWriter(p, plan_id="multi") as w:
+                w.write_valid_pixel_domain(
+                    {
+                        "type": "full_frame",
+                        "frame_shape": [50, 50],
+                        "valid_pixel_count": 2500,
+                        "invalid_pixel_count": 0,
+                    }
+                )
                 for i in range(5):
                     frame = np.ones((50, 50), dtype=np.float64) * (i * 40)
                     w.append_sweep_row(
@@ -234,6 +327,10 @@ class TestPsfSafeExposureWriter:
                         p99_0_avg=i * 35.0, p99_9_avg=i * 38.0,
                         unsafe_reason=None, psf_safe=True,
                         p_signal=i * 30.0, dynamic_range=i * 30.0, low_signal=False,
+                        valid_pixel_count=2500, invalid_pixel_count=0,
+                        invalid_domain_peak_pixel_burst=None,
+                        invalid_domain_full_scale_pixel_count=0,
+                        invalid_domain_nonfinite_pixel_count=0,
                     )
             import h5py
             with h5py.File(p, "r") as f:
@@ -289,6 +386,11 @@ class TestCameraParamsJSON:
             "psf_safe": True,
             "unsafe_reason": None,
             "low_signal": False,
+            "valid_pixel_count": 100,
+            "invalid_pixel_count": 0,
+            "invalid_domain_peak_pixel_burst": None,
+            "invalid_domain_full_scale_pixel_count": 0,
+            "invalid_domain_nonfinite_pixel_count": 0,
         }]
         accepted = _GainResult(
             gain_db=0.0,
@@ -303,10 +405,13 @@ class TestCameraParamsJSON:
         result = _build_result(plan, accepted, all_results, 255.0, selection_reason="psf_safe")
 
         assert result["psf_safety_policy"]["rule"] == "all_frames_all_pixels_strictly_below_full_scale"
+        assert result["psf_safety_policy"]["evaluated_domain"] == "valid_camera_pixel_domain"
         assert result["psf_safety_policy"]["allow_full_scale_pixel"] is False
+        assert result["psf_safety_policy"]["valid_pixel_domain"]["type"] == "full_frame"
         wl_550 = result["per_wavelength_metrics"]["550.0"]
         assert wl_550["psf_safe"] is True
         assert wl_550["unsafe_reason"] is None
+        assert wl_550["valid_pixel_count"] > 0
         assert "saturated_pixel_count" not in wl_550
         assert "saturated_fraction" not in wl_550
         assert "safe" not in wl_550
@@ -348,6 +453,7 @@ def test_dry_run_produces_h5_and_json(tmp_path):
 
     assert h5_path.exists()
     assert result["psf_safety_policy"]["rule"] == "all_frames_all_pixels_strictly_below_full_scale"
+    assert result["psf_safety_policy"]["evaluated_domain"] == "valid_camera_pixel_domain"
 
 
 class TestPerWavelengthBoundsAndFinalMetrics:
@@ -360,19 +466,31 @@ class TestPerWavelengthBoundsAndFinalMetrics:
              "peak_pixel_fraction_burst": 0.47, "peak_margin_to_full_scale": 135.0,
              "p99_0_avg": 100.0, "p99_9_avg": 115.0,
              "p_signal": 105.0, "dynamic_range": 80.0,
-             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False,
+             "valid_pixel_count": 100, "invalid_pixel_count": 0,
+             "invalid_domain_peak_pixel_burst": None,
+             "invalid_domain_full_scale_pixel_count": 0,
+             "invalid_domain_nonfinite_pixel_count": 0},
             {"wavelength_nm": 550.0, "exposure_us": 8000.0, "gain_db": 0.0,
              "peak_pixel_burst": 125.0, "peak_pixel_avg": 112.0,
              "peak_pixel_fraction_burst": 0.49, "peak_margin_to_full_scale": 130.0,
              "p99_0_avg": 102.0, "p99_9_avg": 118.0,
              "p_signal": 108.0, "dynamic_range": 85.0,
-             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False,
+             "valid_pixel_count": 100, "invalid_pixel_count": 0,
+             "invalid_domain_peak_pixel_burst": None,
+             "invalid_domain_full_scale_pixel_count": 0,
+             "invalid_domain_nonfinite_pixel_count": 0},
             {"wavelength_nm": 650.0, "exposure_us": 8000.0, "gain_db": 0.0,
              "peak_pixel_burst": 118.0, "peak_pixel_avg": 108.0,
              "peak_pixel_fraction_burst": 0.46, "peak_margin_to_full_scale": 137.0,
              "p99_0_avg": 98.0, "p99_9_avg": 113.0,
              "p_signal": 102.0, "dynamic_range": 78.0,
-             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False,
+             "valid_pixel_count": 100, "invalid_pixel_count": 0,
+             "invalid_domain_peak_pixel_burst": None,
+             "invalid_domain_full_scale_pixel_count": 0,
+             "invalid_domain_nonfinite_pixel_count": 0},
         ]
 
         accepted = _GainResult(
@@ -413,13 +531,21 @@ class TestPerWavelengthBoundsAndFinalMetrics:
              "peak_pixel_fraction_burst": 0.4, "peak_margin_to_full_scale": 155.0,
              "p99_0_avg": 80.0, "p99_9_avg": 95.0,
              "p_signal": 85.0, "dynamic_range": 70.0,
-             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False,
+             "valid_pixel_count": 100, "invalid_pixel_count": 0,
+             "invalid_domain_peak_pixel_burst": None,
+             "invalid_domain_full_scale_pixel_count": 0,
+             "invalid_domain_nonfinite_pixel_count": 0},
             {"wavelength_nm": 550.0, "exposure_us": 8000.0, "gain_db": 0.0,
              "peak_pixel_burst": 110.0, "peak_pixel_avg": 95.0,
              "peak_pixel_fraction_burst": 0.43, "peak_margin_to_full_scale": 145.0,
              "p99_0_avg": 85.0, "p99_9_avg": 100.0,
              "p_signal": 90.0, "dynamic_range": 75.0,
-             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False,
+             "valid_pixel_count": 100, "invalid_pixel_count": 0,
+             "invalid_domain_peak_pixel_burst": None,
+             "invalid_domain_full_scale_pixel_count": 0,
+             "invalid_domain_nonfinite_pixel_count": 0},
         ]
         probe_rows = [
             {"wavelength_nm": 450.0, "exposure_us": 20000.0, "gain_db": 0.0,
@@ -427,7 +553,11 @@ class TestPerWavelengthBoundsAndFinalMetrics:
              "peak_pixel_fraction_burst": 0.8, "peak_margin_to_full_scale": 55.0,
              "p99_0_avg": 170.0, "p99_9_avg": 190.0,
              "p_signal": 175.0, "dynamic_range": 150.0,
-             "psf_safe": True, "unsafe_reason": None, "low_signal": False},
+             "psf_safe": True, "unsafe_reason": None, "low_signal": False,
+             "valid_pixel_count": 100, "invalid_pixel_count": 0,
+             "invalid_domain_peak_pixel_burst": None,
+             "invalid_domain_full_scale_pixel_count": 0,
+             "invalid_domain_nonfinite_pixel_count": 0},
         ]
 
         accepted = _GainResult(
