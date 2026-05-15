@@ -36,6 +36,8 @@ camera_search:
   gain_db_max: 24.0
   gain_db_step_db: 3.0
   frames_per_setting: 5
+  camera_param_settle_ms: 300
+  discard_frames_after_camera_param_change: 20
 
 psf_safety:
   rule: all_frames_all_pixels_strictly_below_full_scale
@@ -47,7 +49,7 @@ valid_pixel_domain:
   # Before a canonical hardware rerun, refresh this path with
   # scripts/diagnose_valid_pixel_domain.py so the JSON exists locally.
   # Missing source_artifact is an intentional fail-fast condition.
-  source_artifact: outputs/diagnostics/shutter_gain_peak_probe/probe_awake_20260515_003644.json
+  source_artifact: outputs/diagnostics/shutter_gain_peak_probe/<run_diagnose_valid_pixel_domain_first>.json
   reason: unstable top-row full-scale artifacts observed on camera 15471217
 
 diagnostics:

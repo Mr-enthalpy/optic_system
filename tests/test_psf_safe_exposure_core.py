@@ -197,6 +197,41 @@ def test_acquire_and_evaluate_keeps_invalid_artifact_out_of_low_signal():
     assert row["invalid_domain_full_scale_pixel_count"] == 12
 
 
+def test_acquire_and_evaluate_returns_raw_failure_frame_when_avg_is_below_full_scale():
+    from types import SimpleNamespace
+
+    from scripts.calibrate_psf_safe_exposure import _acquire_and_evaluate
+
+    class FakeCamera:
+        def acquire_burst(self, k: int):
+            burst = np.full((k, 4, 4), 20.0, dtype=np.float64)
+            burst[1, 2, 3] = 255.0
+            return SimpleNamespace(
+                frames_avg=burst.mean(axis=0, dtype=np.float64),
+                burst=burst,
+            )
+
+    row = _acquire_and_evaluate(
+        FakeCamera(),
+        k=3,
+        full_scale=255.0,
+        diagnostics_cfg={},
+        sig_cfg={
+            "percentile": 99.0,
+            "min_signal_fraction_threshold": 0.01,
+            "min_dynamic_range_fraction": 0.0,
+        },
+    )
+
+    assert row["psf_safe"] is False
+    assert row["peak_pixel_avg"] < 255.0
+    assert row["valid_domain_peak_frame_index"] == 1
+    assert row["valid_domain_peak_y"] == 2
+    assert row["valid_domain_peak_x"] == 3
+    assert row["failure_frame_kind"] == "raw_burst_peak_frame"
+    assert row["failure_frame"][2, 3] == 255.0
+
+
 def test_binary_search_returns_last_safe_row_not_last_probe():
     class FakeCamera:
         def __init__(self):
