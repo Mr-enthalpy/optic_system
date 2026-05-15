@@ -99,7 +99,9 @@ invalid-domain diagnostics.
 For the canonical `exclude_top_rows` policy, run
 `scripts/diagnose_valid_pixel_domain.py` before hardware Phase 3.0.5b and
 update the plan's `valid_pixel_domain.source_artifact` to the generated JSON.
-If that artifact is missing, hardware calibration fails fast by design.
+The committed plan intentionally keeps a placeholder artifact path so a fresh
+checkout does not look silently configured with local lab evidence. If the
+artifact is missing, hardware calibration fails fast by design.
 
 Phase 3.1 capture scripts require `camera_params_psf_safe.json` to carry
 `psf_safety_policy.evaluated_domain == "valid_camera_pixel_domain"` and a

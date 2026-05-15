@@ -57,6 +57,8 @@ def test_dry_run_writes_status_when_status_dir_specified(tmp_path: Path) -> None
     state = json.loads((status_dir / "state.json").read_text(encoding="utf-8"))
     assert state["plan_id"] == plan["plan_id"]
     assert state["phase"] == "3.0.5b"
+    assert state["completed"] is True
+    assert state["camera_gain_db"] == result["global_safe_camera"]["gain_db"]
 
 
 def test_dry_run_writes_log_jsonl(tmp_path: Path) -> None:

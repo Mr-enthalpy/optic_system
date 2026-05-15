@@ -74,6 +74,9 @@ def test_valid_domain_full_scale_still_fails_when_top_row_excluded():
 
     assert metrics["psf_safe"] is False
     assert metrics["unsafe_reason"] == "peak_pixel_at_or_above_full_scale_in_valid_domain"
+    assert metrics["valid_domain_full_scale_pixel_count"] == 2
+    assert metrics["valid_domain_full_scale_sample_coords"][0]["y"] == 2
+    assert metrics["valid_domain_full_scale_sample_coords"][0]["x"] == 2
 
 
 def test_nonfinite_in_invalid_domain_is_diagnostic_only():

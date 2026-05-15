@@ -215,6 +215,10 @@ def compute_peak_safety_metrics(
     valid_pixels = burst_arr[:, valid_mask]
     valid_finite = bool(np.isfinite(valid_pixels).all())
     peak_pixel_burst = float(np.max(valid_pixels)) if valid_finite else float("inf")
+    valid_eval = np.where(valid_mask[None, :, :], burst_arr, -np.inf)
+    finite_valid_eval = np.where(np.isfinite(valid_eval), valid_eval, -np.inf)
+    peak_flat_idx = int(np.argmax(finite_valid_eval))
+    peak_frame_idx, peak_y, peak_x = np.unravel_index(peak_flat_idx, burst_arr.shape)
 
     psf_safe = bool(valid_finite and peak_pixel_burst < float(full_scale))
     unsafe_reason: str | None = None
@@ -244,6 +248,21 @@ def compute_peak_safety_metrics(
     invalid_domain_peak_pixel_burst: float | None = None
     invalid_domain_full_scale_pixel_count = 0
     invalid_domain_nonfinite_pixel_count = 0
+    valid_full_scale_mask = (
+        np.isfinite(burst_arr)
+        & (burst_arr >= float(full_scale))
+        & valid_mask[None, :, :]
+    )
+    valid_domain_full_scale_pixel_count = int(np.count_nonzero(valid_full_scale_mask))
+    valid_domain_full_scale_sample_coords = [
+        {
+            "frame": int(frame_idx),
+            "y": int(y),
+            "x": int(x),
+            "value": float(burst_arr[frame_idx, y, x]),
+        }
+        for frame_idx, y, x in np.argwhere(valid_full_scale_mask)[:20]
+    ]
     if np.any(invalid_mask):
         invalid_pixels = burst_arr[:, invalid_mask]
         invalid_domain_nonfinite_pixel_count = int(np.count_nonzero(~np.isfinite(invalid_pixels)))
@@ -270,6 +289,11 @@ def compute_peak_safety_metrics(
         "p99_9_avg": p99_9_avg,
         "valid_pixel_count": int(np.count_nonzero(valid_mask)),
         "invalid_pixel_count": int(np.count_nonzero(invalid_mask)),
+        "valid_domain_peak_frame_index": int(peak_frame_idx),
+        "valid_domain_peak_y": int(peak_y),
+        "valid_domain_peak_x": int(peak_x),
+        "valid_domain_full_scale_pixel_count": valid_domain_full_scale_pixel_count,
+        "valid_domain_full_scale_sample_coords": valid_domain_full_scale_sample_coords,
         "invalid_domain_peak_pixel_burst": invalid_domain_peak_pixel_burst,
         "invalid_domain_full_scale_pixel_count": invalid_domain_full_scale_pixel_count,
         "invalid_domain_nonfinite_pixel_count": invalid_domain_nonfinite_pixel_count,
@@ -412,7 +436,7 @@ def _acquire_and_evaluate(
         min_signal_fraction_threshold=sig_cfg["min_signal_fraction_threshold"],
         min_dynamic_range_fraction=sig_cfg["min_dynamic_range_fraction"],
     )
-    return {
+    row = {
         "frame": avg,
         "psf_safe": safety["psf_safe"],
         "unsafe_reason": safety["unsafe_reason"],
@@ -427,10 +451,37 @@ def _acquire_and_evaluate(
         "low_signal": not sig["usable"],
         "valid_pixel_count": safety["valid_pixel_count"],
         "invalid_pixel_count": safety["invalid_pixel_count"],
+        "valid_domain_peak_frame_index": safety["valid_domain_peak_frame_index"],
+        "valid_domain_peak_y": safety["valid_domain_peak_y"],
+        "valid_domain_peak_x": safety["valid_domain_peak_x"],
+        "valid_domain_full_scale_pixel_count": safety["valid_domain_full_scale_pixel_count"],
+        "valid_domain_full_scale_sample_coords": safety["valid_domain_full_scale_sample_coords"],
         "invalid_domain_peak_pixel_burst": safety["invalid_domain_peak_pixel_burst"],
         "invalid_domain_full_scale_pixel_count": safety["invalid_domain_full_scale_pixel_count"],
         "invalid_domain_nonfinite_pixel_count": safety["invalid_domain_nonfinite_pixel_count"],
     }
+    if not row["psf_safe"]:
+        row["failure_frame"] = burst[int(safety["valid_domain_peak_frame_index"])]
+        row["failure_frame_kind"] = "raw_burst_peak_frame"
+    else:
+        row["failure_frame"] = None
+        row["failure_frame_kind"] = None
+    return row
+
+
+def _apply_camera_params_and_settle(
+    camera_adapter,
+    *,
+    exposure_us: float,
+    gain_db: float,
+    settle_ms: float = 0.0,
+    discard_frames: int = 0,
+) -> None:
+    camera_adapter.apply_camera_params(exposure_us=exposure_us, gain_db=gain_db)
+    if settle_ms > 0:
+        time.sleep(float(settle_ms) / 1000.0)
+    if discard_frames > 0:
+        camera_adapter.acquire_burst(int(discard_frames))
 
 
 def _all_wavelengths_safe(results_per_wl: list[dict]) -> bool:
@@ -452,6 +503,8 @@ def _estimate_safe_bound_for_wavelength(
     R: float,
     gain_db: float,
     valid_pixel_mask: np.ndarray | None = None,
+    camera_param_settle_ms: float = 0.0,
+    discard_frames_after_param_change: int = 0,
     eps_absolute: float = 50.0,
     max_iter: int = 30,
     on_probe: Any | None = None,
@@ -459,7 +512,13 @@ def _estimate_safe_bound_for_wavelength(
     R = float(R)
     L = float(L)
 
-    camera_adapter.apply_camera_params(exposure_us=R, gain_db=gain_db)
+    _apply_camera_params_and_settle(
+        camera_adapter,
+        exposure_us=R,
+        gain_db=gain_db,
+        settle_ms=camera_param_settle_ms,
+        discard_frames=discard_frames_after_param_change,
+    )
     row = _acquire_and_evaluate(
         camera_adapter,
         k,
@@ -473,7 +532,13 @@ def _estimate_safe_bound_for_wavelength(
     if row["psf_safe"]:
         return R, row
 
-    camera_adapter.apply_camera_params(exposure_us=L, gain_db=gain_db)
+    _apply_camera_params_and_settle(
+        camera_adapter,
+        exposure_us=L,
+        gain_db=gain_db,
+        settle_ms=camera_param_settle_ms,
+        discard_frames=discard_frames_after_param_change,
+    )
     row = _acquire_and_evaluate(
         camera_adapter,
         k,
@@ -493,7 +558,13 @@ def _estimate_safe_bound_for_wavelength(
         if R - L < eps_absolute:
             break
         mid = (L + R) / 2.0
-        camera_adapter.apply_camera_params(exposure_us=mid, gain_db=gain_db)
+        _apply_camera_params_and_settle(
+            camera_adapter,
+            exposure_us=mid,
+            gain_db=gain_db,
+            settle_ms=camera_param_settle_ms,
+            discard_frames=discard_frames_after_param_change,
+        )
         row = _acquire_and_evaluate(
             camera_adapter,
             k,
@@ -553,6 +624,10 @@ def run_psf_safe_exposure(
     gain_max = float(search_cfg["gain_db_max"])
     gain_step = float(search_cfg["gain_db_step_db"])
     k = int(search_cfg["frames_per_setting"])
+    camera_param_settle_ms = float(search_cfg.get("camera_param_settle_ms", 0.0))
+    discard_frames_after_param_change = int(
+        search_cfg.get("discard_frames_after_camera_param_change", 0)
+    )
 
     output_raw = plan["output"]["raw_h5"]
     output_json = plan["output"]["camera_params_json"]
@@ -720,7 +795,10 @@ def run_psf_safe_exposure(
                 "invalid_pixel_count": valid_domain_policy["invalid_pixel_count"],
             })
         run_status.append_log("INFO", "PSF-safe exposure calibration started",
-                              exposure_start_us=exposure_start, gain_min_db=gain_min)
+                              exposure_start_us=exposure_start,
+                              gain_min_db=gain_min,
+                              camera_param_settle_ms=camera_param_settle_ms,
+                              discard_frames_after_camera_param_change=discard_frames_after_param_change)
         if not dry_run and tls_service is None and allow_wavelength_labels_without_tls:
             run_status.append_log(
                 "WARNING",
@@ -808,6 +886,11 @@ def run_psf_safe_exposure(
             )
             run_status.write_frame_stats({
                 "preview_kind": phase_label,
+                "preview_frame_kind": (
+                    row.get("failure_frame_kind")
+                    if not bool(row["psf_safe"]) and row.get("failure_frame") is not None
+                    else "averaged_frame"
+                ),
                 "wavelength_nm": wl_nm,
                 "exposure_us": at_exposure,
                 "gain_db": at_gain,
@@ -824,6 +907,11 @@ def run_psf_safe_exposure(
                 "valid_pixel_domain_type": valid_domain_policy["type"],
                 "valid_pixel_count": row["valid_pixel_count"],
                 "invalid_pixel_count": row["invalid_pixel_count"],
+                "valid_domain_peak_frame_index": row.get("valid_domain_peak_frame_index"),
+                "valid_domain_peak_y": row.get("valid_domain_peak_y"),
+                "valid_domain_peak_x": row.get("valid_domain_peak_x"),
+                "valid_domain_full_scale_pixel_count": row.get("valid_domain_full_scale_pixel_count"),
+                "valid_domain_full_scale_sample_coords": row.get("valid_domain_full_scale_sample_coords"),
                 "invalid_domain_peak_pixel_burst": row["invalid_domain_peak_pixel_burst"],
                 "invalid_domain_full_scale_pixel_count": row["invalid_domain_full_scale_pixel_count"],
                 "invalid_domain_nonfinite_pixel_count": row["invalid_domain_nonfinite_pixel_count"],
@@ -834,7 +922,12 @@ def run_psf_safe_exposure(
                 or not bool(row["psf_safe"])
             )
             if should_write_preview:
-                run_status.write_frame_preview(row["frame"])
+                preview_frame = (
+                    row.get("failure_frame")
+                    if not bool(row["psf_safe"]) and row.get("failure_frame") is not None
+                    else row["frame"]
+                )
+                run_status.write_frame_preview(preview_frame)
             run_status.append_log(
                 "INFO", "exposure trial evaluated",
                 phase=phase_label,
@@ -843,6 +936,8 @@ def run_psf_safe_exposure(
                 gain_db=at_gain,
                 psf_safe=row["psf_safe"],
                 peak_pixel_burst=row["peak_pixel_burst"],
+                valid_domain_full_scale_pixel_count=row.get("valid_domain_full_scale_pixel_count"),
+                valid_domain_full_scale_sample_coords=row.get("valid_domain_full_scale_sample_coords"),
             )
             if row["invalid_domain_full_scale_pixel_count"] > 0:
                 run_status.append_log(
@@ -856,7 +951,10 @@ def run_psf_safe_exposure(
                     invalid_domain_peak_pixel_burst=row["invalid_domain_peak_pixel_burst"],
                 )
 
-            all_results.append(row)
+            all_results.append({
+                key: value for key, value in row.items()
+                if key not in {"failure_frame"}
+            })
 
             wl_label = f"{wl_nm}nm"
             safe_label = "SAFE" if row["psf_safe"] else f"UNSAFE: {row.get('unsafe_reason', 'unknown')}"
@@ -887,6 +985,8 @@ def run_psf_safe_exposure(
                 diagnostics_cfg=diagnostics_cfg, sig_cfg=sig_cfg,
                 L=exposure_min, R=R_upper, gain_db=at_gain,
                 valid_pixel_mask=valid_pixel_mask,
+                camera_param_settle_ms=camera_param_settle_ms,
+                discard_frames_after_param_change=discard_frames_after_param_change,
                 eps_absolute=binary_search_eps,
                 on_probe=_record_probe,
             )
@@ -900,7 +1000,13 @@ def run_psf_safe_exposure(
             print(f"\n  [{phase_label} verification at exposure={at_exposure:.1f} gain={at_gain:.1f}]")
             for wl in wls:
                 wl_nm = _set_wavelength_once(wl)
-                camera_adapter.apply_camera_params(exposure_us=at_exposure, gain_db=at_gain)
+                _apply_camera_params_and_settle(
+                    camera_adapter,
+                    exposure_us=at_exposure,
+                    gain_db=at_gain,
+                    settle_ms=camera_param_settle_ms,
+                    discard_frames=discard_frames_after_param_change,
+                )
                 row = _acquire_and_evaluate(
                     camera_adapter,
                     k,
@@ -1045,8 +1151,8 @@ def run_psf_safe_exposure(
                               selection_reason=selection_reason)
         run_status.update(
             completed=True,
-            camera_exposure_us=float(safe_exposure) if safe_exposure else None,
-            camera_gain_db=float(safe_gain) if safe_gain else None,
+            camera_exposure_us=float(safe_exposure) if safe_exposure is not None else None,
+            camera_gain_db=float(safe_gain) if safe_gain is not None else None,
         )
         writer.finalize(completed=True)
 
