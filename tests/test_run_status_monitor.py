@@ -74,7 +74,7 @@ def test_write_frame_stats_and_reader(tmp_path: Path) -> None:
     stats = {
         "max_pixel": np.uint16(31),
         "p99_9": 28.5,
-        "saturated_fraction": 0.0,
+        "peak_pixel_fraction_burst": 31.0 / 255.0,
         "timestamp_ns": 123,
     }
 
@@ -88,7 +88,7 @@ def test_write_frame_stats_and_reader(tmp_path: Path) -> None:
     assert loaded == {
         "max_pixel": 31,
         "p99_9": 28.5,
-        "saturated_fraction": 0.0,
+        "peak_pixel_fraction_burst": 31.0 / 255.0,
         "timestamp_ns": 123,
     }
 

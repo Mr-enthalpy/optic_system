@@ -193,31 +193,67 @@ def compute_peak_safety_metrics(
     full_scale: float,
     *,
     avg_frame: np.ndarray | None = None,
+    valid_pixel_mask: np.ndarray | None = None,
     diagnostic_percentiles: tuple[float, ...] = (99.0, 99.9),
 ) -> dict[str, Any]:
     burst_arr = np.asarray(burst, dtype=np.float64)
-    finite = np.isfinite(burst_arr).all()
-    peak_pixel_burst = float(np.max(burst_arr)) if finite else float("inf")
+    if burst_arr.ndim != 3:
+        raise ValueError(f"burst must be 3D [K, H, W], got shape {burst_arr.shape}")
+    if valid_pixel_mask is None:
+        valid_mask = np.ones(burst_arr.shape[-2:], dtype=bool)
+    else:
+        valid_mask = np.asarray(valid_pixel_mask, dtype=bool)
+    if valid_mask.shape != burst_arr.shape[-2:]:
+        raise ValueError(
+            f"valid_pixel_mask shape {valid_mask.shape} does not match frame shape "
+            f"{burst_arr.shape[-2:]}"
+        )
+    if not np.any(valid_mask):
+        raise ValueError("valid_pixel_mask leaves zero valid pixels")
 
-    psf_safe = finite and peak_pixel_burst < float(full_scale)
+    invalid_mask = ~valid_mask
+    valid_pixels = burst_arr[:, valid_mask]
+    valid_finite = bool(np.isfinite(valid_pixels).all())
+    peak_pixel_burst = float(np.max(valid_pixels)) if valid_finite else float("inf")
+
+    psf_safe = bool(valid_finite and peak_pixel_burst < float(full_scale))
     unsafe_reason: str | None = None
-    if not finite:
-        unsafe_reason = "non_finite_pixel"
+    if not valid_finite:
+        unsafe_reason = "non_finite_pixel_in_valid_domain"
     elif peak_pixel_burst >= float(full_scale):
-        unsafe_reason = "peak_pixel_at_or_above_full_scale"
+        unsafe_reason = "peak_pixel_at_or_above_full_scale_in_valid_domain"
 
     peak_pixel_avg: float | None = None
     p99_0_avg: float | None = None
     p99_9_avg: float | None = None
     if avg_frame is not None:
         avg = np.asarray(avg_frame, dtype=np.float64)
-        peak_pixel_avg = float(np.max(avg))
+        if avg.shape != valid_mask.shape:
+            raise ValueError(
+                f"avg_frame shape {avg.shape} does not match valid mask shape {valid_mask.shape}"
+            )
+        avg_valid = avg[valid_mask]
+        peak_pixel_avg = float(np.max(avg_valid))
         for pct in diagnostic_percentiles:
-            val = float(np.percentile(avg, pct))
+            val = float(np.percentile(avg_valid, pct))
             if pct == 99.0:
                 p99_0_avg = val
             elif pct == 99.9:
                 p99_9_avg = val
+
+    invalid_domain_peak_pixel_burst: float | None = None
+    invalid_domain_full_scale_pixel_count = 0
+    invalid_domain_nonfinite_pixel_count = 0
+    if np.any(invalid_mask):
+        invalid_pixels = burst_arr[:, invalid_mask]
+        invalid_domain_nonfinite_pixel_count = int(np.count_nonzero(~np.isfinite(invalid_pixels)))
+        if invalid_pixels.size > 0:
+            finite_invalid_pixels = invalid_pixels[np.isfinite(invalid_pixels)]
+            if finite_invalid_pixels.size > 0:
+                invalid_domain_peak_pixel_burst = float(np.max(finite_invalid_pixels))
+            invalid_domain_full_scale_pixel_count = int(
+                np.count_nonzero(np.isfinite(invalid_pixels) & (invalid_pixels >= float(full_scale)))
+            )
 
     peak_pixel_fraction_burst = peak_pixel_burst / float(full_scale) if float(full_scale) > 0 else float("inf")
     peak_margin_to_full_scale = float(full_scale) - peak_pixel_burst
@@ -232,21 +268,39 @@ def compute_peak_safety_metrics(
         "frame_dtype_full_scale": float(full_scale),
         "p99_0_avg": p99_0_avg,
         "p99_9_avg": p99_9_avg,
+        "valid_pixel_count": int(np.count_nonzero(valid_mask)),
+        "invalid_pixel_count": int(np.count_nonzero(invalid_mask)),
+        "invalid_domain_peak_pixel_burst": invalid_domain_peak_pixel_burst,
+        "invalid_domain_full_scale_pixel_count": invalid_domain_full_scale_pixel_count,
+        "invalid_domain_nonfinite_pixel_count": invalid_domain_nonfinite_pixel_count,
     }
 
 
 def compute_signal_metrics(
     frame: np.ndarray,
     full_scale: float,
+    *,
+    valid_pixel_mask: np.ndarray | None = None,
     signal_percentile: float = 99.0,
     min_signal_fraction_threshold: float = 0.10,
     min_dynamic_range_fraction: float = 0.08,
 ) -> dict[str, Any]:
-    p_signal = float(np.percentile(frame, signal_percentile))
-    p1 = float(np.percentile(frame, 1.0))
+    arr = np.asarray(frame, dtype=np.float64)
+    if valid_pixel_mask is not None:
+        mask = np.asarray(valid_pixel_mask, dtype=bool)
+        if mask.shape != arr.shape:
+            raise ValueError(
+                f"valid_pixel_mask shape {mask.shape} does not match frame shape {arr.shape}"
+            )
+        if not np.any(mask):
+            raise ValueError("valid_pixel_mask leaves zero valid pixels")
+        arr = arr[mask]
+
+    p_signal = float(np.percentile(arr, signal_percentile))
+    p1 = float(np.percentile(arr, 1.0))
     dynamic_range = p_signal - p1
 
-    usable = (
+    usable = bool(
         p_signal > full_scale * min_signal_fraction_threshold
         and dynamic_range > full_scale * min_dynamic_range_fraction
     )
@@ -336,6 +390,8 @@ def _acquire_and_evaluate(
     full_scale: float,
     diagnostics_cfg: dict,
     sig_cfg: dict,
+    *,
+    valid_pixel_mask: np.ndarray | None = None,
 ) -> dict[str, Any]:
     capture = camera_adapter.acquire_burst(k)
     avg = capture.frames_avg
@@ -343,10 +399,15 @@ def _acquire_and_evaluate(
 
     pcts = tuple(float(p) for p in diagnostics_cfg.get("percentiles", [99.0, 99.9]))
     safety = compute_peak_safety_metrics(
-        burst, full_scale, avg_frame=avg, diagnostic_percentiles=pcts,
+        burst,
+        full_scale,
+        avg_frame=avg,
+        valid_pixel_mask=valid_pixel_mask,
+        diagnostic_percentiles=pcts,
     )
     sig = compute_signal_metrics(
         avg, full_scale,
+        valid_pixel_mask=valid_pixel_mask,
         signal_percentile=sig_cfg["percentile"],
         min_signal_fraction_threshold=sig_cfg["min_signal_fraction_threshold"],
         min_dynamic_range_fraction=sig_cfg["min_dynamic_range_fraction"],
@@ -364,6 +425,11 @@ def _acquire_and_evaluate(
         "p_signal": sig["p_signal"],
         "dynamic_range": sig["dynamic_range"],
         "low_signal": not sig["usable"],
+        "valid_pixel_count": safety["valid_pixel_count"],
+        "invalid_pixel_count": safety["invalid_pixel_count"],
+        "invalid_domain_peak_pixel_burst": safety["invalid_domain_peak_pixel_burst"],
+        "invalid_domain_full_scale_pixel_count": safety["invalid_domain_full_scale_pixel_count"],
+        "invalid_domain_nonfinite_pixel_count": safety["invalid_domain_nonfinite_pixel_count"],
     }
 
 
@@ -385,6 +451,7 @@ def _estimate_safe_bound_for_wavelength(
     L: float,
     R: float,
     gain_db: float,
+    valid_pixel_mask: np.ndarray | None = None,
     eps_absolute: float = 50.0,
     max_iter: int = 30,
     on_probe: Any | None = None,
@@ -393,14 +460,28 @@ def _estimate_safe_bound_for_wavelength(
     L = float(L)
 
     camera_adapter.apply_camera_params(exposure_us=R, gain_db=gain_db)
-    row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
+    row = _acquire_and_evaluate(
+        camera_adapter,
+        k,
+        full_scale,
+        diagnostics_cfg,
+        sig_cfg,
+        valid_pixel_mask=valid_pixel_mask,
+    )
     if on_probe is not None:
         on_probe(R, row, "bracket_upper")
     if row["psf_safe"]:
         return R, row
 
     camera_adapter.apply_camera_params(exposure_us=L, gain_db=gain_db)
-    row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
+    row = _acquire_and_evaluate(
+        camera_adapter,
+        k,
+        full_scale,
+        diagnostics_cfg,
+        sig_cfg,
+        valid_pixel_mask=valid_pixel_mask,
+    )
     if on_probe is not None:
         on_probe(L, row, "bracket_lower")
     if not row["psf_safe"]:
@@ -413,7 +494,14 @@ def _estimate_safe_bound_for_wavelength(
             break
         mid = (L + R) / 2.0
         camera_adapter.apply_camera_params(exposure_us=mid, gain_db=gain_db)
-        row = _acquire_and_evaluate(camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg)
+        row = _acquire_and_evaluate(
+            camera_adapter,
+            k,
+            full_scale,
+            diagnostics_cfg,
+            sig_cfg,
+            valid_pixel_mask=valid_pixel_mask,
+        )
         if on_probe is not None:
             on_probe(mid, row, "bisect")
         if row["psf_safe"]:
@@ -448,6 +536,7 @@ def run_psf_safe_exposure(
     status_preview_every: int = 1,
 ) -> tuple[Path, dict[str, Any]]:
     _ensure_sys_path()
+    from diagnostics.valid_pixel_domain import build_valid_pixel_mask
     from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
 
     plan_id = plan["plan_id"]
@@ -494,6 +583,8 @@ def run_psf_safe_exposure(
     writer: PsfSafeExposureWriter | None = None
     fast_preview_pump: _FastStatusPreviewPump | None = None
     full_scale_source: str = "unknown"
+    valid_domain_policy: dict[str, Any] | None = None
+    valid_pixel_mask: np.ndarray | None = None
 
     try:
         lcd_metadata: dict[str, Any]
@@ -530,10 +621,28 @@ def run_psf_safe_exposure(
             full_scale, full_scale_source = _resolve_frame_full_scale(
                 first_frame, plan, dry_run=False,
             )
+            valid_domain = build_valid_pixel_mask(
+                tuple(np.asarray(first_frame.frames_avg).shape[-2:]),
+                plan.get("valid_pixel_domain"),
+            )
+            valid_pixel_mask = valid_domain.mask
+            valid_domain_policy = valid_domain.policy_json()
             lcd_metadata = lcd_service.get_metadata()
         else:
             camera_adapter = _make_fake_adapter()
             full_scale, full_scale_source = _resolve_dry_run_full_scale(plan)
+            camera_adapter.apply_camera_params(
+                exposure_us=exposure_start,
+                gain_db=gain_min,
+            )
+            first_frame = camera_adapter.acquire_burst(1)
+            initial_frame_preview = np.asarray(first_frame.frames_avg)
+            valid_domain = build_valid_pixel_mask(
+                tuple(np.asarray(first_frame.frames_avg).shape[-2:]),
+                plan.get("valid_pixel_domain"),
+            )
+            valid_pixel_mask = valid_domain.mask
+            valid_domain_policy = valid_domain.policy_json()
             lcd_metadata = {
                 "display_index": -1,
                 "subpixel_axis": 1,
@@ -542,6 +651,19 @@ def run_psf_safe_exposure(
                 "mode": "fake",
             }
             current_mask_preview = np.full((8, 24), 255, dtype=np.uint8)
+
+        if (
+            not dry_run
+            and valid_domain_policy["type"] != "full_frame"
+            and not valid_domain_policy.get("artifact_hash")
+        ):
+            raise RuntimeError(
+                "Hardware PSF-safe exposure runs with a non-full-frame "
+                "valid_pixel_domain require an existing source_artifact with "
+                "a recorded artifact_hash. Re-run "
+                "scripts/diagnose_valid_pixel_domain.py or use an explicit "
+                "dry-run/test fixture instead."
+            )
 
         writer = PsfSafeExposureWriter(
             output_raw,
@@ -552,6 +674,7 @@ def run_psf_safe_exposure(
         writer.set_full_scale(int(full_scale), source=full_scale_source)
         writer.write_plan_json(plan)
         writer.write_lcd_metadata(lcd_metadata)
+        writer.write_valid_pixel_domain(valid_domain_policy)
 
         run_status.update(
             plan_id=plan_id,
@@ -573,6 +696,16 @@ def run_psf_safe_exposure(
             frame_dtype_full_scale=int(full_scale),
             full_scale_source=full_scale_source,
         )
+        run_status.append_log(
+            "INFO",
+            "valid pixel domain resolved",
+            valid_pixel_domain_type=valid_domain_policy["type"],
+            valid_pixel_count=valid_domain_policy["valid_pixel_count"],
+            invalid_pixel_count=valid_domain_policy["invalid_pixel_count"],
+            source_artifact=valid_domain_policy.get("source_artifact"),
+            source_artifact_exists=valid_domain_policy.get("source_artifact_exists"),
+            artifact_hash=valid_domain_policy.get("artifact_hash"),
+        )
         if current_mask_preview is not None:
             run_status.write_mask_preview(current_mask_preview)
         if initial_frame_preview is not None:
@@ -582,6 +715,9 @@ def run_psf_safe_exposure(
                 "peak_pixel_avg": float(np.max(initial_frame_preview)),
                 "frame_dtype_full_scale": int(full_scale),
                 "shape": list(np.asarray(initial_frame_preview).shape),
+                "valid_pixel_domain_type": valid_domain_policy["type"],
+                "valid_pixel_count": valid_domain_policy["valid_pixel_count"],
+                "invalid_pixel_count": valid_domain_policy["invalid_pixel_count"],
             })
         run_status.append_log("INFO", "PSF-safe exposure calibration started",
                               exposure_start_us=exposure_start, gain_min_db=gain_min)
@@ -655,6 +791,11 @@ def run_psf_safe_exposure(
                 p_signal=row["p_signal"],
                 dynamic_range=row["dynamic_range"],
                 low_signal=row["low_signal"],
+                valid_pixel_count=row["valid_pixel_count"],
+                invalid_pixel_count=row["invalid_pixel_count"],
+                invalid_domain_peak_pixel_burst=row["invalid_domain_peak_pixel_burst"],
+                invalid_domain_full_scale_pixel_count=row["invalid_domain_full_scale_pixel_count"],
+                invalid_domain_nonfinite_pixel_count=row["invalid_domain_nonfinite_pixel_count"],
             )
 
             trial_idx = len(all_results) + 1
@@ -680,6 +821,12 @@ def run_psf_safe_exposure(
                 "psf_safe": row["psf_safe"],
                 "unsafe_reason": row["unsafe_reason"],
                 "frame_dtype_full_scale": int(full_scale),
+                "valid_pixel_domain_type": valid_domain_policy["type"],
+                "valid_pixel_count": row["valid_pixel_count"],
+                "invalid_pixel_count": row["invalid_pixel_count"],
+                "invalid_domain_peak_pixel_burst": row["invalid_domain_peak_pixel_burst"],
+                "invalid_domain_full_scale_pixel_count": row["invalid_domain_full_scale_pixel_count"],
+                "invalid_domain_nonfinite_pixel_count": row["invalid_domain_nonfinite_pixel_count"],
                 "shape": list(np.asarray(row["frame"]).shape),
             })
             should_write_preview = (
@@ -697,6 +844,17 @@ def run_psf_safe_exposure(
                 psf_safe=row["psf_safe"],
                 peak_pixel_burst=row["peak_pixel_burst"],
             )
+            if row["invalid_domain_full_scale_pixel_count"] > 0:
+                run_status.append_log(
+                    "WARNING",
+                    "full-scale pixels observed outside valid pixel domain",
+                    phase=phase_label,
+                    wavelength_nm=wl_nm,
+                    exposure_us=at_exposure,
+                    gain_db=at_gain,
+                    invalid_domain_full_scale_pixel_count=row["invalid_domain_full_scale_pixel_count"],
+                    invalid_domain_peak_pixel_burst=row["invalid_domain_peak_pixel_burst"],
+                )
 
             all_results.append(row)
 
@@ -728,6 +886,7 @@ def run_psf_safe_exposure(
                 k=k, full_scale=full_scale,
                 diagnostics_cfg=diagnostics_cfg, sig_cfg=sig_cfg,
                 L=exposure_min, R=R_upper, gain_db=at_gain,
+                valid_pixel_mask=valid_pixel_mask,
                 eps_absolute=binary_search_eps,
                 on_probe=_record_probe,
             )
@@ -743,7 +902,12 @@ def run_psf_safe_exposure(
                 wl_nm = _set_wavelength_once(wl)
                 camera_adapter.apply_camera_params(exposure_us=at_exposure, gain_db=at_gain)
                 row = _acquire_and_evaluate(
-                    camera_adapter, k, full_scale, diagnostics_cfg, sig_cfg,
+                    camera_adapter,
+                    k,
+                    full_scale,
+                    diagnostics_cfg,
+                    sig_cfg,
+                    valid_pixel_mask=valid_pixel_mask,
                 )
                 _record_candidate_row(
                     wl_nm=wl_nm,
@@ -828,6 +992,7 @@ def run_psf_safe_exposure(
                         selection_reason="no_safe_usable_setting_found",
                         error=msg,
                         full_scale_source=full_scale_source,
+                        valid_pixel_domain_policy=valid_domain_policy,
                     )
                 print(f"  gain={at_gain:.1f}  SKIP: not PSF-safe at global_exposure={result.exposure_us}")
                 continue
@@ -872,6 +1037,7 @@ def run_psf_safe_exposure(
                     selection_reason="no_safe_usable_setting_found",
                     error=msg,
                     full_scale_source=full_scale_source,
+                    valid_pixel_domain_policy=valid_domain_policy,
                 )
 
         run_status.append_log("INFO", "PSF-safe exposure calibration complete",
@@ -888,6 +1054,7 @@ def run_psf_safe_exposure(
             plan, accepted_result, all_results, full_scale,
             selection_reason=selection_reason,
             full_scale_source=full_scale_source,
+            valid_pixel_domain_policy=valid_domain_policy,
         )
 
         json_path = _repo_root() / output_json
@@ -927,6 +1094,7 @@ def _build_result(
     selection_reason: str | None = None,
     error: str | None = None,
     full_scale_source: str = "unknown",
+    valid_pixel_domain_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     wls = plan["wavelengths"]
 
@@ -939,6 +1107,14 @@ def _build_result(
     for row in final_rows:
         wl_nm = str(row.get("wavelength_nm", ""))
         if wl_nm:
+            valid_pixel_count = int(row.get(
+                "valid_pixel_count",
+                (valid_pixel_domain_policy or {}).get("valid_pixel_count", 0),
+            ))
+            invalid_pixel_count = int(row.get(
+                "invalid_pixel_count",
+                (valid_pixel_domain_policy or {}).get("invalid_pixel_count", 0),
+            ))
             wl_metrics[wl_nm] = {
                 "measured_at_exposure_us": row.get("exposure_us"),
                 "measured_at_gain_db": row.get("gain_db"),
@@ -953,6 +1129,15 @@ def _build_result(
                 "psf_safe": bool(row["psf_safe"]),
                 "unsafe_reason": row.get("unsafe_reason"),
                 "low_signal": row["low_signal"],
+                "valid_pixel_count": valid_pixel_count,
+                "invalid_pixel_count": invalid_pixel_count,
+                "invalid_domain_peak_pixel_burst": row.get("invalid_domain_peak_pixel_burst"),
+                "invalid_domain_full_scale_pixel_count": int(row.get(
+                    "invalid_domain_full_scale_pixel_count", 0,
+                )),
+                "invalid_domain_nonfinite_pixel_count": int(row.get(
+                    "invalid_domain_nonfinite_pixel_count", 0,
+                )),
             }
 
     global_safe: dict[str, Any] = {
@@ -981,10 +1166,12 @@ def _build_result(
         "psf_safety_policy": {
             "rule": "all_frames_all_pixels_strictly_below_full_scale",
             "evaluated_on": "raw_burst_frames",
+            "evaluated_domain": "valid_camera_pixel_domain",
             "allow_full_scale_pixel": False,
             "allow_non_finite_pixel": False,
             "frame_dtype_full_scale": int(full_scale),
             "frame_dtype_full_scale_source": full_scale_source,
+            "valid_pixel_domain": dict(valid_pixel_domain_policy or {"type": "full_frame"}),
         },
         "signal_policy": {
             "percentile": plan["signal"]["percentile"],
@@ -995,6 +1182,7 @@ def _build_result(
         "search_diagnostics": {
             "binary_search_eps_us": float(plan["camera_search"].get("binary_search_eps_us", 50.0)),
             "per_wavelength_safe_upper_bounds": bounds,
+            "valid_pixel_domain_type": (valid_pixel_domain_policy or {"type": "full_frame"})["type"],
         },
         "selection_reason": selection_reason,
         "validity": {

@@ -195,10 +195,38 @@ def _validate_camera_params(
         raise ValueError(
             f"{source_path}: psf_safety_policy.evaluated_on must be 'raw_burst_frames'"
         )
+    if psf_policy.get("evaluated_domain") != "valid_camera_pixel_domain":
+        raise ValueError(
+            f"{source_path}: psf_safety_policy.evaluated_domain must be "
+            "'valid_camera_pixel_domain'"
+        )
     if psf_policy.get("allow_non_finite_pixel") is not False:
         raise ValueError(
             f"{source_path}: psf_safety_policy.allow_non_finite_pixel must be False"
         )
+    valid_pixel_domain = psf_policy.get("valid_pixel_domain")
+    if not isinstance(valid_pixel_domain, dict):
+        raise ValueError(f"{source_path}: psf_safety_policy.valid_pixel_domain is required")
+    domain_type = valid_pixel_domain.get("type")
+    if domain_type not in {"full_frame", "exclude_top_rows", "mask_file", "roi"}:
+        raise ValueError(
+            f"{source_path}: valid_pixel_domain.type must be one of "
+            "'full_frame', 'exclude_top_rows', 'mask_file', 'roi'"
+        )
+    if int(valid_pixel_domain.get("valid_pixel_count", 0)) <= 0:
+        raise ValueError(f"{source_path}: valid_pixel_domain.valid_pixel_count must be > 0")
+    if int(valid_pixel_domain.get("invalid_pixel_count", -1)) < 0:
+        raise ValueError(f"{source_path}: valid_pixel_domain.invalid_pixel_count must be >= 0")
+    if domain_type == "exclude_top_rows":
+        top_rows = valid_pixel_domain.get("top_rows")
+        if not isinstance(top_rows, int) or top_rows < 0:
+            raise ValueError(
+                f"{source_path}: valid_pixel_domain.top_rows must be a non-negative integer"
+            )
+        if not valid_pixel_domain.get("source"):
+            raise ValueError(
+                f"{source_path}: valid_pixel_domain.source is required for exclude_top_rows"
+            )
 
 
 def resolve_camera_settings(
@@ -413,7 +441,6 @@ def run_pupil_scan(
             if (n + 1) % max(1, int(status_preview_every)) == 0:
                 run_status.write_frame_preview(frame_avg)
             run_status.write_frame_stats({
-                "max_pixel": float(frame_avg.max()),
                 "min_pixel": float(frame_avg.min()),
                 "mean_pixel": float(frame_avg.mean()),
                 "p99_9": float(np.percentile(frame_avg, 99.9)),

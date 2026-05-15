@@ -52,6 +52,12 @@ consume the raw HDF5 to produce processed results.
   `gain_db_min` is PSF-safe but unusably dim. Camera parameters are global
   across wavelengths so Phase 3.1 pupil scan, PSF repeatability, and PSF
   dictionary captures remain comparable.
+- **Valid-pixel domain:** The strict full-scale rule is evaluated over the
+  plan's explicit `valid_pixel_domain`. The default is full frame. Known
+  invalid pixels may be excluded only through a recorded policy such as
+  `exclude_top_rows`; invalid-domain full-scale artifacts are diagnostics and
+  do not relax the zero-tolerance rule inside the valid domain. Signal metrics
+  used for selection are computed over the same valid domain.
 - **Output raw HDF5:** `data/raw/bishe_psf_safe_exposure.h5`.
 - **Downstream output:** `outputs/exposure_calibration/camera_params_psf_safe.json`
   is written only when a globally PSF-safe setting is found.
@@ -141,4 +147,3 @@ Task-specific fields (e.g. `scan.scan_modes`, `camera_params_source`,
 `signal`) vary by plan.
 
 See individual plan files under `plans/` for current schemas.
-

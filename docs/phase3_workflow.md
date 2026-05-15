@@ -78,6 +78,35 @@ The calibration output JSON and raw sweep HDF5 record
 `frame_dtype_full_scale_source` so failure artifacts can be audited without
 replaying the run log.
 
+## Phase 3.0.5b valid-pixel domain
+
+The strict peak-pixel safety rule applies to an explicit valid camera pixel
+domain. Full-frame mode is equivalent only when every camera pixel is treated
+as valid. Known invalid pixels must be excluded through a recorded
+`valid_pixel_domain` policy, not through silent hardcoded row or pixel drops.
+
+Inside the valid domain, the rule remains zero-tolerance: any non-finite pixel
+or any pixel greater than or equal to `frame_dtype_full_scale` fails PSF-safe
+calibration. Pixels outside the valid domain do not change `psf_safe`, but
+full-scale or non-finite artifacts there are recorded as diagnostics in both
+the raw sweep HDF5 and `camera_params_psf_safe.json`.
+
+Signal metrics used for exposure/gain selection are computed over the same
+valid camera pixel domain used for PSF safety. Invalid-domain artifacts cannot
+raise `p_signal`, `dynamic_range`, or change `low_signal`; they only appear in
+invalid-domain diagnostics.
+
+For the canonical `exclude_top_rows` policy, run
+`scripts/diagnose_valid_pixel_domain.py` before hardware Phase 3.0.5b and
+update the plan's `valid_pixel_domain.source_artifact` to the generated JSON.
+If that artifact is missing, hardware calibration fails fast by design.
+
+Phase 3.1 capture scripts require `camera_params_psf_safe.json` to carry
+`psf_safety_policy.evaluated_domain == "valid_camera_pixel_domain"` and a
+`psf_safety_policy.valid_pixel_domain` provenance block. This prevents
+downstream pupil scan, repeatability, and dictionary captures from consuming
+unscoped camera safety parameters.
+
 ## Effective LCD pupil scan
 
 **Purpose:** Locate the LCD region that actually affects the optical system.
