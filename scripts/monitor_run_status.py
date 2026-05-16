@@ -269,8 +269,10 @@ def run_tk_gui(args: argparse.Namespace) -> int:
 
     mask_box = ttk.LabelFrame(root, text="Current Mask", padding=8)
     mask_box.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=4)
+    mask_box.rowconfigure(0, weight=1)
+    mask_box.columnconfigure(0, weight=1)
     mask_label = ttk.Label(mask_box, textvariable=mask_var, anchor="center")
-    mask_label.pack(fill="both", expand=True)
+    mask_label.grid(row=0, column=0, sticky="nsew")
 
     logs_box = ttk.LabelFrame(root, text="Recent Logs", padding=8)
     logs_box.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=8, pady=(4, 8))
@@ -298,7 +300,11 @@ def run_tk_gui(args: argparse.Namespace) -> int:
         tls = read_tls_state(sd) or {}
 
         state_var.set(_render_gui_state(status))
-        _update_text_widget(meta_text, _render_gui_metadata(status, stats, lcd, tls))
+        _update_text_widget(
+            meta_text,
+            _render_gui_metadata(status, stats, lcd, tls),
+            preserve_scroll=True,
+        )
         _update_image_label(
             label=frame_label,
             text_var=frame_var,
@@ -362,16 +368,45 @@ def _update_logs_text(widget: Any, logs: list[dict[str, Any]], *, max_log_lines:
         )
     else:
         text = "logs: unavailable"
-    _update_text_widget(widget, text, scroll_to_end=True)
+    _update_text_widget(
+        widget, text,
+        preserve_scroll=True,
+        follow_bottom_if_already_at_bottom=True,
+    )
 
 
-def _update_text_widget(widget: Any, text: str, *, scroll_to_end: bool = False) -> None:
+def _update_text_widget(
+    widget: Any,
+    text: str,
+    *,
+    preserve_scroll: bool = True,
+    follow_bottom_if_already_at_bottom: bool = False,
+    bottom_threshold: float = 0.98,
+) -> None:
+    old_text = getattr(widget, "_optic_last_text", None)
+    if old_text == text:
+        return
+
+    try:
+        first, last = widget.yview()
+    except Exception:
+        first, last = 0.0, 1.0
+
+    was_at_bottom = last >= bottom_threshold
+
     widget.configure(state="normal")
     widget.delete("1.0", "end")
     widget.insert("1.0", text)
-    if scroll_to_end:
-        widget.see("end")
     widget.configure(state="disabled")
+    object.__setattr__(widget, "_optic_last_text", text)
+
+    if follow_bottom_if_already_at_bottom and was_at_bottom:
+        widget.see("end")
+    elif preserve_scroll:
+        try:
+            widget.yview_moveto(first)
+        except Exception:
+            pass
 
 
 def _render_gui_state(status: Any | None) -> str:
@@ -470,12 +505,23 @@ def _update_image_label(
 
 
 def _image_label_target_size(label: Any) -> tuple[int, int]:
-    width = int(getattr(label, "winfo_width")())
-    height = int(getattr(label, "winfo_height")())
+    try:
+        label.update_idletasks()
+    except Exception:
+        pass
     parent = getattr(label, "master", None)
     if parent is not None:
-        width = max(width, int(parent.winfo_width()) - 16)
-        height = max(height, int(parent.winfo_height()) - 16)
+        try:
+            parent.update_idletasks()
+        except Exception:
+            pass
+        pw = int(parent.winfo_width()) - 16
+        ph = int(parent.winfo_height()) - 16
+        if pw > 16 and ph > 16:
+            return pw, ph
+
+    width = max(1, int(label.winfo_width()))
+    height = max(1, int(label.winfo_height()))
     if width <= 1:
         width = 512
     if height <= 1:
