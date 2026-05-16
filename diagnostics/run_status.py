@@ -17,6 +17,9 @@ class RunStatus:
     run_id: str
     plan_id: str | None = None
     phase: str | None = None
+    task: str | None = None
+    current_stage: str | None = None
+    scan_strategy: str | None = None
     capture_index: int | None = None
     n_captures: int | None = None
     current_mask_id: str | None = None
@@ -39,6 +42,11 @@ class RunStatus:
     camera_gain_db: float | None = None
     camera_roi: list[int] | None = None
     camera_frame_dtype_full_scale: int | None = None
+    camera_profile_requested: str | None = None
+    camera_profile_used: str | None = None
+    camera_profile_fallback_used: bool | None = None
+    current_position: float | None = None
+    current_radius: float | None = None
     completed: bool | None = None
     error: str | None = None
 

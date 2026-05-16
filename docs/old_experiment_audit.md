@@ -136,7 +136,7 @@ the active capture stack:
 |---|---|---|
 | Mask switching + frame averaging | Capture plan masks with `camera.frames_per_capture` | `tasks/capture_plan.py` + `tasks/capture_forward_dataset.py` |
 | Wavelength loop over masks | CapturePlan `wavelengths` field | `tasks/capture_forward_dataset.py` |
-| Effective LCD pupil scan | Phase 3.1 bar-scan plan + analysis script | `plans/bishe_pupil_scan.yaml` + new analysis script |
+| Effective LCD pupil geometry calibration | Phase 3.1 bar-profile + radius-scan plan and analysis scripts | `plans/bishe_pupil_geometry.yaml`, `scripts/capture_pupil_geometry.py`, `scripts/analyze_pupil_geometry.py` |
 | dOTF workflow (PSF-OTF-scaling-dOTF) | Phase 3.3 dOTF diagnostic | New dOTF analysis script consuming `raw_capture.h5` |
 | ROI finding on captured frames | Preprocessing step before dOTF/PSF analysis | New preprocessing module |
 | Perturbation mask generation | `scripts/make_smoke_masks.py` pattern extended for dOTF | New perturbation mask generator |

@@ -106,42 +106,56 @@ artifact is missing, hardware calibration fails fast by design.
 Phase 3.1 capture scripts require `camera_params_psf_safe.json` to carry
 `psf_safety_policy.evaluated_domain == "valid_camera_pixel_domain"` and a
 `psf_safety_policy.valid_pixel_domain` provenance block. This prevents
-downstream pupil scan, repeatability, and dictionary captures from consuming
+downstream pupil geometry, repeatability, and dictionary captures from consuming
 unscoped camera safety parameters.
 
-## Effective LCD pupil scan
+## Effective Pupil Geometry Calibration
 
-**Purpose:** Locate the LCD region that actually affects the optical system.
+**Purpose:** Calibrate an effective pupil window in LCD physical coordinates.
 
-**Old-project reference:** `old/calibrating.py:locate_aperture_and_build_roi`
+**Old-project references:** `old/calibrating.py`, `old/circle.py`, and
+`old/ellipse.py`.
+
+Phase 3.1 calibrates an effective pupil window using energy-based bar
+profiles and circular-radius scans. The first pass records X/Y total-energy
+profiles from dark bars on a bright background and fits a circle center and
+initial radius. The second pass records energy versus transparent circular
+window radius on a dark background and fits the circle/ellipse overlap model.
+Downstream captures should encode masks inside the resulting effective pupil
+window instead of using an all-transmissive LCD.
+
+Until `fast_pupil_scan` profile export is available,
+`global_safe_camera` fallback is allowed only when the plan explicitly enables
+it and the report records the fallback.
 
 ### Capture plan
 
-- `plans/bishe_pupil_scan.yaml`
+- `plans/bishe_pupil_geometry.yaml`
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`
-  is mandatory.
-- Masks: a narrow vertical bar swept across X, a narrow horizontal bar swept
-  across Y.
+  is mandatory; `camera_profile: fast_pupil_scan` is preferred.
+- Masks: bright/dark references, X/Y dark bars, and circular apertures.
 - Wavelength: single wavelength, fixed.
-- Camera: averaged frames per bar position.
+- Camera: averaged frames per reference, bar position, and aperture radius.
 
 ### Analysis
 
-1. Load `raw_capture.h5` - extract averaged frames for each bar position.
-2. For each frame, compute energy (sum of pixel intensities).
-3. Fit circle parameters (center, radius) from X and Y energy-difference
-   profiles (`old/circle.py:_fit_circle_from_profile` provides the algorithm).
-4. Optionally refine with ellipse fit (`old/ellipse.py`).
-5. Write `outputs/pupil_scan/effective_lcd_roi.json`.
+1. Load `data/raw/bishe_pupil_geometry.h5`.
+2. Fit the circle center and initial radii from X/Y bar energy profiles.
+3. Fit ellipse semi-axes and scale from radius-scan energy using the
+   circle/ellipse overlap model.
+4. Set the effective circular window radius to `radius_factor_of_b * b`.
+5. Write `outputs/pupil_geometry/effective_pupil_window.json`.
 
 ### Output
 
 ```text
-outputs/pupil_scan/effective_lcd_roi.json
-  - xc, yc: effective pupil center (LCD pixel coordinates)
-  - r_avg: average effective radius
-  - r_x, r_y: per-axis radii
-  - optionally: a, b (ellipse semi-axes)
+outputs/pupil_geometry/effective_pupil_window.json
+  - phase: "3.1"
+  - camera_profile_requested / camera_profile_used
+  - center: LCD physical-coordinate pupil center
+  - ellipse: fitted a, b, k and fit quality
+  - radius: effective circular pupil window radius
+  - validity flags: not scientific calibration valid and not training-ready
 ```
 
 ## PSF repeatability
@@ -203,8 +217,8 @@ and/or phase is sufficient for this milestone.
 
 1. Load `raw_capture.h5` - extract base PSF and perturbed PSF.
 2. Optionally subtract dark frame.
-3. Crop ROI from PSF pair (energy-based or using pupil scan results).
-4. Pad ROI for fine frequency resolution.
+3. Crop ROI from PSF pair (energy-based or using the effective pupil window).
+4. Pad ROI for higher frequency resolution.
 5. Compute dOTF:
    - `PSF -> OTF` (FFT2 with shift)
    - Estimate OTF support mask from magnitude threshold
@@ -294,7 +308,7 @@ outputs/linear_recon/
 
 Phases should be implemented sequentially:
 
-1. **Phase 3.1** - Effective LCD pupil scan
+1. **Phase 3.1** - Effective pupil geometry calibration
 2. **Phase 3.2** - PSF repeatability and ROI alignment
 3. **Phase 3.3** - dOTF diagnostic
 4. **Phase 3.4** - PSF dictionary and export
@@ -303,5 +317,5 @@ Phases should be implemented sequentially:
 7. **Phase 3.7** - Thesis figures and report freeze
 
 Each phase depends on the outputs of the previous phases but not on
-implementation details.  Phase 3.2 needs the pupil ROI from 3.1; Phase 3.3
-needs the ROI convention and PSF extraction from 3.2; etc.
+implementation details.  Phase 3.2 needs the effective pupil window from 3.1;
+Phase 3.3 needs the ROI convention and PSF extraction from 3.2; etc.

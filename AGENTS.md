@@ -33,7 +33,9 @@ Those belong to `LCD_forward` or later experiment-specific layers.
 ## Current phase
 
 Thesis branch (`phase3-bishe-experimental-loop`) phase:
-Phase 3.0.5b implemented, Phase 3.1 in progress.
+Phase 3.0.5b implemented, Phase 3.1 implementation re-aligned with
+old/calibrating.py and old/ellipse.py physical model. Canonical hardware
+rerun pending.
 
 Active roadmap: `docs/bishe_plan.md`.
 
@@ -474,7 +476,7 @@ Completed:
 - raw capture HDF5 export
 - Phase 2B hardware smoke capture validation
 - Phase 3.0.5b PSF-safe exposure calibration
-- Phase 3.1 effective LCD pupil scan (in progress)
+- Phase 3.1 effective pupil geometry calibration implementation
 
 Next (thesis branch):
 

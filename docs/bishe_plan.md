@@ -100,52 +100,66 @@ All Phase 3 captures use `outputs/exposure_calibration/camera_params_psf_safe.js
 
 ---
 
-### Phase 3.1 - Effective LCD pupil / active region scan
+### Phase 3.1 - Effective pupil geometry calibration
 
-**Status: in progress**
+**Status: implementation re-aligned with old/calibrating.py and old/ellipse.py
+physical model; canonical hardware rerun pending**
 
 Purpose:
-- locate the LCD physical-coordinate region that measurably affects the
-  camera image
-- produce `effective_lcd_roi.json` as the coordinate baseline for all
-  subsequent experiments
-- use PSF-safe camera parameters from Phase 3.0.5b
+- calibrate an effective pupil window in LCD physical coordinates using
+  energy-based bar profiles and circular-radius scans
+- produce `effective_pupil_window.json` as the window baseline for all
+  subsequent mask-encoded experiments
+- use PSF-safe camera parameters from Phase 3.0.5b through
+  `camera_profile: fast_pupil_scan` when available
 
 Scripts:
-- `tasks/pupil_scan_masks.py` - procedural mask generation
-- `scripts/capture_pupil_scan.py` - acquisition
-- `scripts/analyze_pupil_scan.py` - response analysis and ROI extraction
-- `plans/bishe_pupil_scan.yaml`
+- `tasks/pupil_geometry_masks.py` - physical mono reference/bar/aperture masks
+- `tasks/pupil_geometry_model.py` - circle profile and ellipse-overlap model
+- `tasks/pupil_geometry_h5.py` - raw geometry calibration HDF5
+- `scripts/capture_pupil_geometry.py` - acquisition
+- `scripts/analyze_pupil_geometry.py` - geometry fit and effective window export
+- `plans/bishe_pupil_geometry.yaml`
 
 Flow:
 ```
-generate bar / block / aperture scan masks
+bright reference + dark reference
+  -> X/Y dark-bar energy profiles
+  -> circle center and initial radius fit
+  -> circular aperture radius scan
+  -> ellipse-overlap fit
+  -> effective circular pupil window
   -> capture raw_capture.h5
-  -> analyze response strength / PSF variation
-  -> output effective_lcd_roi.json
+  -> output effective_pupil_window.json
 ```
 
 Outputs:
 ```
-data/raw/bishe_pupil_scan.h5
-outputs/pupil_scan/
-  response_map.npy
-  response_map.png
-  effective_lcd_roi.json
-  pupil_scan_report.md
+data/raw/bishe_pupil_geometry.h5
+outputs/pupil_geometry/
+  x_profile.csv
+  y_profile.csv
+  radius_scan.csv
+  bar_profile_fit.png
+  radius_overlap_fit.png
+  effective_pupil_window.npy
+  effective_pupil_window.png
+  effective_pupil_window.json
+  pupil_geometry_report.md
 ```
 
 Acceptance criteria:
-1. Effective modulation region identified.
-2. ROI returned.
-3. Mask changes within ROI produce measurable PSF or brightness changes.
-4. Signal outside ROI is significantly weaker or explainable.
-5. All downstream experiments reference this ROI by default.
+1. Bar profiles produce a usable center and initial radius estimate.
+2. Radius scan fits ellipse semi-axes `a`, `b` and scale `k`.
+3. Effective circular pupil window radius is slightly below `b`.
+4. Raw HDF5 preserves bar/radius scan energies and mask metadata.
+5. All downstream experiments reference this window by default.
 
 Fallback:
-If the response map is unclear, adjust optics, exposure, point source,
-LCD position, or ROI size before entering complex dOTF work.  This phase
-is the coordinate baseline for all later experiments - it cannot be skipped.
+If the profile or radius fit is unclear, adjust optics, exposure, point
+source, LCD position, or scan ranges before entering complex dOTF work. This
+phase is the coordinate/window baseline for all later experiments - it cannot
+be skipped.
 
 ---
 
@@ -178,11 +192,11 @@ Suggested masks:
 ```
 all_open
 all_closed
-coarse_vertical_stripes
-coarse_horizontal_stripes
+vertical_stripes
+horizontal_stripes
 stripe_phase_shift_0
 stripe_phase_shift_1
-coarse_checkerboard
+checkerboard
 low_freq_random_block
 ```
 

@@ -410,24 +410,39 @@ def _image_label_target_size(label: Any) -> tuple[int, int]:
 
 
 def _load_preview_image(path: Path, *, frame_encoding: str | None = None) -> Any:
-    from PIL import Image
-
     if path.suffix.lower() == ".npy":
         import numpy as np
 
         array = np.load(str(path))
         return _array_to_pil_image(array, frame_encoding=frame_encoding)
+    try:
+        from PIL import Image
+    except ImportError:
+        import cv2
+
+        image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if image is None:
+            raise ValueError(f"failed to load preview image: {path}")
+        if image.ndim == 2:
+            return _PreviewImage(image, "L")
+        if image.shape[2] == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+            return _PreviewImage(image, "RGBA")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        return _PreviewImage(image, "RGB")
     image = Image.open(path)
     image.load()
     return image.convert("RGB") if image.mode not in {"L", "RGB"} else image
 
 
 def _array_to_pil_image(array: Any, *, frame_encoding: str | None = None) -> Any:
-    from PIL import Image
-
     import numpy as np
 
     arr = np.asarray(array)
+    try:
+        from PIL import Image
+    except ImportError:
+        return _array_to_preview_image(arr, frame_encoding=frame_encoding)
     if arr.ndim == 2 and frame_encoding in _BAYER_CV2_CODE_NAMES:
         try:
             import cv2
@@ -450,6 +465,42 @@ def _array_to_pil_image(array: Any, *, frame_encoding: str | None = None) -> Any
     if squeezed.ndim == 2:
         return Image.fromarray(_as_uint8_display(squeezed), mode="L")
     raise ValueError(f"unsupported preview array shape: {arr.shape}")
+
+
+def _array_to_preview_image(array: Any, *, frame_encoding: str | None = None) -> Any:
+    import numpy as np
+
+    arr = np.asarray(array)
+    if arr.ndim == 2 and frame_encoding in _BAYER_CV2_CODE_NAMES:
+        try:
+            import cv2
+
+            gray = _as_uint8_display(arr)
+            rgb = cv2.cvtColor(
+                gray,
+                getattr(cv2, _BAYER_CV2_CODE_NAMES[str(frame_encoding)]),
+            )
+            return _PreviewImage(rgb, "RGB")
+        except Exception:
+            return _PreviewImage(_as_uint8_display(arr), "L")
+    if arr.ndim == 2:
+        return _PreviewImage(_as_uint8_display(arr), "L")
+    if arr.ndim == 3 and arr.shape[2] in {3, 4}:
+        mode = "RGBA" if arr.shape[2] == 4 else "RGB"
+        return _PreviewImage(_as_uint8_display(arr), mode)
+    squeezed = np.squeeze(arr)
+    if squeezed.ndim == 2:
+        return _PreviewImage(_as_uint8_display(squeezed), "L")
+    raise ValueError(f"unsupported preview array shape: {arr.shape}")
+
+
+class _PreviewImage:
+    def __init__(self, array: Any, mode: str):
+        self.array = array
+        self.mode = mode
+        self.size = (int(array.shape[1]), int(array.shape[0]))
+        self.width = self.size[0]
+        self.height = self.size[1]
 
 
 _BAYER_CV2_CODE_NAMES = {

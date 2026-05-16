@@ -33,22 +33,25 @@ provenance rule below.
   `valid_pixel_domain` block. The raw sweep HDF5 records the same policy under
   `/valid_pixel_domain`.
 
-### `outputs/pupil_scan/`
+### `outputs/pupil_geometry/`
 
-- **Phase:** 3.1 — Effective LCD pupil scan
-- **Depends on:** `data/raw/bishe_pupil_scan.h5` (or user-specified raw
-  pupil scan HDF5) produced by `scripts/capture_pupil_scan.py`.
+- **Phase:** 3.1 - Effective pupil geometry calibration
+- **Depends on:** `data/raw/bishe_pupil_geometry.h5` produced by
+  `scripts/capture_pupil_geometry.py`.
 - **Produces:**
-  - `effective_lcd_roi.json` - effective LCD physical-coordinate ROI and
-    provenance
-  - `response_map.npy` - coarse block response map
-  - `response_map.png` - quick-look block response visualization
-  - `x_profile.csv` - smoothed bar response profile along physical x
-  - `y_profile.csv` - smoothed bar response profile along physical y
-  - `pupil_scan_report.md` - human-readable diagnostics and warnings
-- **Script:** `scripts/analyze_pupil_scan.py`
-- **Status:** intermediate; estimates active modulation support, not
-  scientific calibration validity.
+  - `effective_pupil_window.json` - effective circular pupil window,
+    circle estimate, ellipse-overlap fit, and provenance
+  - `effective_pupil_window.npy` - physical mono circular window mask
+  - `effective_pupil_window.png` - quick-look window visualization
+  - `x_profile.csv` - dark-bar energy profile along physical x
+  - `y_profile.csv` - dark-bar energy profile along physical y
+  - `radius_scan.csv` - circular aperture radius energy profile and fit
+  - `bar_profile_fit.png` - quick-look bar profile plot
+  - `radius_overlap_fit.png` - quick-look overlap model fit
+  - `pupil_geometry_report.md` - human-readable diagnostics and warnings
+- **Script:** `scripts/analyze_pupil_geometry.py`
+- **Status:** intermediate; estimates the effective pupil window, not final
+  scientific calibration validity or training-ready data.
 
 ### `outputs/legacy_phase3_1_coarse_pupil_scan/`
 
@@ -57,7 +60,8 @@ provenance rule below.
   `camera_params.json` coarse exposure parameters and may contain
   clipping/local saturation.
 - **Policy:** Do not use this directory as an operational input. New Phase 3
-  captures must regenerate pupil-scan outputs from PSF-safe camera parameters.
+  captures must regenerate pupil-geometry outputs from PSF-safe camera
+  parameters.
 
 ### `outputs/psf_repeatability/`
 
@@ -166,4 +170,3 @@ directories with `os.makedirs(..., exist_ok=True)`.
 
 If raw capture HDF5 files are written to `outputs/`, they should be placed in
 the same subdirectory as their downstream analysis outputs for co-location.
-

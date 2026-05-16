@@ -19,7 +19,6 @@ from typing import Any
 
 import h5py
 import numpy as np
-from PIL import Image
 
 
 def _repo_root() -> Path:
@@ -667,7 +666,15 @@ def _write_response_map_png(path: Path, response_map: np.ndarray) -> None:
     else:
         norm = _robust_normalize(np.nan_to_num(arr, nan=0.0))
         img = (norm * 255.0).astype(np.uint8)
-    Image.fromarray(img, mode="L").save(path)
+    try:
+        import cv2
+
+        if not cv2.imwrite(str(path), img):
+            raise RuntimeError(f"failed to write response map PNG: {path}")
+    except ImportError:
+        from PIL import Image
+
+        Image.fromarray(img, mode="L").save(path)
 
 
 def _write_report(

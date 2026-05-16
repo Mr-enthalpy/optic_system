@@ -27,7 +27,7 @@ It does not connect to hardware and does not control the task.
 Terminal 1 runs a capture task with `--status-dir`:
 
 ```bash
-python scripts/capture_pupil_scan.py --plan plans/bishe_pupil_scan.yaml --hardware --status-dir outputs/run_status/latest
+python scripts/capture_pupil_geometry.py --plan plans/bishe_pupil_geometry.yaml --hardware --status-dir outputs/run_status/latest
 ```
 
 Terminal 2 opens the monitor with the same `--status-dir`:
