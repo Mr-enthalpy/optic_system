@@ -243,3 +243,36 @@ class TestCapturePlan:
             CameraCaptureConfig.from_dict({
                 "roi": "not_a_list",
             })
+
+
+class TestPlannedPhase3PlanStubs:
+    STUB_PLANS = {
+        "bishe_psf_roi.yaml": {
+            "plan_id": "bishe_psf_roi",
+            "phase": "3.2a",
+        },
+        "bishe_psf_repeatability.yaml": {
+            "plan_id": "bishe_psf_repeatability",
+            "phase": "3.2b",
+        },
+        "bishe_dotf_diagnostic.yaml": {
+            "plan_id": "bishe_dotf_diagnostic",
+            "phase": "3.3",
+        },
+    }
+
+    @pytest.mark.parametrize("filename,expected", list(STUB_PLANS.items()))
+    def test_stub_yaml_schema_sanity(self, filename: str, expected: dict) -> None:
+        import yaml
+
+        plan_dir = Path(__file__).resolve().parents[1] / "plans"
+        plan_path = plan_dir / filename
+        assert plan_path.exists(), f"plan stub not found: {plan_path}"
+
+        with open(plan_path, "r", encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+
+        assert doc is not None, f"empty YAML document: {filename}"
+        assert doc.get("plan_id") == expected["plan_id"], filename
+        assert doc.get("phase") == expected["phase"], filename
+        assert "output" in doc, filename

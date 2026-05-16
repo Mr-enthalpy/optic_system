@@ -1,0 +1,35 @@
+# Phase 3.2b - PSF repeatability and mask-induced diversity (PLANNED STUB)
+#
+# Purpose: quantify intra-mask PSF repeatability and inter-mask PSF diversity.
+# Refer to docs/bishe_plan.md for the full specification.
+#
+# This is a schema sketch.  The plan is not yet executable.
+
+plan_id: bishe_psf_repeatability
+phase: "3.2b"
+
+camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
+camera_profile: canonical_low_gain
+pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
+psf_roi_source: outputs/psf_roi/psf_roi.json
+
+wavelength:
+  wavelength_nm: 550.0
+  grating: 1
+
+capture:
+  repeats_per_mask: 20
+  frames_per_capture: 10
+
+masks:
+  set: representative
+  include:
+    - all_open
+    - vertical_stripes
+    - horizontal_stripes
+    - checkerboard
+    - low_frequency_random
+
+output:
+  raw_h5: data/raw/bishe_psf_repeatability.h5
+  output_dir: outputs/psf_repeatability

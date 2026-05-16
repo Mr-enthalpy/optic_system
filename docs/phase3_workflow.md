@@ -158,7 +158,54 @@ outputs/pupil_geometry/effective_pupil_window.json
   - validity flags: not scientific calibration valid and not training-ready
 ```
 
-## PSF repeatability
+**Coordinate system note:** `effective_pupil_window.json` is in **LCD physical
+coordinates**.  The camera-frame PSF crop is a separate calibration in
+Phase 3.2a (`outputs/psf_roi/psf_roi.json`) and uses **camera sensor
+coordinates**.  These are different coordinate systems and must not be
+conflated.
+
+## Camera-frame PSF ROI calibration
+
+**Phase:** 3.2a — Camera-frame PSF ROI calibration
+
+**Purpose:** Determine a fixed crop window in camera sensor coordinates for
+the point-source PSF.  This is the single source of truth for all subsequent
+PSF crops (repeatability, dOTF, PSF dictionary).
+
+**Dependency:** `outputs/pupil_geometry/effective_pupil_window.json`
+(Phase 3.1, LCD domain).
+
+### Capture plan
+
+- `plans/bishe_psf_roi.yaml`
+- Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
+- LCD: display the effective pupil window (inside = all-open, outside = all-closed).
+- Wavelength: single wavelength, fixed.
+- Camera: burst of N frames per capture, K repeats.
+
+### Analysis
+
+1. Load `data/raw/bishe_psf_roi.h5`.
+2. Apply dark subtraction or baseline correction on averaged frame.
+3. Locate PSF center via peak detection, center-of-mass, or energy connected-component.
+4. Choose fixed crop size (by energy envelope fraction or pre-configured size).
+5. Write `outputs/psf_roi/psf_roi.json`.
+
+### Output
+
+```text
+outputs/psf_roi/psf_roi.json
+  - phase: "3.2a"
+  - task: "camera_frame_psf_roi_calibration"
+  - roi: {x_min, x_max, y_min, y_max, width, height}
+  - center: {x, y, method}
+  - crop_policy: {type, size, margin_policy, energy_fraction}
+  - validity: not scientific calibration valid, not training-ready
+```
+
+## PSF repeatability and mask-induced diversity
+
+**Phase:** 3.2b — PSF repeatability and mask-induced diversity
 
 **Purpose:** Reacquire and quantify the old finding that PSF differences
 exceed repeat noise.
@@ -166,21 +213,25 @@ exceed repeat noise.
 **Old-project reference:** `old/base.py:on_capture_clicked` (multi-frame
 averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
 
+**Dependency:** `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain).
+
 ### Capture plan
 
 - `plans/bishe_psf_repeatability.yaml`
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
-- Masks: 2-3 distinct masks, each repeated K times.
+- LCD: all masks inside `effective_pupil_window`.
+- Masks: representative mask set, each repeated K times (K >= 10).
 - Wavelength: single wavelength, fixed.
 - Camera: burst of N frames per capture.
 
 ### Analysis
 
 1. Load `raw_capture.h5` - extract frames for each mask x repetition.
-2. Apply energy-based ROI cropping.
-3. Compute within-mask repeatability metrics (e.g., normalized RMS difference,
-   correlation).
-4. Compute between-mask difference metrics.
+2. Apply `psf_roi.json` crop to every frame.
+3. Intra-mask repeatability: mean PSF, std PSF, coefficient of variation,
+   normalized correlation, PSNR, SSIM among repeats.
+4. Inter-mask diversity: pairwise MSE, PSNR, SSIM, cross-correlation,
+   Fourier magnitude difference.
 5. Confirm that between-mask differences exceed within-mask repeat noise.
 6. Write `outputs/psf_repeatability/repeatability_metrics.json`.
 
@@ -188,18 +239,23 @@ averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
 
 ```text
 outputs/psf_repeatability/repeatability_metrics.json
-  - per-mask repeatability (RMS, correlation)
-  - between-mask differences
-  - ROI parameters used
+  - per-mask repeatability (mean, std, PSNR, SSIM, correlation)
+  - between-mask pairwise distances (MSE, PSNR, SSIM)
+  - psf_roi provenance recorded
 ```
 
-## dOTF diagnostic
+## dOTF diagnostic visualization
+
+**Phase:** 3.3 — dOTF diagnostic visualization
 
 **Purpose:** Use dOTF to reveal low-dimensional / sparse pupil or
-LCD-induced structure.
+LCD-induced structure.  Directly migrate old-project `old/perturbation.py`
+dOTF computation and visualization logic.
 
 **Old-project reference:** `old/perturbation.py` (mask perturbation),
 `old/roi.py:compute_dotf`, `old/roi.py:show_complex_2d`
+
+**Dependency:** `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain).
 
 **Explicit warning:** Full pupil stitching is not the minimum success
 criterion.  Observing clear, reproducible structure in the dOTF magnitude
@@ -207,34 +263,39 @@ and/or phase is sufficient for this milestone.
 
 ### Capture plan
 
-- `plans/bishe_dotf_edge_perturb.yaml`
+- `plans/bishe_dotf_diagnostic.yaml`
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
-- Masks: base circular window + base circular window with perturbations at
-  various edge positions.
+- LCD: all masks inside `effective_pupil_window`.
+- Masks: base window mask + base window with edge-local perturbations at
+  various positions.
 - Wavelength: single wavelength, fixed.
 
 ### Analysis
 
 1. Load `raw_capture.h5` - extract base PSF and perturbed PSF.
-2. Optionally subtract dark frame.
-3. Crop ROI from PSF pair (energy-based or using the effective pupil window).
-4. Pad ROI for higher frequency resolution.
-5. Compute dOTF:
+2. Apply `psf_roi.json` crop to both reference and perturbed PSF.
+3. Align and optionally normalize energy.
+4. Compute dOTF:
    - `PSF -> OTF` (FFT2 with shift)
-   - Estimate OTF support mask from magnitude threshold
-   - Complex least-squares scale to minimize energy outside support
-   - `dOTF = OTF_mod - s * OTF_ref`
-6. Visualize dOTF magnitude and phase.
-7. Interpret observed structure.
+   - `dOTF = OTF_perturbed - OTF_reference`
+5. Visualize dOTF abs, log_abs, phase, real, imag.
+6. Interpret observed structure.
 
 ### Output
 
 ```text
 outputs/dotf/
-  dotf_<perturbation_id>.npy         (complex 2D arrays)
-  dotf_magnitude_<perturbation_id>.png
-  dotf_phase_<perturbation_id>.png
-  dotf_summary.json                   (metadata, parameters)
+  psf_reference.npy
+  psf_perturbed.npy
+  otf_reference.npy
+  otf_perturbed.npy
+  dotf_complex.npy
+  dotf_abs.png
+  dotf_log_abs.png
+  dotf_phase.png
+  dotf_real.png
+  dotf_imag.png
+  dotf_report.md
 ```
 
 ## PSF dictionary
@@ -308,14 +369,16 @@ outputs/linear_recon/
 
 Phases should be implemented sequentially:
 
-1. **Phase 3.1** - Effective pupil geometry calibration
-2. **Phase 3.2** - PSF repeatability and ROI alignment
-3. **Phase 3.3** - dOTF diagnostic
-4. **Phase 3.4** - PSF dictionary and export
-5. **Phase 3.5** - Simple forward model validation
-6. **Phase 3.6** - Three-wavelength multiframe linear reconstruction
-7. **Phase 3.7** - Thesis figures and report freeze
+1. **Phase 3.1** - LCD-domain effective pupil geometry calibration
+2. **Phase 3.2a** - Camera-frame PSF ROI calibration
+3. **Phase 3.2b** - PSF repeatability and mask-induced diversity
+4. **Phase 3.3** - dOTF diagnostic visualization
+5. **Phase 3.4** - PSF dictionary and export
+6. **Phase 3.5** - Simple forward model validation
+7. **Phase 3.6** - Three-wavelength multiframe linear reconstruction
+8. **Phase 3.7** - Thesis figures and report freeze
 
 Each phase depends on the outputs of the previous phases but not on
-implementation details.  Phase 3.2 needs the effective pupil window from 3.1;
-Phase 3.3 needs the ROI convention and PSF extraction from 3.2; etc.
+implementation details.  Phase 3.2a needs the effective pupil window from 3.1
+(LCD domain); Phase 3.2b and 3.3 need the PSF ROI from 3.2a (camera domain);
+Phase 3.4 needs both; etc.
