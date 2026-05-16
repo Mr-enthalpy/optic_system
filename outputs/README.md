@@ -53,37 +53,63 @@ provenance rule below.
 - **Status:** intermediate; estimates the effective pupil window, not final
   scientific calibration validity or training-ready data.
 
+### `outputs/psf_roi/`
+
+- **Phase:** 3.2a — Camera-frame PSF ROI calibration
+- **Depends on:**
+  - `data/raw/bishe_psf_roi.h5` produced by `scripts/capture_psf_roi.py`
+  - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
+  - `outputs/exposure_calibration/camera_params_psf_safe.json` (Phase 3.0.5b)
+- **Produces:**
+  - `psf_roi.json` — camera-frame crop window, center, and policy
+  - `psf_roi_preview.png` — crop window overlay on averaged frame
+  - `psf_roi_report.md` — human-readable diagnostics
+- **Script:** `scripts/analyze_psf_roi.py`
+- **Status:** planned
+- **Coordinate system:** This directory contains the camera sensor crop used by
+  PSF repeatability, dOTF, and PSF dictionary captures.  It is distinct from
+  `outputs/pupil_geometry/`, which is in LCD physical coordinates.
+
 ### `outputs/psf_repeatability/`
 
-- **Phase:** 3.2 — PSF repeatability and ROI alignment
-- **Depends on:** `outputs/psf_repeatability/repeatability_raw.h5`
+- **Phase:** 3.2b — PSF repeatability and mask-induced diversity
+- **Depends on:**
+  - `data/raw/bishe_psf_repeatability.h5`
+  - `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain)
+  - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
 - **Produces:**
-  - `psfs_aligned.npy` — aligned PSF stack
+  - `psfs_aligned.npy` — aligned PSF stack (all masks all repeats)
   - `psfs_mean.npy` — per-mask mean PSF
   - `psfs_std.npy` — per-mask PSF standard deviation
-  - `mask_difference_matrix.npy` — between-mask distance matrix
-  - `mask_difference_matrix.png` — visualisation
-  - `repeatability_metrics.json` — within-mask variance, between-mask distance, SNR-like ratio
-  - `psf_repeatability_report.md`
-- **Script:** repeatability analysis scripts (to be created in Phase 3.2)
+  - `repeatability_metrics.json` — intra-mask repeatability (PSNR, SSIM,
+    coefficient of variation) and inter-mask pairwise distances
+  - `pairwise_distance_matrix.npy` — between-mask pairwise distance matrix
+  - `ssim_matrix.npy` — between-mask pairwise SSIM matrix
+  - `psnr_matrix.npy` — between-mask pairwise PSNR matrix
+  - `repeatability_report.md`
+- **Script:** `scripts/analyze_psf_repeatability.py`
 - **Status:** planned
 
 ### `outputs/dotf/`
 
-- **Phase:** 3.3 — dOTF diagnostic
-- **Depends on:** `outputs/dotf/dotf_raw.h5`
+- **Phase:** 3.3 — dOTF diagnostic visualization
+- **Depends on:**
+  - `data/raw/bishe_dotf_diagnostic.h5`
+  - `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain)
+  - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
 - **Produces:**
-  - `psf_ref.npy` — reference PSF
+  - `psf_reference.npy` — reference PSF
   - `psf_perturbed.npy` — perturbed PSF
-  - `otf_ref.npy` — reference OTF
+  - `otf_reference.npy` — reference OTF
   - `otf_perturbed.npy` — perturbed OTF
   - `dotf_complex.npy` — complex dOTF
-  - `dotf_amp.png` — dOTF amplitude
+  - `dotf_abs.png` — dOTF amplitude
+  - `dotf_log_abs.png` — dOTF log amplitude
   - `dotf_phase.png` — dOTF phase
-  - `dotf_structure_overlay.png` — structure overlay
-  - `dotf_sparsity_metrics.json` — sparsity / structure diagnostics
+  - `dotf_real.png` — dOTF real part
+  - `dotf_imag.png` — dOTF imaginary part
   - `dotf_report.md`
-- **Script:** dOTF analysis scripts (to be created in Phase 3.3)
+- **Script:** `scripts/analyze_dotf.py`
 - **Status:** planned
 
 ### `outputs/psf_dictionary/`
@@ -91,6 +117,7 @@ provenance rule below.
 - **Phase:** 3.4 — PSF dictionary and LCD_forward export
 - **Depends on:**
   - `data/raw/bishe_psf_dict_*.h5`
+  - `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain)
 - **Produces:**
   - `masks_physical.npy` — physical mask arrays
   - `masks_downsampled.npy` — downsampled masks

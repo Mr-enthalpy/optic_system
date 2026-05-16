@@ -1,0 +1,33 @@
+# Phase 3.2a - Camera-frame PSF ROI calibration (PLANNED STUB)
+#
+# Purpose: determine a fixed crop window in camera sensor coordinates
+# for the point-source PSF.  Produces psf_roi.json.
+#
+# This is a schema sketch.  The plan is not yet executable.
+
+plan_id: bishe_psf_roi
+phase: "3.2a"
+
+camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
+camera_profile: canonical_low_gain
+allow_global_safe_camera_fallback: true
+
+pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
+
+wavelength:
+  wavelength_nm: 550.0
+  grating: 1
+  settle_ms: 500
+
+capture:
+  frames_per_capture: 20
+  repeats: 5
+
+psf_roi:
+  method: center_of_mass
+  crop_size: [256, 256]
+  energy_fraction_check: 0.999
+
+output:
+  raw_h5: data/raw/bishe_psf_roi.h5
+  output_dir: outputs/psf_roi
