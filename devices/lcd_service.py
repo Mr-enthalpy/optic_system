@@ -244,6 +244,7 @@ class LCDService:
                 "current_mask_id": self._last_mask_id,
                 "transmissive_code": self.transmissive_code,
                 "opaque_code": self.opaque_code,
+                "mask_preview": None,
                 "last_error": self._last_published_error,
             }
             if state["display_index"] is None:

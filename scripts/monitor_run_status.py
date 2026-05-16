@@ -347,9 +347,11 @@ def run_tk_gui(args: argparse.Namespace) -> int:
 
 
 def _mask_preview_path(status_dir: Path, lcd: dict[str, Any]) -> Path | None:
-    preview_rel = lcd.get("mask_preview")
-    if preview_rel:
-        return _preview_path(status_dir, preview_rel)
+    if "mask_preview" in lcd:
+        preview_rel = lcd["mask_preview"]
+        if preview_rel is not None:
+            return _preview_path(status_dir, str(preview_rel))
+        return None
     candidates = sorted(status_dir.glob("current_mask_preview.*"))
     return candidates[0] if candidates else None
 

@@ -188,14 +188,16 @@ def read_tls_state(status_dir: Path) -> dict[str, Any] | None:
 def read_mask_preview(status_dir: Path) -> np.ndarray | None:
     """Read the most recent mask preview from *status_dir*.
 
-    First tries to locate the file via ``lcd_state.json``, otherwise
-    falls back to a direct glob for ``current_mask_preview.*``.
+    If ``lcd_state.json`` contains an explicit ``mask_preview`` key
+    (even ``null``), it is authoritative and no glob fallback is used.
     """
     sd = Path(status_dir)
     lcd = read_lcd_state(sd)
-    preview_rel = lcd.get("mask_preview") if lcd else None
-    if preview_rel:
-        return _read_preview_file(sd, preview_rel)
+    if lcd is not None and "mask_preview" in lcd:
+        preview_rel = lcd["mask_preview"]
+        if preview_rel is not None:
+            return _read_preview_file(sd, str(preview_rel))
+        return None
     candidates = sorted(sd.glob("current_mask_preview.*"))
     for cand in candidates:
         result = _read_preview_file(sd, cand.name)
