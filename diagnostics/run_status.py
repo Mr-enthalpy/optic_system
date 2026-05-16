@@ -32,7 +32,7 @@ class RunStatus:
 class RunStatusPublisher:
     """Task-level run-status publisher (writes state.json + log.jsonl).
 
-    LCD and TLS state are published independently by LcdService and
+    LCD and TLS state are published independently by LCDService and
     TLSService via `write_lcd_state()` / `write_tls_state()`.
     """
 

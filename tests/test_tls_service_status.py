@@ -198,3 +198,31 @@ def test_tls_wrap_exception_publishes_error_for_tls_service_error(status_dir):
     state = read_tls_state(status_dir)
     assert state is not None
     assert "pre-existing error" in str(state.get("last_error", ""))
+
+
+def test_tls_service_move_publishes_moving_true_before_blocking(fake_device, status_dir):
+    """move() publishes moving=true before the blocking call, then moving=false after."""
+    from devices.tls_service import TLSService
+
+    svc = TLSService(device_factory=lambda: fake_device, status_dir=status_dir, default_serial_number="FAKE-001")
+    svc.connect()
+    svc.set_wavelength_nm(600.0)
+
+    captured_during_move = []
+
+    original_move = fake_device.move
+
+    def _patched_move(timeout=60.0):
+        state = read_tls_state(status_dir)
+        captured_during_move.append(state.get("moving") if state else None)
+        original_move(timeout)
+
+    fake_device.move = _patched_move
+
+    svc.move()
+
+    assert captured_during_move == [True]
+
+    state = read_tls_state(status_dir)
+    assert state is not None
+    assert state["moving"] is False
