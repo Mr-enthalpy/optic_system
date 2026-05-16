@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from diagnostics.run_status import RunStatusPublisher, RunStatusReader
+from diagnostics.run_status import RunStatusPublisher, RunStatusReader, read_mask_preview, write_mask_preview, write_lcd_state
 
 
 def test_publisher_writes_state_json(tmp_path: Path) -> None:
@@ -24,16 +24,17 @@ def test_publisher_writes_state_json(tmp_path: Path) -> None:
 
 
 def test_write_mask_preview_still_works(tmp_path: Path) -> None:
-    publisher = RunStatusPublisher(tmp_path, "run_002")
     mask = np.arange(12, dtype=np.uint8).reshape(3, 4)
 
-    path = publisher.write_mask_preview(mask, filename="current_mask_preview.npy")
+    path = write_mask_preview(tmp_path, mask, filename="current_mask_preview.npy")
 
     assert path.exists()
-    status = RunStatusReader(tmp_path).read()
-    assert status is not None
-    assert status.current_mask_preview == "current_mask_preview.npy"
-    loaded = RunStatusReader(tmp_path).read_mask_preview()
+    write_lcd_state(tmp_path, {
+        "connected": True,
+        "current_mode": "mono_mask",
+        "mask_preview": "current_mask_preview.npy",
+    })
+    loaded = read_mask_preview(tmp_path)
     assert loaded is not None
     np.testing.assert_array_equal(loaded, mask)
 

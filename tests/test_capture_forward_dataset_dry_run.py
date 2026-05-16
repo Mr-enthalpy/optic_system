@@ -319,8 +319,6 @@ class TestCaptureForwardDatasetDryRun:
         assert status.capture_index == sample_plan.n_captures
         assert status.completed is True
         assert status.error is None
-        assert status.current_mask_id == "mask_b"
-        assert RunStatusReader(status_dir).read_mask_preview() is not None
 
     def test_hardware_materialization_rejects_missing_mask(
         self, sample_plan: CapturePlan, tmp_h5_path: Path

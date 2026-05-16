@@ -5,16 +5,19 @@
 `scripts/monitor_run_status.py` provides read-only observation of running
 capture or calibration tasks.
 
-The monitor reads task-published files from a run-status directory:
+The monitor reads **multiple independent status sources** from a run-status
+directory:
 
-* `state.json`
-* `current_mask_preview.png` or `current_mask_preview.npy`
-* `latest_frame_preview.npy` by default; `.png` is still readable for legacy
-  or explicitly requested previews
-* `frame_stats.json`
-* `log.jsonl`
+* `state.json` — task-level progress from the running task
+* `lcd_state.json` — LCD display state from `LCDService`
+* `tls_state.json` — TLS wavelength state from `TLSService`
+* `current_mask_preview.png` / `.npy` — mask preview from `LCDService`
+* `latest_frame_preview.png` / `.npy` — frame preview from task
+* `frame_stats.json` — frame statistics from task
+* `log.jsonl` — log entries from task
 
-It does not connect to hardware and does not control the task.
+Each source is published independently by the component that owns it.
+The monitor merges them for display but does not connect to hardware.
 
 ## Usage
 
@@ -52,6 +55,12 @@ running task.
 The monitor shows only task-published previews and metadata. It does not write
 raw capture HDF5, change exposure or gain, change LCD masks, move TLS hardware,
 or modify task state.
+
+Because LCD and TLS state are published independently by `LCDService` and
+`TLSService`, the monitor continues to show the latest LCD mask and TLS
+wavelength even if the task stops updating or crashes.  Task state (progress,
+phase, error) may stall, but hardware-level LCD/TLS display state remains
+live as long as the device services keep running.
 
 The GUI keeps task metadata in a separate top-right panel with its own scroll
 area. Frame and mask previews are displayed in the main middle panels, and the

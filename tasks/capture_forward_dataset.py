@@ -80,7 +80,7 @@ class CameraCaptureProtocol(_Protocol):
 
 
 class LCDDisplayProtocol(_Protocol):
-    def show_physical_mask(self, mask: np.ndarray) -> None:
+    def show_physical_mask(self, mask: np.ndarray, *, mask_id: str | None = None) -> None:
         ...
 
     def metadata(self) -> dict[str, Any]:
@@ -161,12 +161,14 @@ class FakeLCD:
         self._w = width_phys
         self._subpixel_axis = subpixel_axis
         self.last_mask: np.ndarray | None = None
+        self.last_mask_id: str | None = None
 
-    def show_physical_mask(self, mask: np.ndarray) -> None:
+    def show_physical_mask(self, mask: np.ndarray, *, mask_id: str | None = None) -> None:
         mask = np.asarray(mask)
         if mask.ndim != 2:
             raise LCDDisplayError(f"mask must be 2D [H, 3W], got shape {mask.shape}")
         self.last_mask = mask.copy()
+        self.last_mask_id = mask_id
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -302,8 +304,8 @@ class LCDAdapter:
     def __init__(self, lcd_service):
         self._service = lcd_service
 
-    def show_physical_mask(self, mask: np.ndarray) -> None:
-        self._service.show_mono_mask(mask, mask_id=None)
+    def show_physical_mask(self, mask: np.ndarray, *, mask_id: str | None = None) -> None:
+        self._service.show_mono_mask(mask, mask_id=mask_id)
 
     def metadata(self) -> dict[str, Any]:
         return self._service.get_metadata()
@@ -428,10 +430,6 @@ def run_capture_forward_dataset(
                 phase="wavelength_ready",
                 capture_index=capture_idx,
                 n_captures=plan.n_captures,
-                current_wavelength_nm=_optional_float_value(tls_status.get("current_wavelength_nm")),
-                target_wavelength_nm=_optional_float_value(tls_status.get("target_wavelength_nm")),
-                tls_grating=_optional_int_value(tls_status.get("grating")),
-                tls_moving=_optional_bool_value(tls_status.get("moving")),
             )
 
             for mi, mask_entry in enumerate(plan.masks):
@@ -440,19 +438,13 @@ def run_capture_forward_dataset(
 
                 _validate_mask_shape(mask_array, mask_entry.mask_id, lcd)
 
-                lcd.show_physical_mask(mask_array)
+                lcd.show_physical_mask(mask_array, mask_id=mask_entry.mask_id)
                 lcd_display_ts = time.monotonic_ns()
-                _safe_write_mask_preview(status, mask_array)
                 _safe_status_update(
                     status,
                     phase="mask_shown",
                     capture_index=capture_idx,
                     n_captures=plan.n_captures,
-                    current_mask_id=mask_entry.mask_id,
-                    current_wavelength_nm=_optional_float_value(tls_status.get("current_wavelength_nm")),
-                    target_wavelength_nm=_optional_float_value(tls_status.get("target_wavelength_nm")),
-                    tls_grating=_optional_int_value(tls_status.get("grating")),
-                    tls_moving=_optional_bool_value(tls_status.get("moving")),
                 )
 
                 if plan.lcd_settle_ms > 0 and not dry_run:
@@ -460,15 +452,11 @@ def run_capture_forward_dataset(
 
                 k = plan.camera.frames_per_capture
                 capture = devices.camera.acquire_burst(k)
-                camera_frame_seq = _optional_int_value(capture.metadata.get("frame_seq"))
-                camera_max_pixel = float(np.max(capture.frames_avg)) if capture.frames_avg.size else None
                 _safe_status_update(
                     status,
                     phase="burst_captured",
                     capture_index=capture_idx,
                     n_captures=plan.n_captures,
-                    camera_frame_seq=camera_frame_seq,
-                    camera_max_pixel=camera_max_pixel,
                 )
                 frames_to_store = capture.burst if plan.store_burst else None
 
@@ -492,8 +480,6 @@ def run_capture_forward_dataset(
                     phase="capture_appended",
                     capture_index=capture_idx + 1,
                     n_captures=plan.n_captures,
-                    camera_frame_seq=camera_frame_seq,
-                    camera_max_pixel=camera_max_pixel,
                 )
                 capture_idx += 1
 
@@ -627,15 +613,6 @@ def _safe_status_update(status: RunStatusPublisher | None, **kwargs: Any) -> Non
         status.update(**kwargs)
     except Exception as exc:
         warnings.warn(f"run status update failed: {exc}", RuntimeWarning)
-
-
-def _safe_write_mask_preview(status: RunStatusPublisher | None, mask: np.ndarray) -> None:
-    if status is None:
-        return
-    try:
-        status.write_mask_preview(mask)
-    except Exception as exc:
-        warnings.warn(f"run status mask preview failed: {exc}", RuntimeWarning)
 
 
 def _optional_float_value(value: Any) -> float | None:

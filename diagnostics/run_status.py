@@ -17,33 +17,25 @@ class RunStatus:
     run_id: str
     plan_id: str | None = None
     phase: str | None = None
+    stage: str | None = None
     capture_index: int | None = None
     n_captures: int | None = None
-    current_mask_id: str | None = None
-    current_wavelength_nm: float | None = None
-    target_wavelength_nm: float | None = None
-    tls_grating: int | None = None
-    tls_moving: bool | None = None
-    camera_frame_seq: int | None = None
-    camera_max_pixel: float | None = None
+    current_step: str | None = None
     last_update_ns: int = field(default_factory=time.monotonic_ns)
-    current_mask_preview: str | None = None
     latest_frame_preview: str | None = None
     frame_stats: str | None = None
     log_file: str | None = None
-    lcd_display_index: int | None = None
-    lcd_physical_shape: list[int] | None = None
-    lcd_logical_shape: list[int] | None = None
-    lcd_subpixel_axis: int | None = None
-    camera_exposure_us: float | None = None
-    camera_gain_db: float | None = None
-    camera_roi: list[int] | None = None
-    camera_frame_dtype_full_scale: int | None = None
     completed: bool | None = None
     error: str | None = None
 
 
 class RunStatusPublisher:
+    """Task-level run-status publisher (writes state.json + log.jsonl).
+
+    LCD and TLS state are published independently by LCDService and
+    TLSService via `write_lcd_state()` / `write_tls_state()`.
+    """
+
     def __init__(self, status_dir: Path, run_id: str):
         self.status_dir = Path(status_dir)
         self.status_dir.mkdir(parents=True, exist_ok=True)
@@ -59,30 +51,6 @@ class RunStatusPublisher:
             self.status_dir / "state.json",
             json.dumps(asdict(self._state), indent=2, sort_keys=True),
         )
-
-    def write_mask_preview(
-        self,
-        mask: np.ndarray,
-        filename: str = "current_mask_preview.png",
-    ) -> Path:
-        self.status_dir.mkdir(parents=True, exist_ok=True)
-        requested = self.status_dir / filename
-        array = np.asarray(mask)
-        array = _downsample_preview(array)
-        if requested.suffix.lower() == ".npy":
-            path = requested
-            _atomic_save_npy(path, array)
-        else:
-            try:
-                path = requested
-                _atomic_write_image(path, _as_uint8_preview(array))
-            except Exception:
-                path = requested.with_suffix(".npy")
-                _atomic_save_npy(path, array)
-
-        rel = _relative_to_status_dir(path, self.status_dir)
-        self.update(current_mask_preview=rel)
-        return path
 
     def write_frame_preview(
         self,
@@ -149,7 +117,98 @@ class RunStatusPublisher:
         return path
 
 
+def write_mask_preview(
+    status_dir: Path,
+    mask: np.ndarray,
+    filename: str = "current_mask_preview.png",
+) -> Path:
+    """Write a mask preview image into *status_dir*.  Best-effort."""
+    status_dir = Path(status_dir)
+    status_dir.mkdir(parents=True, exist_ok=True)
+    requested = status_dir / filename
+    array = np.asarray(mask)
+    array = _downsample_preview(array)
+    if requested.suffix.lower() == ".npy":
+        path = requested
+        _atomic_save_npy(path, array)
+    else:
+        try:
+            path = requested
+            _atomic_write_image(path, _as_uint8_preview(array))
+        except Exception:
+            path = requested.with_suffix(".npy")
+            _atomic_save_npy(path, array)
+    return path
+
+
+def write_lcd_state(status_dir: Path, state: dict[str, Any]) -> Path:
+    """Atomically write ``lcd_state.json`` into *status_dir*."""
+    status_dir = Path(status_dir)
+    status_dir.mkdir(parents=True, exist_ok=True)
+    data = dict(state)
+    data.setdefault("last_update_ns", time.monotonic_ns())
+    text = json.dumps(data, indent=2, sort_keys=True, default=_json_default)
+    path = status_dir / "lcd_state.json"
+    _atomic_write_text(path, text)
+    return path
+
+
+def read_lcd_state(status_dir: Path) -> dict[str, Any] | None:
+    """Read ``lcd_state.json`` from *status_dir*.  Returns None on failure."""
+    path = Path(status_dir) / "lcd_state.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_tls_state(status_dir: Path, state: dict[str, Any]) -> Path:
+    """Atomically write ``tls_state.json`` into *status_dir*."""
+    status_dir = Path(status_dir)
+    status_dir.mkdir(parents=True, exist_ok=True)
+    data = dict(state)
+    data.setdefault("last_update_ns", time.monotonic_ns())
+    text = json.dumps(data, indent=2, sort_keys=True, default=_json_default)
+    path = status_dir / "tls_state.json"
+    _atomic_write_text(path, text)
+    return path
+
+
+def read_tls_state(status_dir: Path) -> dict[str, Any] | None:
+    """Read ``tls_state.json`` from *status_dir*.  Returns None on failure."""
+    path = Path(status_dir) / "tls_state.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def read_mask_preview(status_dir: Path) -> np.ndarray | None:
+    """Read the most recent mask preview from *status_dir*.
+
+    If ``lcd_state.json`` contains an explicit ``mask_preview`` key
+    (even ``null``), it is authoritative and no glob fallback is used.
+    """
+    sd = Path(status_dir)
+    lcd = read_lcd_state(sd)
+    if lcd is not None and "mask_preview" in lcd:
+        preview_rel = lcd["mask_preview"]
+        if preview_rel is not None:
+            return _read_preview_file(sd, str(preview_rel))
+        return None
+    candidates = sorted(sd.glob("current_mask_preview.*"))
+    for cand in candidates:
+        result = _read_preview_file(sd, cand.name)
+        if result is not None:
+            return result
+    return None
+
+
 class RunStatusReader:
+    """Reads task-level status + provides multi-source access."""
+
     def __init__(self, status_dir: Path):
         self.status_dir = Path(status_dir)
 
@@ -166,19 +225,17 @@ class RunStatusReader:
         except Exception:
             return None
 
-    def read_mask_preview(self) -> np.ndarray | None:
-        status = self.read()
-        if status is None or not status.current_mask_preview:
-            return None
-
-        return self._read_preview_file(status.current_mask_preview)
-
     def read_frame_preview(self) -> np.ndarray | None:
         status = self.read()
         if status is None or not status.latest_frame_preview:
             return None
+        return _read_preview_file(
+            self.status_dir, status.latest_frame_preview
+        )
 
-        return self._read_preview_file(status.latest_frame_preview)
+    def read_mask_preview(self) -> np.ndarray | None:
+        """Read mask preview from LCD-owned file (via lcd_state.json or glob)."""
+        return read_mask_preview(self.status_dir)
 
     def read_frame_stats(self) -> dict[str, Any] | None:
         status = self.read()
@@ -218,16 +275,22 @@ class RunStatusReader:
                 rows.append(data)
         return rows
 
-    def _read_preview_file(self, preview_path: str) -> np.ndarray | None:
-        path = Path(preview_path)
-        if not path.is_absolute():
-            path = self.status_dir / path
-        try:
-            if path.suffix.lower() == ".npy":
-                return np.load(str(path))
-            return _read_image(path)
-        except Exception:
-            return None
+
+def _read_preview_file(status_dir: Path, preview_path: str) -> np.ndarray | None:
+    path = Path(preview_path)
+    if not path.is_absolute():
+        path = Path(status_dir) / path
+    try:
+        if path.suffix.lower() == ".npy":
+            return np.load(str(path))
+        return _read_image(path)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# internal helpers
+# ---------------------------------------------------------------------------
 
 
 def _status_from_dict(data: dict[str, Any]) -> RunStatus:
