@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 from collections import deque
@@ -51,10 +53,35 @@ class RunStatus:
     error: str | None = None
 
 
+def _maybe_launch_monitor(status_dir: Path) -> None:
+    if os.environ.get("OPTIC_SYSTEM_AUTO_MONITOR") != "1":
+        return
+    lock_file = status_dir / ".monitor.lock"
+    if lock_file.exists():
+        return
+    try:
+        lock_file.write_text(str(os.getpid()))
+    except OSError:
+        return
+    monitor_script = Path(__file__).resolve().parents[1] / "scripts" / "monitor_run_status.py"
+    if not monitor_script.exists():
+        return
+    popen_kwargs: dict[str, object] = {}
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.DETACHED_PROCESS
+    else:
+        popen_kwargs["start_new_session"] = True
+    subprocess.Popen(
+        [sys.executable, str(monitor_script), "--status-dir", str(status_dir)],
+        **popen_kwargs,  # type: ignore[arg-type]
+    )
+
+
 class RunStatusPublisher:
     def __init__(self, status_dir: Path, run_id: str):
         self.status_dir = Path(status_dir)
         self.status_dir.mkdir(parents=True, exist_ok=True)
+        _maybe_launch_monitor(self.status_dir)
         self._reset_transient_files()
         self._state = RunStatus(run_id=run_id)
 
