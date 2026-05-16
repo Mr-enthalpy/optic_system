@@ -509,16 +509,19 @@ def _image_label_target_size(label: Any) -> tuple[int, int]:
         label.update_idletasks()
     except Exception:
         pass
-    width = max(1, int(label.winfo_width()))
-    height = max(1, int(label.winfo_height()))
     parent = getattr(label, "master", None)
     if parent is not None:
         try:
             parent.update_idletasks()
         except Exception:
             pass
-        width = max(width, int(parent.winfo_width()) - 16)
-        height = max(height, int(parent.winfo_height()) - 16)
+        pw = int(parent.winfo_width()) - 16
+        ph = int(parent.winfo_height()) - 16
+        if pw > 16 and ph > 16:
+            return pw, ph
+
+    width = max(1, int(label.winfo_width()))
+    height = max(1, int(label.winfo_height()))
     if width <= 1:
         width = 512
     if height <= 1:
