@@ -124,8 +124,8 @@ class TLSService:
         return self._last_status
 
     def set_grating(self, grating: int) -> TLSStatus:
-        device = self._require_device()
         try:
+            device = self._require_device()
             device.set_grating(int(grating))
             status = self._refresh_status(
                 self._safe_get_status(),
@@ -138,9 +138,9 @@ class TLSService:
             raise self._wrap_exception("set_grating", exc) from exc
 
     def set_wavelength_nm(self, wavelength_nm: float) -> TLSStatus:
-        device = self._require_device()
         target = float(wavelength_nm)
         try:
+            device = self._require_device()
             device.set_wavelength(target)
             status = self._refresh_status(
                 self._safe_get_status(),
@@ -153,8 +153,8 @@ class TLSService:
             raise self._wrap_exception("set_wavelength", exc) from exc
 
     def move(self, timeout_s: float = 60.0) -> TLSStatus:
-        device = self._require_device()
         try:
+            device = self._require_device()
             device.move(timeout=float(timeout_s))
             status = self._refresh_status(
                 self._safe_get_status(),
@@ -173,8 +173,8 @@ class TLSService:
         poll_interval_s: float = 0.2,
         tolerance_nm: float = 0.5,
     ) -> TLSStatus:
-        device = self._require_device()
         try:
+            device = self._require_device()
             device.wait_until_idle(
                 timeout=float(timeout_s),
                 poll_interval=float(poll_interval_s),
@@ -333,39 +333,38 @@ class TLSService:
 
     def _wrap_exception(self, operation: str, exc: Exception) -> TLSServiceError:
         if isinstance(exc, TLSServiceError):
-            self._publish_tls_state()
-            return exc
-
-        message = str(exc) or exc.__class__.__name__
-        error_cls: type[TLSServiceError] = TLSServiceError
-        module = self._module
-        if isinstance(exc, TimeoutError):
-            error_cls = TLSServiceTimeoutError
-        elif module is not None:
-            timeout_types = tuple(
-                cls
-                for cls in (
-                    getattr(module, "TLSC1TimeoutError", None),
-                    getattr(module, "TLSC1MoveTimeoutError", None),
-                )
-                if isinstance(cls, type)
-            )
-            base_types = tuple(
-                cls
-                for cls in (
-                    getattr(module, "TLSC1Error", None),
-                    getattr(module, "TLSC1ConnectionError", None),
-                    getattr(module, "TLSC1APIError", None),
-                    getattr(module, "TLSC1ValidationError", None),
-                )
-                if isinstance(cls, type)
-            )
-            if timeout_types and isinstance(exc, timeout_types):
+            wrapped = exc
+        else:
+            message = str(exc) or exc.__class__.__name__
+            error_cls: type[TLSServiceError] = TLSServiceError
+            module = self._module
+            if isinstance(exc, TimeoutError):
                 error_cls = TLSServiceTimeoutError
-            elif base_types and isinstance(exc, base_types):
-                error_cls = TLSServiceError
+            elif module is not None:
+                timeout_types = tuple(
+                    cls
+                    for cls in (
+                        getattr(module, "TLSC1TimeoutError", None),
+                        getattr(module, "TLSC1MoveTimeoutError", None),
+                    )
+                    if isinstance(cls, type)
+                )
+                base_types = tuple(
+                    cls
+                    for cls in (
+                        getattr(module, "TLSC1Error", None),
+                        getattr(module, "TLSC1ConnectionError", None),
+                        getattr(module, "TLSC1APIError", None),
+                        getattr(module, "TLSC1ValidationError", None),
+                    )
+                    if isinstance(cls, type)
+                )
+                if timeout_types and isinstance(exc, timeout_types):
+                    error_cls = TLSServiceTimeoutError
+                elif base_types and isinstance(exc, base_types):
+                    error_cls = TLSServiceError
+            wrapped = error_cls(operation, message)
 
-        wrapped = error_cls(operation, message)
         self._last_status = TLSStatus(
             connected=self._last_status.connected,
             device_id=self._last_status.device_id,

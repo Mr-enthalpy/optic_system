@@ -171,3 +171,30 @@ def test_tls_service_disconnect_writes_state(fake_device, status_dir):
 
     state = read_tls_state(status_dir)
     assert state["connected"] is False
+
+
+def test_tls_error_before_connect_publishes_last_error(fake_device, status_dir):
+    """Calling set_wavelength before connect publishes last_error in tls_state.json."""
+    from devices.tls_service import TLSService
+
+    svc = TLSService(device_factory=lambda: fake_device, status_dir=status_dir, default_serial_number="FAKE-001")
+    with pytest.raises(Exception):
+        svc.set_wavelength_nm(500.0)
+
+    state = read_tls_state(status_dir)
+    assert state is not None
+    assert state.get("last_error") is not None
+    assert "device is not connected" in str(state["last_error"])
+
+
+def test_tls_wrap_exception_publishes_error_for_tls_service_error(status_dir):
+    """When _wrap_exception receives a TLSServiceError, it still updates last_error."""
+    from devices.tls_service import TLSService, TLSServiceError
+
+    svc = TLSService(status_dir=status_dir, default_serial_number="FAKE-001")
+    original = TLSServiceError("operation", "pre-existing error")
+    svc._wrap_exception("test_op", original)
+
+    state = read_tls_state(status_dir)
+    assert state is not None
+    assert "pre-existing error" in str(state.get("last_error", ""))

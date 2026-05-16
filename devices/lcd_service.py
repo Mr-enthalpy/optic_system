@@ -246,7 +246,8 @@ class LCDService:
                 "opaque_code": self.opaque_code,
                 "last_error": self._last_published_error,
             }
-            state["display_index"] = state["display_index"] or self._display_index
+            if state["display_index"] is None:
+                state["display_index"] = self._display_index
             if state.get("reported_shape") is not None:
                 state["reported_shape"] = list(state["reported_shape"])
             if state.get("logical_shape") is not None:
@@ -284,7 +285,8 @@ class LCDService:
                 "mask_preview": preview_rel,
                 "last_error": self._last_published_error,
             }
-            state["display_index"] = state["display_index"] or self._display_index
+            if state["display_index"] is None:
+                state["display_index"] = self._display_index
             if state.get("reported_shape") is not None:
                 state["reported_shape"] = list(state["reported_shape"])
             if state.get("logical_shape") is not None:

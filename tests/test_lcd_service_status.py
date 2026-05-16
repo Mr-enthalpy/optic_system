@@ -229,3 +229,36 @@ def test_lcd_close_writes_connected_false(fake_backend, status_dir, monkeypatch)
     assert state["connected"] is False
     assert state["current_mode"] is None
     assert state["current_mask_id"] is None
+
+
+def test_lcd_writes_display_index_zero(monkeypatch, tmp_path: Path):
+    """display_index=0 is a legal value and must not be replaced by fallback."""
+    from devices.lcd_service import LCDService
+    from diagnostics.run_status import read_lcd_state, write_lcd_state
+
+    sd = tmp_path / "status"
+
+    # Direct API: zero is preserved
+    write_lcd_state(sd, {"connected": True, "display_index": 0, "current_mode": "mono_mask"})
+    state = read_lcd_state(sd)
+    assert state is not None
+    assert state["display_index"] == 0
+
+    # Via LCDService: backend metadata provides 0, _display_index is None
+    monkeypatch.setattr(LCDService, "initialize", lambda self: None)
+
+    class _ZeroBackend:
+        def get_metadata(self):
+            return {"display_index": 0, "reported_shape": (3, 20, 3)}
+        def show(self, _rgb):
+            pass
+        def close(self):
+            pass
+
+    svc = LCDService(backend=_ZeroBackend(), display_index=None, subpixel_axis=1, status_dir=sd)
+    mask = np.zeros((3, 60), dtype=np.uint8)
+    svc.show_mono_mask(mask, mask_id="zero_test")
+
+    state = read_lcd_state(sd)
+    assert state is not None, "lcd_state.json was not written"
+    assert state["display_index"] == 0
