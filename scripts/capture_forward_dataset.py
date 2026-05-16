@@ -236,7 +236,7 @@ def _run_hardware(
         frame_stream = FrameStreamClient()
         capture_helper = FrameCaptureHelper(frame_stream)
 
-        lcd_service = LCDService(display_index=args.lcd_display_index, subpixel_axis=args.lcd_subpixel_axis)
+        lcd_service = LCDService(display_index=args.lcd_display_index, subpixel_axis=args.lcd_subpixel_axis, status_dir=status_dir)
         meta = lcd_service.get_metadata()
         print(f"  lcd: display_index={meta.get('display_index')} "
               f"reported={meta.get('reported_shape')} "
@@ -250,6 +250,7 @@ def _run_hardware(
             try:
                 tls_service = TLSService(
                     default_serial_number=args.tls_serial_number,
+                    status_dir=status_dir,
                 )
                 tls_service.connect()
                 st = tls_service.get_status()

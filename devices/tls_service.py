@@ -106,7 +106,6 @@ class TLSService:
             self._publish_tls_state()
             return status
         except Exception as exc:
-            self._publish_tls_state()
             raise self._wrap_exception("connect", exc) from exc
 
     def disconnect(self) -> TLSStatus:
@@ -118,7 +117,6 @@ class TLSService:
         try:
             self._device.disconnect()
         except Exception as exc:
-            self._publish_tls_state()
             raise self._wrap_exception("disconnect", exc) from exc
 
         self._last_status = self._disconnected_status()
@@ -137,7 +135,6 @@ class TLSService:
             self._publish_tls_state()
             return status
         except Exception as exc:
-            self._publish_tls_state()
             raise self._wrap_exception("set_grating", exc) from exc
 
     def set_wavelength_nm(self, wavelength_nm: float) -> TLSStatus:
@@ -153,7 +150,6 @@ class TLSService:
             self._publish_tls_state()
             return status
         except Exception as exc:
-            self._publish_tls_state()
             raise self._wrap_exception("set_wavelength", exc) from exc
 
     def move(self, timeout_s: float = 60.0) -> TLSStatus:
@@ -168,7 +164,6 @@ class TLSService:
             self._publish_tls_state()
             return status
         except Exception as exc:
-            self._publish_tls_state()
             raise self._wrap_exception("move", exc) from exc
 
     def wait_until_idle(
@@ -193,7 +188,6 @@ class TLSService:
             self._publish_tls_state()
             return status
         except Exception as exc:
-            self._publish_tls_state()
             raise self._wrap_exception("wait_until_idle", exc) from exc
 
     def get_status(self) -> TLSStatus:
