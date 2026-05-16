@@ -134,8 +134,7 @@ def test_lcd_service_close_writes_state(fake_backend, status_dir, monkeypatch):
 
     state = read_lcd_state(status_dir)
     assert state is not None
-    assert state["connected"] is True
-    assert state["current_mode"] in (None, "all_transmissive")
+    assert state["connected"] is False
 
 
 def test_lcd_service_set_status_dir(fake_backend, monkeypatch, tmp_path):
@@ -160,3 +159,73 @@ def test_lcd_service_set_status_dir(fake_backend, monkeypatch, tmp_path):
 
     state = read_lcd_state(sd)
     assert state["current_mask_id"] == "post"
+
+
+def test_lcd_status_publish_does_not_recurse(fake_backend, status_dir, monkeypatch):
+    from devices.lcd_service import LCDService
+
+    monkeypatch.setattr(LCDService, "initialize", lambda self: None)
+    svc = LCDService(
+        backend=fake_backend,
+        display_index=1,
+        subpixel_axis=1,
+        status_dir=status_dir,
+    )
+    svc._backend = fake_backend
+    mask = np.zeros((3, 60), dtype=np.uint8)
+
+    svc.show_mono_mask(mask, mask_id="no_recurse")
+
+    assert (status_dir / "lcd_state.json").exists()
+    state = read_lcd_state(status_dir)
+    assert state is not None
+    assert state["current_mask_id"] == "no_recurse"
+
+
+def test_lcd_close_does_not_reinitialize_backend(fake_backend, status_dir, monkeypatch):
+    from devices.lcd_service import LCDService, LCDBackend
+
+    monkeypatch.setattr(LCDService, "initialize", lambda self: None)
+    svc = LCDService(
+        backend=fake_backend,
+        display_index=1,
+        subpixel_axis=1,
+        status_dir=status_dir,
+    )
+    svc._backend = fake_backend
+    svc.show_all_transmissive()
+
+    reinit_calls = []
+    original_init = svc.initialize
+
+    def _tracked_init():
+        if svc._backend is None:
+            reinit_calls.append(1)
+        original_init()
+
+    monkeypatch.setattr(svc, "initialize", _tracked_init)
+    svc.close()
+
+    assert reinit_calls == []
+    assert fake_backend.closed is True
+
+
+def test_lcd_close_writes_connected_false(fake_backend, status_dir, monkeypatch):
+    from devices.lcd_service import LCDService
+
+    monkeypatch.setattr(LCDService, "initialize", lambda self: None)
+    svc = LCDService(
+        backend=fake_backend,
+        display_index=1,
+        subpixel_axis=1,
+        status_dir=status_dir,
+    )
+    svc._backend = fake_backend
+    svc.show_all_transmissive()
+    svc.close()
+
+    state = read_lcd_state(status_dir)
+    assert state is not None
+    assert state["connected"] is False
+    assert state["current_mode"] is None
+    assert state["current_mask_id"] is None

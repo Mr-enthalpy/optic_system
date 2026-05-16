@@ -64,11 +64,31 @@ class LCDService:
     def initialize(self) -> None:
         if self._backend is None:
             self._backend = LCDBackend(display_index=self._display_index)
-        self._publish_lcd_state()
 
     def get_metadata(self) -> dict[str, object]:
         self.initialize()
-        assert self._backend is not None
+        return self._build_metadata()
+
+    def _build_metadata(self) -> dict[str, object]:
+        """Return metadata without initializing or publishing.
+
+        When ``_backend`` is ``None`` (e.g. during ``close()``) reported_shape
+        is unavailable but cached fields are still returned so that
+        ``_publish_lcd_state`` can write a valid disconnected entry.
+        """
+        if self._backend is None:
+            return {
+                "display_index": self._display_index,
+                "reported_shape": None,
+                "logical_shape": None,
+                "physical_shape": None,
+                "subpixel_axis": self.subpixel_axis,
+                "transmissive_code": self.transmissive_code,
+                "opaque_code": self.opaque_code,
+                "current_mode": self._last_mode,
+                "current_mask_id": self._last_mask_id,
+            }
+
         backend_metadata = self._backend.get_metadata()
         reported_shape = backend_metadata["reported_shape"]
         height, width, _ = reported_shape
@@ -212,7 +232,7 @@ class LCDService:
             return
         try:
             from diagnostics.run_status import write_lcd_state
-            meta = self.get_metadata()
+            meta = self._build_metadata()
             state: dict[str, Any] = {
                 "connected": self._backend is not None,
                 "display_index": meta.get("display_index"),
@@ -249,7 +269,7 @@ class LCDService:
             preview_rel = None
 
         try:
-            meta = self.get_metadata()
+            meta = self._build_metadata()
             state: dict[str, Any] = {
                 "connected": self._backend is not None,
                 "display_index": meta.get("display_index"),
