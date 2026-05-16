@@ -66,7 +66,12 @@ The GUI keeps task metadata in a separate top-right panel with its own scroll
 area. Frame and mask previews are displayed in the main middle panels, and the
 recent-log panel renders only the newest `--max-log-lines` entries. Preview
 images are scaled to fit their GUI panels while preserving aspect ratio, so a
-large camera frame is not cropped to its upper-left corner.
+large camera frame or mask is not cropped to its upper-left corner. Small
+images are not upscaled by default.
+
+Metadata and Recent Logs preserve the user's scroll position during periodic
+refresh. Logs auto-follow the bottom only when the user is already near the
+bottom.
 
 The frame panel has a preview encoding selector below the image. Because the
 camera service may not expose reliable Bayer-filter metadata, the task
