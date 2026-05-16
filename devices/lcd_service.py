@@ -232,30 +232,7 @@ class LCDService:
             return
         try:
             from diagnostics.run_status import write_lcd_state
-            meta = self._build_metadata()
-            state: dict[str, Any] = {
-                "connected": self._backend is not None,
-                "display_index": meta.get("display_index"),
-                "reported_shape": meta.get("reported_shape"),
-                "logical_shape": meta.get("logical_shape"),
-                "physical_shape": meta.get("physical_shape"),
-                "subpixel_axis": meta.get("subpixel_axis"),
-                "current_mode": self._last_mode,
-                "current_mask_id": self._last_mask_id,
-                "transmissive_code": self.transmissive_code,
-                "opaque_code": self.opaque_code,
-                "mask_preview": None,
-                "last_error": self._last_published_error,
-            }
-            if state["display_index"] is None:
-                state["display_index"] = self._display_index
-            if state.get("reported_shape") is not None:
-                state["reported_shape"] = list(state["reported_shape"])
-            if state.get("logical_shape") is not None:
-                state["logical_shape"] = list(state["logical_shape"])
-            if state.get("physical_shape") is not None:
-                state["physical_shape"] = list(state["physical_shape"])
-            write_lcd_state(self._status_dir, state)
+            write_lcd_state(self._status_dir, self._lcd_state_dict())
         except Exception:
             pass
 
@@ -271,29 +248,32 @@ class LCDService:
             preview_rel = None
 
         try:
-            meta = self._build_metadata()
-            state: dict[str, Any] = {
-                "connected": self._backend is not None,
-                "display_index": meta.get("display_index"),
-                "reported_shape": meta.get("reported_shape"),
-                "logical_shape": meta.get("logical_shape"),
-                "physical_shape": meta.get("physical_shape"),
-                "subpixel_axis": meta.get("subpixel_axis"),
-                "current_mode": self._last_mode,
-                "current_mask_id": self._last_mask_id,
-                "transmissive_code": self.transmissive_code,
-                "opaque_code": self.opaque_code,
-                "mask_preview": preview_rel,
-                "last_error": self._last_published_error,
-            }
-            if state["display_index"] is None:
-                state["display_index"] = self._display_index
-            if state.get("reported_shape") is not None:
-                state["reported_shape"] = list(state["reported_shape"])
-            if state.get("logical_shape") is not None:
-                state["logical_shape"] = list(state["logical_shape"])
-            if state.get("physical_shape") is not None:
-                state["physical_shape"] = list(state["physical_shape"])
-            write_lcd_state(self._status_dir, state)
+            write_lcd_state(self._status_dir, self._lcd_state_dict(mask_preview=preview_rel))
         except Exception:
             pass
+
+    def _lcd_state_dict(self, *, mask_preview: str | None = None) -> dict[str, Any]:
+        meta = self._build_metadata()
+        state: dict[str, Any] = {
+            "connected": self._backend is not None,
+            "display_index": meta.get("display_index"),
+            "reported_shape": meta.get("reported_shape"),
+            "logical_shape": meta.get("logical_shape"),
+            "physical_shape": meta.get("physical_shape"),
+            "subpixel_axis": meta.get("subpixel_axis"),
+            "current_mode": self._last_mode,
+            "current_mask_id": self._last_mask_id,
+            "transmissive_code": self.transmissive_code,
+            "opaque_code": self.opaque_code,
+            "mask_preview": mask_preview,
+            "last_error": self._last_published_error,
+        }
+        if state["display_index"] is None:
+            state["display_index"] = self._display_index
+        if state.get("reported_shape") is not None:
+            state["reported_shape"] = list(state["reported_shape"])
+        if state.get("logical_shape") is not None:
+            state["logical_shape"] = list(state["logical_shape"])
+        if state.get("physical_shape") is not None:
+            state["physical_shape"] = list(state["physical_shape"])
+        return state
