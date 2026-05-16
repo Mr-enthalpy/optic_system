@@ -166,7 +166,7 @@ def test_capture_pupil_geometry_profile_fallback_is_recorded(tmp_path: Path) -> 
 def test_load_pupil_geometry_plan_requires_geometry_strategy(tmp_path: Path) -> None:
     params = _camera_params(tmp_path / "camera_params.json")
     plan = _plan(tmp_path, params)
-    plan["calibration"]["strategy"] = "fixed_single_pass"
+    plan["calibration"]["strategy"] = "unsupported_strategy"
     path = tmp_path / "plan.yaml"
     import yaml
 

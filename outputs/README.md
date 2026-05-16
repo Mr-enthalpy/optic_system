@@ -53,16 +53,6 @@ provenance rule below.
 - **Status:** intermediate; estimates the effective pupil window, not final
   scientific calibration validity or training-ready data.
 
-### `outputs/legacy_phase3_1_coarse_pupil_scan/`
-
-- **Status:** historical only; not downstream-usable.
-- **Reason:** These PR #24 artifacts were captured with the revoked
-  `camera_params.json` coarse exposure parameters and may contain
-  clipping/local saturation.
-- **Policy:** Do not use this directory as an operational input. New Phase 3
-  captures must regenerate pupil-geometry outputs from PSF-safe camera
-  parameters.
-
 ### `outputs/psf_repeatability/`
 
 - **Phase:** 3.2 — PSF repeatability and ROI alignment

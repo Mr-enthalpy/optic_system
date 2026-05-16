@@ -25,14 +25,6 @@ from typing import Any
 import numpy as np
 import yaml
 
-from scripts.capture_pupil_scan import (
-    HardwareLock,
-    OptionalRunStatus,
-    _ensure_sys_path,
-    _now_ns,
-    _repo_root,
-    load_camera_params,
-)
 from tasks.pupil_geometry_h5 import PupilGeometryWriter
 from tasks.pupil_geometry_masks import (
     bar_metadata,
@@ -44,6 +36,147 @@ from tasks.pupil_geometry_masks import (
     vertical_bar_mask,
 )
 from tasks.pupil_geometry_model import create_ellipse_mask, solve_aperture_from_profiles
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _ensure_sys_path() -> None:
+    root = str(_repo_root())
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+
+def _now_ns() -> int:
+    return time.monotonic_ns()
+
+
+class OptionalRunStatus:
+    def __init__(self, status_dir: Path | None, run_id: str):
+        self._publisher = None
+        self._initialized_ok = True
+        self._run_id = run_id
+        if status_dir is not None:
+            from diagnostics.run_status import RunStatusPublisher
+
+            self._publisher = RunStatusPublisher(status_dir, run_id)
+
+    def update(self, **kwargs: Any) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.update(**kwargs)
+            except Exception:
+                if self._initialized_ok:
+                    print(
+                        f"[{self._run_id}] status-dir: failed to write state.json, "
+                        "run-status publishing disabled",
+                        file=sys.stderr,
+                    )
+                    self._initialized_ok = False
+
+    def append_log(self, level: str, message: str, **fields: Any) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.append_log(level, message, **fields)
+            except Exception:
+                pass
+
+    def write_frame_preview(self, frame: np.ndarray) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.write_frame_preview(frame)
+            except Exception as exc:
+                self.append_log("WARNING", "failed to write frame preview", error=str(exc))
+
+    def write_frame_stats(self, stats: dict[str, Any]) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.write_frame_stats(stats)
+            except Exception as exc:
+                self.append_log("WARNING", "failed to write frame stats", error=str(exc))
+
+    def write_mask_preview(self, mask: np.ndarray) -> None:
+        if self._publisher is not None:
+            try:
+                self._publisher.write_mask_preview(mask)
+            except Exception as exc:
+                self.append_log("WARNING", "failed to write mask preview", error=str(exc))
+
+
+class HardwareLock:
+    def __init__(self, lock_path: str | Path):
+        self._lock_path = Path(lock_path)
+        self._acquired = False
+
+    def acquire(self) -> None:
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._lock_path.exists():
+            raise RuntimeError(
+                f"Hardware lock file exists: {self._lock_path}\n"
+                "Phase 3.1 pupil geometry calibration requires exclusive camera/LCD access. "
+                "If the lock is stale, delete it manually after confirming no capture is running."
+            )
+        self._lock_path.write_text(
+            f"pid={os.getpid()}\nacquired_ns={_now_ns()}\n",
+            encoding="utf-8",
+        )
+        self._acquired = True
+
+    def release(self) -> None:
+        if self._acquired and self._lock_path.exists():
+            self._lock_path.unlink(missing_ok=True)
+        self._acquired = False
+
+
+def load_camera_params(source: str | Path) -> tuple[dict[str, Any], Path]:
+    source_path = Path(source)
+    if not source_path.is_absolute():
+        source_path = _repo_root() / source_path
+    if not source_path.exists():
+        raise FileNotFoundError(f"camera_params_source not found: {source_path}")
+    with open(source_path, "r", encoding="utf-8") as f:
+        params = json.load(f)
+    _validate_camera_params(params, source_path)
+    return params, source_path
+
+
+def _validate_camera_params(params: dict[str, Any], source_path: Path) -> None:
+    validity = params.get("validity", {})
+    if validity.get("exposure_safety_valid") is not True:
+        raise ValueError(f"{source_path}: validity.exposure_safety_valid must be true")
+    if validity.get("psf_exposure_safe") is not True:
+        raise ValueError(f"{source_path}: validity.psf_exposure_safe must be true")
+    global_safe = params.get("global_safe_camera", {})
+    if global_safe.get("exposure_us") is None:
+        raise ValueError(f"{source_path}: global_safe_camera.exposure_us is required")
+    if global_safe.get("gain_db") is None:
+        raise ValueError(f"{source_path}: global_safe_camera.gain_db is required")
+    if params.get("frame_dtype_full_scale") is None:
+        raise ValueError(f"{source_path}: frame_dtype_full_scale is required")
+    policy = params.get("psf_safety_policy", {})
+    if policy.get("rule") != "all_frames_all_pixels_strictly_below_full_scale":
+        raise ValueError(
+            f"{source_path}: psf_safety_policy.rule must be "
+            "'all_frames_all_pixels_strictly_below_full_scale'"
+        )
+    if policy.get("evaluated_on") != "raw_burst_frames":
+        raise ValueError(f"{source_path}: psf_safety_policy.evaluated_on must be raw_burst_frames")
+    if policy.get("evaluated_domain") != "valid_camera_pixel_domain":
+        raise ValueError(
+            f"{source_path}: psf_safety_policy.evaluated_domain must be valid_camera_pixel_domain"
+        )
+    if policy.get("allow_full_scale_pixel") is not False:
+        raise ValueError(f"{source_path}: psf_safety_policy.allow_full_scale_pixel must be false")
+    if policy.get("allow_non_finite_pixel") is not False:
+        raise ValueError(f"{source_path}: psf_safety_policy.allow_non_finite_pixel must be false")
+    domain = policy.get("valid_pixel_domain")
+    if not isinstance(domain, dict):
+        raise ValueError(f"{source_path}: psf_safety_policy.valid_pixel_domain is required")
+    if int(domain.get("valid_pixel_count", 0)) <= 0:
+        raise ValueError(f"{source_path}: valid_pixel_domain.valid_pixel_count must be > 0")
+    if int(domain.get("invalid_pixel_count", 0)) < 0:
+        raise ValueError(f"{source_path}: valid_pixel_domain.invalid_pixel_count must be >= 0")
 
 
 def load_pupil_geometry_plan(path: str | Path) -> dict[str, Any]:
