@@ -4,7 +4,7 @@
 
 Capture plans define parameters for one capture or calibration task invocation.
 Some plans are consumed by task-specific scripts (e.g. `calibrate_psf_safe_exposure.py`,
-`capture_pupil_scan.py`) rather than `capture_forward_dataset.py`.
+`capture_pupil_geometry.py`) rather than `capture_forward_dataset.py`.
 Each plan specifies masks, wavelengths, camera settings, and settle timing.
 The capture script reads a plan, initializes devices, executes the acquisition
 sequence, and writes a `raw_capture.h5` file.
@@ -19,7 +19,7 @@ consume the raw HDF5 to produce processed results.
 | `hardware_smoke_no_tls.yaml` | Hardware smoke test: camera + LCD, no TLS |
 | `hardware_smoke_with_tls.yaml` | Hardware smoke test: camera + LCD + TLS |
 | `bishe_psf_safe_exposure.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
-| `bishe_pupil_scan.yaml` | Phase 3.1 procedural effective LCD pupil scan |
+| `bishe_pupil_geometry.yaml` | Phase 3.1 effective pupil geometry calibration |
 
 ### `plans/bishe_psf_safe_exposure.yaml`
 - **Phase:** 3.0.5b - PSF-safe exposure/gain refinement.
@@ -40,17 +40,15 @@ consume the raw HDF5 to produce processed results.
   calibration. Therefore, Phase 3.0.5b keeps TLS wavelength movement as the
   outer hardware loop: each planned wavelength should trigger at most one
   TLS move/wait cycle per search pass, and exposure/gain candidates are
-  evaluated under that fixed wavelength. If future coarse/fine passes are
-  added, TLS move count must scale with
-  `N_wavelengths * N_search_passes`, not with
-  `N_wavelengths * N_candidates`.
+  evaluated under that fixed wavelength. TLS move count must scale with the
+  wavelength list, not with the exposure/gain candidate list.
 - **Selection policy:** Current thesis-branch 3.0.5b uses an auditable
   discrete grid and lexicographic selection, not continuous joint optimization
   of `(gain_db, exposure_us)`. The objective is strict PSF safety across all
   planned wavelengths, then preference for `gain_db_min`, then the largest
   usable exposure at that gain. Higher gain is penalized and used only when
   `gain_db_min` is PSF-safe but unusably dim. Camera parameters are global
-  across wavelengths so Phase 3.1 pupil scan, PSF repeatability, and PSF
+  across wavelengths so Phase 3.1 pupil geometry, PSF repeatability, and PSF
   dictionary captures remain comparable.
 - **Valid-pixel domain:** The strict full-scale rule is evaluated over the
   plan's explicit `valid_pixel_domain`. The default is full frame. Known
@@ -62,17 +60,23 @@ consume the raw HDF5 to produce processed results.
 - **Downstream output:** `outputs/exposure_calibration/camera_params_psf_safe.json`
   is written only when a globally PSF-safe setting is found.
 
-### `plans/bishe_pupil_scan.yaml`
-- **Phase:** 3.1 - Effective LCD pupil / active modulation region scan
-- **Purpose:** Locate the physical LCD region where procedural mask changes
-  measurably affect camera captures.
+### `plans/bishe_pupil_geometry.yaml`
+- **Phase:** 3.1 - Effective pupil geometry calibration.
+- **Purpose:** Calibrate an effective circular pupil window in LCD physical
+  coordinates using X/Y dark-bar energy profiles and a circular-aperture
+  radius scan.
 - **Input:** `camera_params_source` from Phase 3.0.5b by default
   (`outputs/exposure_calibration/camera_params_psf_safe.json`).
+- **Camera profile:** `camera_profile: fast_pupil_scan` is preferred.
+  `global_safe_camera` fallback is allowed only when the plan explicitly sets
+  `allow_global_safe_camera_fallback: true`, and that provenance is recorded
+  in HDF5 and analysis outputs.
 - **Masks:** Generated procedurally at runtime by
-  `tasks/pupil_scan_masks.py`; the plan does not list hundreds of mask files.
-- **Output raw HDF5:** `data/raw/bishe_pupil_scan.h5`.
-- **Analysis:** `scripts/analyze_pupil_scan.py` writes
-  `outputs/pupil_scan/effective_lcd_roi.json` and diagnostics.
+  `tasks/pupil_geometry_masks.py`; the plan records bar width/step and radius
+  scan range rather than listing mask files.
+- **Output raw HDF5:** `data/raw/bishe_pupil_geometry.h5`.
+- **Analysis:** `scripts/analyze_pupil_geometry.py` writes
+  `outputs/pupil_geometry/effective_pupil_window.json` and diagnostics.
 
 ## Planned plans (Phase 3 thesis)
 

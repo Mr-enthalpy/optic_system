@@ -1,0 +1,47 @@
+plan_id: bishe_pupil_geometry_calibration
+phase: "3.1"
+
+camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
+camera_profile: fast_pupil_scan
+allow_global_safe_camera_fallback: true
+
+wavelength:
+  wavelength_nm: 550.0
+  grating: 1
+  settle_ms: 500
+
+lcd:
+  display_index: 1
+  subpixel_axis: 1
+  settle_ms: 2
+  # physical_shape may be inferred from LCD metadata.
+  # physical_shape: [2560, 1620]
+
+calibration:
+  strategy: bar_profiles_plus_radius_scan
+
+  bar_scan:
+    bar_width: 16
+    step: 4
+    bg_code: 255
+    bar_code: 0
+    avg_n: 10
+    scan_range: null
+
+  radius_scan:
+    r_min_factor: 0.0
+    r_max_factor: 2.0
+    steps: 200
+    aperture_code: 255
+    background_code: 0
+    avg_n: 20
+
+  effective_window:
+    shape: circle
+    radius_factor_of_b: 0.9
+
+output:
+  raw_h5: data/raw/bishe_pupil_geometry.h5
+  output_dir: outputs/pupil_geometry
+
+lock_file: outputs/run_status/capture_hardware.lock
