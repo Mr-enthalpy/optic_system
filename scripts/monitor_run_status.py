@@ -190,15 +190,8 @@ def render_terminal_snapshot(
         ]
 
     # camera stats
-    cam_max = stats.get("max_pixel")
-    if status and (cam_max is not None or status.latest_frame_preview):
-        lines += [
-            "",
-            f"--- Camera ---",
-            f"camera max: {_fmt(cam_max)}",
-            f"p99.9: {_fmt(stats.get('p99_9'))}",
-            f"sat_frac: {_fmt(stats.get('saturated_fraction'))}",
-        ]
+    if stats:
+        lines += [""] + ["--- Camera ---"] + [f"{key}: {_fmt(value)}" for key, value in stats.items()]
 
     lines += [
         "",
@@ -432,16 +425,10 @@ def _render_gui_metadata(
     else:
         lines += ["", "TLS: unavailable"]
 
-    cam_max = stats.get("max_pixel")
-    if status and (cam_max is not None or status.latest_frame_preview):
-        lines += [
-            "",
-            "--- Camera ---",
-            f"camera max: {_fmt(cam_max)}",
-            f"p99.9: {_fmt(stats.get('p99_9'))}",
-            f"saturated fraction: {_fmt(stats.get('saturated_fraction'))}",
-            f"dtype full scale: {_first_present(stats.get('frame_dtype_full_scale'), None)}",
-        ]
+    if stats:
+        lines += (
+            [""] + ["--- Camera ---"] + [f"{key}: {_fmt(value)}" for key, value in stats.items()]
+        )
 
     return "\n".join(lines)
 
@@ -626,10 +613,6 @@ def _fmt_us(value: Any) -> str:
 
 def _fmt_db(value: Any) -> str:
     return "--" if value is None else f"{float(value):g} dB"
-
-
-def _first_present(primary: Any, fallback: Any) -> str:
-    return _fmt(primary if primary is not None else fallback)
 
 
 if __name__ == "__main__":
