@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -36,11 +37,14 @@ class TLSServiceTimeoutError(TLSServiceError):
 
 
 class TLSService:
-    """
-    Thin wrapper around the high-level ``tls_c1`` / ``TLSC1`` SDK facade.
+    """Thin wrapper around the high-level ``tls_c1`` / ``TLSC1`` SDK facade.
 
     The module import is intentionally lazy so ``optic_system`` can import on a
     machine without the TLS SDK or vendor DLLs installed.
+
+    If *status_dir* is provided, the service independently writes
+    ``tls_state.json`` after every state-changing operation so a read-only
+    monitor can observe the latest TLS state without the task.
     """
 
     def __init__(
@@ -51,6 +55,7 @@ class TLSService:
         default_mono: str = "Omni",
         default_port_type: str = "USB",
         default_serial_number: str | None = None,
+        status_dir: Path | str | None = None,
     ):
         self._module_name = module_name
         self._device_factory = device_factory
@@ -67,6 +72,11 @@ class TLSService:
             port_type=self._default_port_type,
             serial_number=self._default_serial_number,
         )
+
+        self._status_dir: Path | None = Path(status_dir) if status_dir is not None else None
+
+    def set_status_dir(self, status_dir: Path | str | None) -> None:
+        self._status_dir = Path(status_dir) if status_dir is not None else None
 
     def connect(
         self,
@@ -93,21 +103,26 @@ class TLSService:
                 serial_number=resolved_serial,
                 last_error=None,
             )
+            self._publish_tls_state()
             return status
         except Exception as exc:
+            self._publish_tls_state()
             raise self._wrap_exception("connect", exc) from exc
 
     def disconnect(self) -> TLSStatus:
         if self._device is None:
             self._last_status = self._disconnected_status()
+            self._publish_tls_state()
             return self._last_status
 
         try:
             self._device.disconnect()
         except Exception as exc:
+            self._publish_tls_state()
             raise self._wrap_exception("disconnect", exc) from exc
 
         self._last_status = self._disconnected_status()
+        self._publish_tls_state()
         return self._last_status
 
     def set_grating(self, grating: int) -> TLSStatus:
@@ -119,8 +134,10 @@ class TLSService:
                 grating=int(grating),
                 last_error=None,
             )
+            self._publish_tls_state()
             return status
         except Exception as exc:
+            self._publish_tls_state()
             raise self._wrap_exception("set_grating", exc) from exc
 
     def set_wavelength_nm(self, wavelength_nm: float) -> TLSStatus:
@@ -133,8 +150,10 @@ class TLSService:
                 target_wavelength_nm=target,
                 last_error=None,
             )
+            self._publish_tls_state()
             return status
         except Exception as exc:
+            self._publish_tls_state()
             raise self._wrap_exception("set_wavelength", exc) from exc
 
     def move(self, timeout_s: float = 60.0) -> TLSStatus:
@@ -146,8 +165,10 @@ class TLSService:
                 moving=False,
                 last_error=None,
             )
+            self._publish_tls_state()
             return status
         except Exception as exc:
+            self._publish_tls_state()
             raise self._wrap_exception("move", exc) from exc
 
     def wait_until_idle(
@@ -169,8 +190,10 @@ class TLSService:
                 moving=False,
                 last_error=None,
             )
+            self._publish_tls_state()
             return status
         except Exception as exc:
+            self._publish_tls_state()
             raise self._wrap_exception("wait_until_idle", exc) from exc
 
     def get_status(self) -> TLSStatus:
@@ -187,6 +210,33 @@ class TLSService:
             self.disconnect()
         finally:
             self._device = None
+
+    # ----- status publishing -----
+
+    def _publish_tls_state(self) -> None:
+        if self._status_dir is None:
+            return
+        try:
+            from diagnostics.run_status import write_tls_state
+
+            s = self._last_status
+            state: dict[str, Any] = {
+                "connected": s.connected,
+                "device_id": s.device_id,
+                "mono": s.mono,
+                "port_type": s.port_type,
+                "serial_number": s.serial_number,
+                "current_wavelength_nm": s.current_wavelength_nm,
+                "target_wavelength_nm": s.target_wavelength_nm,
+                "grating": s.grating,
+                "moving": s.moving,
+                "last_error": s.last_error,
+            }
+            write_tls_state(self._status_dir, state)
+        except Exception:
+            pass
+
+    # ----- internals -----
 
     def _ensure_device(self) -> Any:
         if self._device is None:
@@ -289,6 +339,7 @@ class TLSService:
 
     def _wrap_exception(self, operation: str, exc: Exception) -> TLSServiceError:
         if isinstance(exc, TLSServiceError):
+            self._publish_tls_state()
             return exc
 
         message = str(exc) or exc.__class__.__name__
@@ -333,6 +384,7 @@ class TLSService:
             moving=False,
             last_error=str(wrapped),
         )
+        self._publish_tls_state()
         return wrapped
 
     @staticmethod

@@ -5,7 +5,12 @@ from pathlib import Path
 
 import numpy as np
 
-from diagnostics.run_status import RunStatusPublisher, RunStatusReader
+from diagnostics.run_status import (
+    RunStatusPublisher,
+    RunStatusReader,
+    read_mask_preview,
+    write_mask_preview,
+)
 
 
 def test_publisher_writes_state_json(tmp_path: Path) -> None:
@@ -27,16 +32,13 @@ def test_publisher_writes_state_json(tmp_path: Path) -> None:
     assert isinstance(data["last_update_ns"], int)
 
 
-def test_reader_reads_state_back(tmp_path: Path) -> None:
+def test_reader_reads_task_state_back(tmp_path: Path) -> None:
     publisher = RunStatusPublisher(tmp_path, "run_002")
     publisher.update(
         plan_id="plan_b",
         phase="mask_shown",
-        current_mask_id="mask_a",
-        current_wavelength_nm=532.0,
-        target_wavelength_nm=532.0,
-        tls_grating=1,
-        tls_moving=False,
+        capture_index=1,
+        n_captures=10,
         completed=False,
     )
 
@@ -45,9 +47,9 @@ def test_reader_reads_state_back(tmp_path: Path) -> None:
     assert status is not None
     assert status.run_id == "run_002"
     assert status.plan_id == "plan_b"
-    assert status.current_mask_id == "mask_a"
-    assert status.current_wavelength_nm == 532.0
-    assert status.tls_moving is False
+    assert status.phase == "mask_shown"
+    assert status.capture_index == 1
+    assert status.n_captures == 10
 
 
 def test_atomic_write_leaves_valid_json_under_normal_operation(tmp_path: Path) -> None:
@@ -70,23 +72,23 @@ def test_partially_written_state_returns_none(tmp_path: Path) -> None:
 
 
 def test_missing_mask_preview_returns_none(tmp_path: Path) -> None:
-    publisher = RunStatusPublisher(tmp_path, "run_004")
-    publisher.update(current_mask_preview="missing.npy")
+    sd = tmp_path
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "lcd_state.json").write_text(
+        json.dumps({"current_mode": "mono_mask", "mask_preview": "missing.npy"}),
+        encoding="utf-8",
+    )
 
-    assert RunStatusReader(tmp_path).read_mask_preview() is None
+    assert read_mask_preview(sd) is None
 
 
 def test_mask_preview_write_read_npy(tmp_path: Path) -> None:
-    publisher = RunStatusPublisher(tmp_path, "run_005")
+    sd = tmp_path
     mask = np.arange(12, dtype=np.uint8).reshape(3, 4)
 
-    path = publisher.write_mask_preview(mask, filename="current_mask_preview.npy")
+    path = write_mask_preview(sd, mask, filename="current_mask_preview.npy")
 
     assert path.exists()
-    status = RunStatusReader(tmp_path).read()
-    assert status is not None
-    assert status.current_mask_preview == "current_mask_preview.npy"
-    loaded = RunStatusReader(tmp_path).read_mask_preview()
+    loaded = read_mask_preview(sd)
     assert loaded is not None
     np.testing.assert_array_equal(loaded, mask)
-

@@ -87,12 +87,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def run_terminal(args: argparse.Namespace) -> int:
     _ensure_repo_on_path()
-    from diagnostics.run_status import RunStatusReader
+    from diagnostics.run_status import RunStatusReader, read_lcd_state, read_tls_state, read_mask_preview
 
     reader = RunStatusReader(Path(args.status_dir))
     try:
         while True:
-            text = render_terminal_snapshot(reader, max_log_lines=args.max_log_lines)
+            text = render_terminal_snapshot(
+                args.status_dir, reader, max_log_lines=args.max_log_lines
+            )
             if args.once:
                 print(text)
                 return 0
@@ -103,14 +105,25 @@ def run_terminal(args: argparse.Namespace) -> int:
         return 0
 
 
-def render_terminal_snapshot(reader: Any, *, max_log_lines: int) -> str:
+def render_terminal_snapshot(
+    status_dir: str,
+    reader: Any,
+    *,
+    max_log_lines: int,
+) -> str:
+    from diagnostics.run_status import read_lcd_state as _read_lcd, read_tls_state as _read_tls, read_mask_preview as _read_mask
+
+    sd = Path(status_dir)
     status = reader.read()
     stats = reader.read_frame_stats()
     logs = reader.tail_log(max_lines=max_log_lines)
     frame = reader.read_frame_preview()
-    mask = reader.read_mask_preview()
+    mask = _read_mask(sd)
+    lcd = _read_lcd(sd) or {}
+    tls = _read_tls(sd) or {}
+    stats = stats or {}
 
-    if status is None:
+    if status is None and not lcd and not tls:
         lines = [
             "run_id: unavailable",
             "phase: status unavailable",
@@ -122,44 +135,75 @@ def render_terminal_snapshot(reader: Any, *, max_log_lines: int) -> str:
         ]
         return "\n".join(lines)
 
-    capture = _format_progress(status.capture_index, status.n_captures)
-    last_age = _format_update_age(status.last_update_ns)
+    capture = _format_progress(
+        status.capture_index if status else None,
+        status.n_captures if status else None,
+    )
+    last_age = _format_update_age(status.last_update_ns if status else None)
     frame_state = "available" if frame is not None else "unavailable"
     mask_state = "available" if mask is not None else "unavailable"
-    stats = stats or {}
 
-    lines = [
-        f"run_id: {status.run_id}",
-        f"plan_id: {_fmt(status.plan_id)}",
-        f"phase: {_fmt(status.phase)}",
-        f"capture: {capture}",
-        f"mask: {_fmt(status.current_mask_id)}",
-        f"wavelength: {_fmt_nm(status.current_wavelength_nm)}",
-        f"target wavelength: {_fmt_nm(status.target_wavelength_nm)}",
-        f"TLS: grating={_fmt(status.tls_grating)} moving={_fmt(status.tls_moving)}",
-        (
-            "LCD: "
-            f"display={_fmt(status.lcd_display_index)} "
-            f"physical={_fmt(status.lcd_physical_shape)} "
-            f"logical={_fmt(status.lcd_logical_shape)} "
-            f"subpixel_axis={_fmt(status.lcd_subpixel_axis)}"
-        ),
-        (
-            "camera: "
-            f"exposure={_fmt_us(status.camera_exposure_us)} "
-            f"gain={_fmt_db(status.camera_gain_db)} "
-            f"roi={_fmt(status.camera_roi)} "
-            f"seq={_fmt(status.camera_frame_seq)} "
-            f"max={_first_present(stats.get('max_pixel'), status.camera_max_pixel)} "
-            f"p99.9={_fmt(stats.get('p99_9'))} "
-            f"sat_frac={_fmt(stats.get('saturated_fraction'))}"
-        ),
-        f"camera dtype full scale: {_first_present(stats.get('frame_dtype_full_scale'), status.camera_frame_dtype_full_scale)}",
+    lines = []
+
+    # task state
+    if status is not None:
+        lines += [
+            f"run_id: {status.run_id}",
+            f"plan_id: {_fmt(status.plan_id)}",
+            f"phase: {_fmt(status.phase)}",
+            f"capture: {capture}",
+            f"completed: {_fmt(status.completed)}",
+            f"error: {_fmt(status.error)}",
+            f"last update: {last_age}",
+        ]
+    else:
+        lines += [
+            "run_id: --",
+            "plan_id: --",
+            "phase: task state unavailable",
+        ]
+
+    # LCD state
+    if lcd:
+        lines += [
+            "",
+            f"--- LCD ---",
+            f"connected: {_fmt(lcd.get('connected'))}",
+            f"display: {_fmt(lcd.get('display_index'))}",
+            f"physical: {_fmt(lcd.get('physical_shape'))}",
+            f"logical: {_fmt(lcd.get('logical_shape'))}",
+            f"subpixel_axis: {_fmt(lcd.get('subpixel_axis'))}",
+            f"mode: {_fmt(lcd.get('current_mode'))}",
+            f"mask: {_fmt(lcd.get('current_mask_id'))}",
+        ]
+
+    # TLS state
+    if tls:
+        lines += [
+            "",
+            f"--- TLS ---",
+            f"connected: {_fmt(tls.get('connected'))}",
+            f"current wavelength: {_fmt_nm(tls.get('current_wavelength_nm'))}",
+            f"target wavelength: {_fmt_nm(tls.get('target_wavelength_nm'))}",
+            f"grating: {_fmt(tls.get('grating'))}",
+            f"moving: {_fmt(tls.get('moving'))}",
+        ]
+
+    # camera stats
+    cam_max = stats.get("max_pixel")
+    if status and (cam_max is not None or status.latest_frame_preview):
+        lines += [
+            "",
+            f"--- Camera ---",
+            f"camera max: {_fmt(cam_max)}",
+            f"p99.9: {_fmt(stats.get('p99_9'))}",
+            f"sat_frac: {_fmt(stats.get('saturated_fraction'))}",
+        ]
+
+    lines += [
+        "",
         f"latest frame preview: {frame_state}",
         f"current mask preview: {mask_state}",
-        f"last update: {last_age}",
-        f"completed: {_fmt(status.completed)}",
-        f"error: {_fmt(status.error)}",
         "",
         "Recent logs:",
     ]
@@ -174,12 +218,13 @@ def render_terminal_snapshot(reader: Any, *, max_log_lines: int) -> str:
 
 def run_tk_gui(args: argparse.Namespace) -> int:
     _ensure_repo_on_path()
-    from diagnostics.run_status import RunStatusReader
+    from diagnostics.run_status import RunStatusReader, read_lcd_state, read_tls_state, read_mask_preview
 
     import tkinter as tk
     from tkinter import ttk
 
     reader = RunStatusReader(Path(args.status_dir))
+    sd = Path(args.status_dir)
     root = tk.Tk()
     root.title("Read-only Run Status Monitor")
     root.geometry("1100x760")
@@ -256,14 +301,20 @@ def run_tk_gui(args: argparse.Namespace) -> int:
         status = reader.read()
         stats = reader.read_frame_stats() or {}
         logs = reader.tail_log(max_lines=args.max_log_lines)
+        lcd = read_lcd_state(sd) or {}
+        tls = read_tls_state(sd) or {}
+
         state_var.set(_render_gui_state(status))
-        _update_text_widget(meta_text, _render_gui_metadata(status, stats))
+        _update_text_widget(meta_text, _render_gui_metadata(status, stats, lcd, tls))
         _update_image_label(
             label=frame_label,
             text_var=frame_var,
             photos=photos,
             key="frame",
-            path=_preview_path(Path(args.status_dir), getattr(status, "latest_frame_preview", None)),
+            path=_preview_path(
+                sd,
+                getattr(status, "latest_frame_preview", None),
+            ),
             fallback="latest frame preview: unavailable",
             frame_encoding=frame_encoding_var.get(),
         )
@@ -272,7 +323,7 @@ def run_tk_gui(args: argparse.Namespace) -> int:
             text_var=mask_var,
             photos=photos,
             key="mask",
-            path=_preview_path(Path(args.status_dir), getattr(status, "current_mask_preview", None)),
+            path=_mask_preview_path(sd, lcd),
             fallback="current mask preview: unavailable",
         )
         _update_logs_text(logs_text, logs, max_log_lines=args.max_log_lines)
@@ -293,6 +344,19 @@ def run_tk_gui(args: argparse.Namespace) -> int:
         return 0
     root.mainloop()
     return 0
+
+
+def _mask_preview_path(status_dir: Path, lcd: dict[str, Any]) -> Path | None:
+    preview_rel = lcd.get("mask_preview")
+    if preview_rel:
+        return _preview_path(status_dir, preview_rel)
+    candidates = sorted(status_dir.glob("current_mask_preview.*"))
+    return candidates[0] if candidates else None
+
+
+# ---------------------------------------------------------------------------
+# display helpers
+# ---------------------------------------------------------------------------
 
 
 def _update_logs_text(widget: Any, logs: list[dict[str, Any]], *, max_log_lines: int) -> None:
@@ -331,32 +395,53 @@ def _render_gui_state(status: Any | None) -> str:
     )
 
 
-def _render_gui_metadata(status: Any | None, stats: dict[str, Any]) -> str:
-    if status is None:
-        return "metadata unavailable"
-    return "\n".join(
-        [
-            f"mask: {_fmt(status.current_mask_id)}",
-            f"LCD display: {_fmt(status.lcd_display_index)}",
-            f"LCD physical: {_fmt(status.lcd_physical_shape)}",
-            f"LCD logical: {_fmt(status.lcd_logical_shape)}",
-            f"LCD subpixel axis: {_fmt(status.lcd_subpixel_axis)}",
+def _render_gui_metadata(
+    status: Any | None,
+    stats: dict[str, Any],
+    lcd: dict[str, Any],
+    tls: dict[str, Any],
+) -> str:
+    lines: list[str] = []
+
+    if lcd:
+        lines += [
+            "--- LCD ---",
+            f"connected: {_fmt(lcd.get('connected'))}",
+            f"display: {_fmt(lcd.get('display_index'))}",
+            f"physical: {_fmt(lcd.get('physical_shape'))}",
+            f"logical: {_fmt(lcd.get('logical_shape'))}",
+            f"subpixel axis: {_fmt(lcd.get('subpixel_axis'))}",
+            f"mode: {_fmt(lcd.get('current_mode'))}",
+            f"mask: {_fmt(lcd.get('current_mask_id'))}",
+        ]
+    else:
+        lines += ["LCD: unavailable"]
+
+    if tls:
+        lines += [
             "",
-            f"wavelength: {_fmt_nm(status.current_wavelength_nm)}",
-            f"target wavelength: {_fmt_nm(status.target_wavelength_nm)}",
-            f"TLS grating: {_fmt(status.tls_grating)}",
-            f"TLS moving: {_fmt(status.tls_moving)}",
+            "--- TLS ---",
+            f"connected: {_fmt(tls.get('connected'))}",
+            f"current wavelength: {_fmt_nm(tls.get('current_wavelength_nm'))}",
+            f"target wavelength: {_fmt_nm(tls.get('target_wavelength_nm'))}",
+            f"grating: {_fmt(tls.get('grating'))}",
+            f"moving: {_fmt(tls.get('moving'))}",
+        ]
+    else:
+        lines += ["", "TLS: unavailable"]
+
+    cam_max = stats.get("max_pixel")
+    if status and (cam_max is not None or status.latest_frame_preview):
+        lines += [
             "",
-            f"camera exposure: {_fmt_us(status.camera_exposure_us)}",
-            f"camera gain: {_fmt_db(status.camera_gain_db)}",
-            f"camera ROI: {_fmt(status.camera_roi)}",
-            f"camera seq: {_fmt(status.camera_frame_seq)}",
-            f"camera max: {_first_present(stats.get('max_pixel'), status.camera_max_pixel)}",
+            "--- Camera ---",
+            f"camera max: {_fmt(cam_max)}",
             f"p99.9: {_fmt(stats.get('p99_9'))}",
             f"saturated fraction: {_fmt(stats.get('saturated_fraction'))}",
-            f"dtype full scale: {_first_present(stats.get('frame_dtype_full_scale'), status.camera_frame_dtype_full_scale)}",
+            f"dtype full scale: {_first_present(stats.get('frame_dtype_full_scale'), None)}",
         ]
-    )
+
+    return "\n".join(lines)
 
 
 def _update_image_label(

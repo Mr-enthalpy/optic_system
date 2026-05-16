@@ -428,10 +428,6 @@ def run_capture_forward_dataset(
                 phase="wavelength_ready",
                 capture_index=capture_idx,
                 n_captures=plan.n_captures,
-                current_wavelength_nm=_optional_float_value(tls_status.get("current_wavelength_nm")),
-                target_wavelength_nm=_optional_float_value(tls_status.get("target_wavelength_nm")),
-                tls_grating=_optional_int_value(tls_status.get("grating")),
-                tls_moving=_optional_bool_value(tls_status.get("moving")),
             )
 
             for mi, mask_entry in enumerate(plan.masks):
@@ -442,17 +438,11 @@ def run_capture_forward_dataset(
 
                 lcd.show_physical_mask(mask_array)
                 lcd_display_ts = time.monotonic_ns()
-                _safe_write_mask_preview(status, mask_array)
                 _safe_status_update(
                     status,
                     phase="mask_shown",
                     capture_index=capture_idx,
                     n_captures=plan.n_captures,
-                    current_mask_id=mask_entry.mask_id,
-                    current_wavelength_nm=_optional_float_value(tls_status.get("current_wavelength_nm")),
-                    target_wavelength_nm=_optional_float_value(tls_status.get("target_wavelength_nm")),
-                    tls_grating=_optional_int_value(tls_status.get("grating")),
-                    tls_moving=_optional_bool_value(tls_status.get("moving")),
                 )
 
                 if plan.lcd_settle_ms > 0 and not dry_run:
@@ -627,15 +617,6 @@ def _safe_status_update(status: RunStatusPublisher | None, **kwargs: Any) -> Non
         status.update(**kwargs)
     except Exception as exc:
         warnings.warn(f"run status update failed: {exc}", RuntimeWarning)
-
-
-def _safe_write_mask_preview(status: RunStatusPublisher | None, mask: np.ndarray) -> None:
-    if status is None:
-        return
-    try:
-        status.write_mask_preview(mask)
-    except Exception as exc:
-        warnings.warn(f"run status mask preview failed: {exc}", RuntimeWarning)
 
 
 def _optional_float_value(value: Any) -> float | None:
