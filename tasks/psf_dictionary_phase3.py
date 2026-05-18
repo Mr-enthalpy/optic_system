@@ -32,6 +32,8 @@ class PSFDictionaryRawWriter:
         raw.create_dataset("masks_lowres", shape=(0, 1, 1, 1), maxshape=(None, 1, None, None), dtype=np.uint8, chunks=(1, 1, 64, 64), compression="gzip", compression_opts=4)
         raw.create_dataset("mask_id", shape=(0,), maxshape=(None,), dtype=string_dtype)
         raw.create_dataset("mask_family", shape=(0,), maxshape=(None,), dtype=string_dtype)
+        raw.create_dataset("wavelength_nm", shape=(0,), maxshape=(None,), dtype=np.float64)
+        raw.create_dataset("wavelength_index", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("repeat_index", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("timestamp_ns", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("mask_metadata_json", shape=(0,), maxshape=(None,), dtype=string_dtype)
@@ -75,6 +77,8 @@ class PSFDictionaryRawWriter:
         lowres_mask: np.ndarray,
         mask_id: str,
         mask_family: str,
+        wavelength_nm: float,
+        wavelength_index: int,
         repeat_index: int,
         mask_metadata: dict[str, Any],
     ) -> int:
@@ -85,6 +89,8 @@ class PSFDictionaryRawWriter:
         _append_lowres_mask(f["raw/masks_lowres"], row, np.asarray(lowres_mask, dtype=np.uint8))
         _append_scalar(f["raw/mask_id"], str(mask_id))
         _append_scalar(f["raw/mask_family"], str(mask_family))
+        _append_scalar(f["raw/wavelength_nm"], float(wavelength_nm))
+        _append_scalar(f["raw/wavelength_index"], int(wavelength_index))
         _append_scalar(f["raw/repeat_index"], int(repeat_index))
         _append_scalar(f["raw/timestamp_ns"], int(time.time_ns()))
         _append_scalar(f["raw/mask_metadata_json"], json_dumps(mask_metadata))

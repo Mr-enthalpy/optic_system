@@ -7,9 +7,15 @@ camera_gain_selection: "10.0"
 pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
 psf_roi_source: outputs/psf_roi/psf_roi.json
 
-wavelength:
-  wavelength_nm: 550.0
-  grating: 1
+wavelengths:
+  - wavelength_nm: 450.0
+    grating: 1
+  - wavelength_nm: 550.0
+    grating: 1
+  - wavelength_nm: 650.0
+    grating: 1
+
+tls:
   settle_ms: 500
 
 lcd:

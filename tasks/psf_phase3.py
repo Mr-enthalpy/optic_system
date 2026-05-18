@@ -41,7 +41,7 @@ def validate_phase32_plan(
     allow_unsafe_lcd_settle: bool = False,
 ) -> None:
     required = ["plan_id", "phase", "camera_params_source", "pupil_window_source", "lcd", "capture", "output"]
-    if task == "target_capture":
+    if task in {"dictionary", "target_capture"}:
         required.append("wavelengths")
     else:
         required.append("wavelength")
@@ -87,6 +87,9 @@ def validate_phase32_plan(
             raise Phase32PlanError("PSF dictionary plan phase must be '3.4'")
         if not plan.get("psf_roi_source"):
             raise Phase32PlanError("psf_roi_source is required")
+        wavelengths = plan.get("wavelengths")
+        if not isinstance(wavelengths, list) or not wavelengths:
+            raise Phase32PlanError("wavelengths must be a non-empty list")
         masks = plan.get("masks", {})
         if str(masks.get("set", "")) != "psf_dictionary_representative":
             raise Phase32PlanError("masks.set must be psf_dictionary_representative")

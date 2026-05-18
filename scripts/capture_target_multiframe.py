@@ -75,6 +75,7 @@ def run_capture_target_multiframe(
         [_resolve_repo_path(path) for path in mask_source["h5_paths"]],
         selected_mask_ids=list(mask_source.get("selected_mask_ids", [])),
         max_masks=int(mask_source.get("max_masks", 0)) if mask_source.get("max_masks") is not None else None,
+        required_wavelengths_nm=[float(item["wavelength_nm"]) for item in plan.get("wavelengths", [])],
     )
     lock = HardwareLock(_resolve_repo_path(plan.get("lock_file", "outputs/run_status/capture_hardware.lock")))
     run_status = OptionalRunStatus(status_dir, run_id=plan["plan_id"])

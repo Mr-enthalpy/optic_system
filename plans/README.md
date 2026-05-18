@@ -148,8 +148,8 @@ consume the raw HDF5 to produce processed results.
 
 ### `plans/bishe_psf_dictionary.yaml`
 - **Phase:** 3.4 - measured PSF dictionary and LCD_forward export
-- **Purpose:** Capture a representative single-wavelength measured PSF
-  dictionary, preserve complete raw capture provenance, and export
+- **Purpose:** Capture a representative measured PSF dictionary across the
+  planned wavelength list, preserve complete raw capture provenance, and export
   repeat-averaged mask/PSF pairs in an LCD_forward-compatible HDF5 format.
 - **Inputs:**
   - `outputs/psf_roi/psf_roi.json` (camera-frame crop)
@@ -158,7 +158,8 @@ consume the raw HDF5 to produce processed results.
 - **Masks:** Deterministic representative masks plus seeded random low/mid
   frequency masks and task-related patterns. Every physical mask is restricted
   by the effective pupil window and every lowres control mask is preserved.
-- **Wavelengths:** Single wavelength.
+- **Wavelengths:** One or more planned wavelengths. The export records
+  `wavelengths_nm` and uses `L = len(wavelengths)` in the PSF axis.
 - **Camera:** Burst of N frames per mask repeat, K repeats per mask.
 - **LCD settle:** Hardware validation rejects values below 100 ms; default is
   200 ms.

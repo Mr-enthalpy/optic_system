@@ -133,7 +133,7 @@ provenance rule below.
   - `psf_dictionary_manifest.json` - per-mask manifest with family and repeat count
   - `mask_preview_contact_sheet.png` - tiled lowres mask preview
   - `psf_preview_contact_sheet.png` - tiled repeat-averaged PSF preview
-  - `psf_mean_stack.npy` - repeat-averaged PSF crop per mask
+  - `psf_mean_stack.npy` - repeat-averaged PSF crop per mask and wavelength
   - `psf_crop_stack.npy` - raw per-repeat PSF crops
   - `mask_lowres_stack.npy` - lowres control masks `[N,1,64,64]`
   - `export_lcd_forward/train.h5` - LCD_forward-compatible training split
@@ -144,6 +144,9 @@ provenance rule below.
 - **Status:** scripts implemented; hardware data pending
 - **Boundary:** Data-first acquisition and export only. No forward-model
   training is performed here.
+- **Wavelength rule:** Phase 3.6 target capture must not request wavelengths
+  that are missing from these exports. The export records `wavelengths_nm`
+  explicitly so `optic_system` can fail fast before reconstruction.
 
 ### `outputs/target_capture/`
 

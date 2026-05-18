@@ -131,11 +131,13 @@ def load_selected_masks_from_exports(
     *,
     selected_mask_ids: list[str],
     max_masks: int | None,
+    required_wavelengths_nm: list[float] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     selected = [str(x) for x in selected_mask_ids]
     selected_set = set(selected)
     found: dict[str, dict[str, Any]] = {}
     sources: dict[str, str] = {}
+    export_wavelengths: list[float] | None = None
     for path in h5_paths:
         h5_path = Path(path)
         with h5py.File(str(h5_path), "r") as f:
@@ -143,6 +145,27 @@ def load_selected_masks_from_exports(
             mask_ids = [_decode(x) for x in f["mask_id"][()]]
             mask_families = [_decode(x) for x in f["mask_family"][()]] if "mask_family" in f else ["unknown"] * len(mask_ids)
             metadata_json = _decode(f["metadata_json"][()]) if "metadata_json" in f else ""
+            wavelengths_nm = [float(x) for x in f["wavelengths_nm"][()]] if "wavelengths_nm" in f else None
+            if wavelengths_nm is None and metadata_json:
+                try:
+                    metadata = json.loads(metadata_json)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"{h5_path}: metadata_json is not valid JSON") from exc
+                meta_wls = metadata.get("wavelengths_nm")
+                if isinstance(meta_wls, list):
+                    wavelengths_nm = [float(x) for x in meta_wls]
+                elif metadata.get("wavelength_nm") is not None:
+                    wavelengths_nm = [float(metadata["wavelength_nm"])]
+        if wavelengths_nm is None or not wavelengths_nm:
+            raise ValueError(f"{h5_path}: LCD_forward export is missing wavelength provenance")
+        rounded = [round(float(x), 6) for x in wavelengths_nm]
+        if export_wavelengths is None:
+            export_wavelengths = rounded
+        elif export_wavelengths != rounded:
+            raise ValueError(
+                f"inconsistent export wavelengths across mask-source HDF5 files: "
+                f"{export_wavelengths} vs {rounded} from {h5_path}"
+            )
         for idx, mask_id in enumerate(mask_ids):
             if selected_set and mask_id not in selected_set:
                 continue
@@ -171,12 +194,23 @@ def load_selected_masks_from_exports(
     if not ordered:
         raise ValueError("no selected mask_ids were found in the provided LCD_forward export HDF5 files")
     missing = [mid for mid in selected if mid not in found]
+    requested_wavelengths = [round(float(x), 6) for x in (required_wavelengths_nm or [])]
+    available_wavelengths = export_wavelengths or []
+    missing_wavelengths = [wl for wl in requested_wavelengths if wl not in available_wavelengths]
+    if missing_wavelengths:
+        raise ValueError(
+            "target capture wavelengths are not covered by the measured PSF dictionary export: "
+            f"requested={requested_wavelengths}, available={available_wavelengths}, "
+            f"missing={missing_wavelengths}"
+        )
     meta = {
         "mask_source_type": "lcd_forward_export",
         "source_h5_paths": [str(Path(p)) for p in h5_paths],
         "selected_mask_ids_requested": selected,
         "selected_mask_ids_found": [item["mask_id"] for item in ordered],
         "missing_mask_ids": missing,
+        "available_wavelengths_nm": available_wavelengths,
+        "requested_wavelengths_nm": requested_wavelengths,
         "max_masks": None if max_masks is None else int(max_masks),
         "mask_sources_by_id": sources,
     }

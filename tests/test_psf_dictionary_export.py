@@ -32,7 +32,7 @@ def _write_dictionary_raw_h5(raw_h5: Path) -> dict:
         plan=plan,
         camera_metadata={"frame_dtype_full_scale": 255.0, "camera_profile_used": "test"},
         lcd_metadata={"physical_shape": [90, 270], "subpixel_axis": 1},
-        tls_metadata={"current_wavelength_nm": 550.0},
+        tls_metadata={"current_wavelength_nm": 450.0, "wavelength_sequence": plan["wavelengths"]},
         pupil_window_source={"phase": "3.1", "physical_shape": [90, 270], "center": {"x": 135.0, "y": 45.0}, "radius": 32.0},
         psf_roi_source={"phase": "3.2a", "roi": {"x_min": 8, "x_max": 56, "y_min": 8, "y_max": 56, "width": 48, "height": 48}},
         camera_params_source={"psf_safety_policy": {"valid_pixel_domain": None}, "validity": {"psf_exposure_safe": True}},
@@ -43,19 +43,26 @@ def _write_dictionary_raw_h5(raw_h5: Path) -> dict:
         ("random_lowfreq_001", "random_lowfreq", np.tri(64, 64, dtype=np.uint8)[None] * 255, 33.0, 32.0),
         ("random_lowfreq_002", "random_lowfreq", np.flip(np.tri(64, 64, dtype=np.uint8), axis=1)[None] * 255, 30.0, 33.0),
     ]
-    for mask_index, (mask_id, family, lowres, cx, cy) in enumerate(masks):
-        for repeat_index in range(2):
-            frame = _frame(cx + 0.1 * repeat_index, cy - 0.1 * repeat_index, seed=mask_index * 10 + repeat_index)
-            crop = frame[8:56, 8:56]
-            writer.append_capture(
-                frame_avg=frame,
-                crop=crop,
-                lowres_mask=lowres,
-                mask_id=mask_id,
-                mask_family=family,
-                repeat_index=repeat_index,
-                mask_metadata={"mask_id": mask_id, "mask_family": family},
-            )
+    for wavelength_index, wavelength_nm in enumerate((450.0, 550.0, 650.0)):
+        for mask_index, (mask_id, family, lowres, cx, cy) in enumerate(masks):
+            for repeat_index in range(2):
+                frame = _frame(
+                    cx + 0.1 * repeat_index + 0.02 * wavelength_index,
+                    cy - 0.1 * repeat_index - 0.02 * wavelength_index,
+                    seed=100 * wavelength_index + mask_index * 10 + repeat_index,
+                )
+                crop = frame[8:56, 8:56]
+                writer.append_capture(
+                    frame_avg=frame,
+                    crop=crop,
+                    lowres_mask=lowres,
+                    mask_id=mask_id,
+                    mask_family=family,
+                    wavelength_nm=wavelength_nm,
+                    wavelength_index=wavelength_index,
+                    repeat_index=repeat_index,
+                    mask_metadata={"mask_id": mask_id, "mask_family": family, "wavelength_nm": wavelength_nm},
+                )
     writer.finalize(completed=True)
     return plan
 
@@ -87,9 +94,11 @@ def test_analyze_psf_dictionary_outputs_summary_and_export(tmp_path: Path) -> No
             assert masks.ndim == 5
             assert psfs.ndim == 5
             assert masks.shape[1:] == (1, 1, 64, 64)
-            assert psfs.shape[1] == 1 and psfs.shape[2] == 1
+            assert psfs.shape[1] == 1 and psfs.shape[2] == 3
+            assert list(f["wavelengths_nm"][()]) == [450.0, 550.0, 650.0]
             metadata = json.loads((f["metadata_json"][()].decode("utf-8") if isinstance(f["metadata_json"][()], bytes) else str(f["metadata_json"][()])))
             assert metadata["normalization"] == "background_subtract_then_sum_normalize"
+            assert metadata["L"] == 3
     assert split_ids["train"].isdisjoint(split_ids["val"])
     assert split_ids["train"].isdisjoint(split_ids["test"])
     assert split_ids["val"].isdisjoint(split_ids["test"])

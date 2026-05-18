@@ -115,7 +115,7 @@ def run_capture_psf_dictionary(
             bg_code=int(lcd_meta.get("opaque_code", 0)),
             open_code=int(lcd_meta.get("transmissive_code", 255)),
         )
-        tls_meta = _configure_tls(plan, dry_run=dry_run, tls_service=tls_service)
+        tls_meta = _initial_tls_metadata(plan)
         camera_meta = {
             "exposure_us": float(exposure_us),
             "gain_db": float(gain_db),
@@ -136,7 +136,8 @@ def run_capture_psf_dictionary(
         repeats = int(plan["capture"]["repeats_per_mask"])
         frames_per_capture = int(plan["capture"]["frames_per_capture"])
         settle_s = float(plan["lcd"].get("settle_ms", 200)) / 1000.0
-        n_captures = len(mask_records) * repeats
+        wavelengths = list(plan.get("wavelengths", []))
+        n_captures = len(mask_records) * repeats * len(wavelengths)
         capture_index = 0
         run_status.update(
             plan_id=plan["plan_id"],
@@ -155,44 +156,59 @@ def run_capture_psf_dictionary(
             lcd_subpixel_axis=int(subpixel_axis),
             lcd_settle_ms=float(plan["lcd"].get("settle_ms", 200)),
         )
-        for record in mask_records:
-            run_status.write_mask_preview(record["physical_mask"])
-            for repeat_index in range(repeats):
-                run_status.update(
-                    current_stage="capture",
-                    capture_index=capture_index,
-                    current_mask_id=record["mask_id"],
-                    current_mask_family=record["mask_family"],
-                    repeat_index=repeat_index,
+        for wavelength_index, wavelength_entry in enumerate(wavelengths):
+            current_wavelength_nm = float(wavelength_entry["wavelength_nm"])
+            run_status.update(current_stage="wavelength", current_wavelength_nm=current_wavelength_nm)
+            if not dry_run and tls_service is not None:
+                _move_tls_to_wavelength(
+                    tls_service,
+                    wavelength_entry,
+                    settle_ms=float(plan.get("tls", {}).get("settle_ms", wavelength_entry.get("settle_ms", 500))),
                 )
-                if dry_run:
-                    frame = _synthetic_dictionary_frame(
+            for record in mask_records:
+                run_status.write_mask_preview(record["physical_mask"])
+                for repeat_index in range(repeats):
+                    run_status.update(
+                        current_stage="capture",
+                        capture_index=capture_index,
+                        current_mask_id=record["mask_id"],
+                        current_mask_family=record["mask_family"],
+                        repeat_index=repeat_index,
+                        current_wavelength_nm=current_wavelength_nm,
+                    )
+                    if dry_run:
+                        frame = _synthetic_dictionary_frame(
+                            mask_id=record["mask_id"],
+                            mask_family=record["mask_family"],
+                            wavelength_nm=current_wavelength_nm,
+                            repeat_index=repeat_index,
+                        )
+                    else:
+                        lcd_service.show_mono_mask(record["physical_mask"], mask_id=record["mask_id"], mode="phase3_4_psf_dictionary")
+                        time.sleep(settle_s)
+                        capture = capture_adapter.acquire_burst(frames_per_capture)
+                        frame = np.asarray(capture.frames_avg, dtype=np.float64)
+                    crop = crop_frame(frame, psf_roi["roi"])
+                    mask_metadata = dict(record["mask_metadata"])
+                    mask_metadata["repeat_index"] = int(repeat_index)
+                    mask_metadata["wavelength_nm"] = current_wavelength_nm
+                    mask_metadata["wavelength_index"] = int(wavelength_index)
+                    writer.append_capture(
+                        frame_avg=frame,
+                        crop=crop,
+                        lowres_mask=record["lowres_mask"],
                         mask_id=record["mask_id"],
                         mask_family=record["mask_family"],
+                        wavelength_nm=current_wavelength_nm,
+                        wavelength_index=wavelength_index,
                         repeat_index=repeat_index,
+                        mask_metadata=mask_metadata,
                     )
-                else:
-                    lcd_service.show_mono_mask(record["physical_mask"], mask_id=record["mask_id"], mode="phase3_4_psf_dictionary")
-                    time.sleep(settle_s)
-                    capture = capture_adapter.acquire_burst(frames_per_capture)
-                    frame = np.asarray(capture.frames_avg, dtype=np.float64)
-                crop = crop_frame(frame, psf_roi["roi"])
-                mask_metadata = dict(record["mask_metadata"])
-                mask_metadata["repeat_index"] = int(repeat_index)
-                writer.append_capture(
-                    frame_avg=frame,
-                    crop=crop,
-                    lowres_mask=record["lowres_mask"],
-                    mask_id=record["mask_id"],
-                    mask_family=record["mask_family"],
-                    repeat_index=repeat_index,
-                    mask_metadata=mask_metadata,
-                )
-                if capture_index % max(1, int(status_preview_every)) == 0:
-                    run_status.write_frame_preview(frame)
-                    run_status.write_frame_stats(_frame_stats(frame))
-                writer._ensure_open().flush()
-                capture_index += 1
+                    if capture_index % max(1, int(status_preview_every)) == 0:
+                        run_status.write_frame_preview(frame)
+                        run_status.write_frame_stats(_frame_stats(frame))
+                    writer._ensure_open().flush()
+                    capture_index += 1
         writer.finalize(completed=True)
         run_status.update(current_stage="completed", completed=True, capture_index=capture_index)
         return output_raw
@@ -215,14 +231,15 @@ def _assert_pupil_shape_matches_lcd(pupil_window: dict[str, Any], physical_shape
         )
 
 
-def _synthetic_dictionary_frame(*, mask_id: str, mask_family: str, repeat_index: int) -> np.ndarray:
+def _synthetic_dictionary_frame(*, mask_id: str, mask_family: str, wavelength_nm: float, repeat_index: int) -> np.ndarray:
     h, w = 256, 320
     yy, xx = np.mgrid[:h, :w]
-    seed = sum(ord(c) for c in mask_id) + 97 * int(repeat_index)
+    seed = sum(ord(c) for c in mask_id) + int(round(wavelength_nm)) + 97 * int(repeat_index)
     rng = np.random.default_rng(seed)
     family_offset = sum(ord(c) for c in mask_family) % 11 - 5
-    cx = 160.0 + 0.45 * family_offset + rng.normal(0.0, 0.08)
-    cy = 128.0 - 0.35 * family_offset + rng.normal(0.0, 0.08)
+    wavelength_offset = (float(wavelength_nm) - 550.0) / 120.0
+    cx = 160.0 + 0.45 * family_offset + 2.2 * wavelength_offset + rng.normal(0.0, 0.08)
+    cy = 128.0 - 0.35 * family_offset - 1.4 * wavelength_offset + rng.normal(0.0, 0.08)
     sx = 11.0 + abs(family_offset % 4)
     sy = 10.0 + abs((family_offset + 1) % 4)
     core = 180.0 * np.exp(-(((xx - cx) / sx) ** 2 + ((yy - cy) / sy) ** 2))
@@ -230,6 +247,27 @@ def _synthetic_dictionary_frame(*, mask_id: str, mask_family: str, repeat_index:
     base = 9.0 + 0.02 * xx + 0.02 * yy
     noise = rng.normal(0.0, 0.8, size=(h, w))
     return (base + core + halo + noise).astype(np.float64)
+
+
+def _move_tls_to_wavelength(tls_service: Any, wavelength_entry: dict[str, Any], *, settle_ms: float) -> None:
+    wavelength_nm = float(wavelength_entry["wavelength_nm"])
+    grating = int(wavelength_entry.get("grating", 1))
+    tls_service.set_target_wavelength_nm(wavelength_nm)
+    tls_service.move_to_target_wavelength(grating=grating)
+    time.sleep(float(settle_ms) / 1000.0)
+
+
+def _initial_tls_metadata(plan: dict[str, Any]) -> dict[str, Any]:
+    first = dict(plan.get("wavelengths", [{}])[0]) if plan.get("wavelengths") else {}
+    return {
+        "connected": False,
+        "current_wavelength_nm": first.get("wavelength_nm"),
+        "target_wavelength_nm": first.get("wavelength_nm"),
+        "grating": first.get("grating"),
+        "moving": False,
+        "timestamp_ns": time.monotonic_ns(),
+        "wavelength_sequence": list(plan.get("wavelengths", [])),
+    }
 
 
 def main() -> None:

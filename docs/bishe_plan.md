@@ -478,9 +478,9 @@ Scripts:
 Flow:
 ```
 representative mask families
-  -> single-wavelength PSF acquisition
+  -> multi-wavelength PSF acquisition
   -> ROI crop preservation
-  -> repeat-averaged measured PSF dictionary
+  -> repeat-averaged measured PSF dictionary per wavelength
   -> train / val / test split
   -> LCD_forward-compatible HDF5 export
 ```
@@ -513,7 +513,7 @@ psfs:  [N, T, L, Hp, Wp]
 ```
 
 Exit criteria:
-1. Single-wavelength measured PSF dictionary acquired with complete provenance.
+1. Measured PSF dictionary acquired for every planned wavelength with complete provenance.
 2. Data readable by LCD_forward-compatible HDF5 readers.
 3. Raw full-frame data and per-repeat crops preserved.
 4. No training or optimization code introduced in `optic_system`.

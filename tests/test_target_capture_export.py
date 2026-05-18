@@ -83,19 +83,21 @@ def _write_psf_roi(path: Path) -> None:
     )
 
 
-def _write_mask_export(path: Path) -> None:
+def _write_mask_export(path: Path, *, wavelengths_nm: list[float] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     masks = np.zeros((2, 1, 1, 64, 64), dtype=np.uint8)
     masks[0, 0, 0] = 255
     masks[1, 0, 0, :, :32] = 255
+    wavelengths_nm = wavelengths_nm or [450.0, 550.0]
     string_dtype = h5py.string_dtype(encoding="utf-8")
     with h5py.File(str(path), "w") as f:
         f.create_dataset("masks", data=masks, compression="gzip", compression_opts=4)
+        f.create_dataset("wavelengths_nm", data=np.asarray(wavelengths_nm, dtype=np.float64))
         f.create_dataset("mask_id", data=np.asarray(["all_open_window", "vertical_stripes_lowfreq"], dtype=object), dtype=string_dtype)
         f.create_dataset("mask_family", data=np.asarray(["deterministic", "deterministic"], dtype=object), dtype=string_dtype)
         f.create_dataset(
             "metadata_json",
-            data=json.dumps({"normalization": "uint8_code_value", "code_range": [0, 255]}),
+            data=json.dumps({"normalization": "uint8_code_value", "code_range": [0, 255], "wavelengths_nm": wavelengths_nm, "L": len(wavelengths_nm)}),
             dtype=string_dtype,
         )
 
@@ -161,10 +163,12 @@ def test_load_selected_masks_from_synthetic_export(tmp_path: Path) -> None:
         [export_h5],
         selected_mask_ids=["all_open_window", "vertical_stripes_lowfreq"],
         max_masks=2,
+        required_wavelengths_nm=[450.0, 550.0],
     )
     assert [item["mask_id"] for item in selected] == ["all_open_window", "vertical_stripes_lowfreq"]
     assert meta["missing_mask_ids"] == []
     assert selected[0]["lowres_mask"].shape == (1, 64, 64)
+    assert meta["available_wavelengths_nm"] == [450.0, 550.0]
 
 
 def test_target_capture_writer_and_export_roundtrip(tmp_path: Path) -> None:
@@ -254,3 +258,24 @@ def test_capture_target_multiframe_dry_run_writes_raw_h5(tmp_path: Path) -> None
         roles = {x.decode("utf-8") if isinstance(x, bytes) else str(x) for x in f["raw/capture_role"][()]}
         assert "encoded_target" in roles
         assert "reference_open" in roles
+
+
+def test_target_capture_rejects_mask_source_without_requested_wavelength_coverage(tmp_path: Path) -> None:
+    _write_camera_params(tmp_path / "camera_params_psf_safe.json")
+    _write_pupil_window(tmp_path / "effective_pupil_window.json")
+    _write_psf_roi(tmp_path / "psf_roi.json")
+    _write_mask_export(tmp_path / "mask_export.h5", wavelengths_nm=[550.0])
+    plan_path = _make_temp_plan(tmp_path)
+    plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    try:
+        run_capture_target_multiframe(
+            plan,
+            dry_run=True,
+            lcd_subpixel_axis=1,
+            status_dir=tmp_path / "status_missing_wl",
+            status_preview_every=1,
+        )
+    except ValueError as exc:
+        assert "not covered by the measured PSF dictionary export" in str(exc)
+    else:
+        raise AssertionError("expected wavelength coverage validation failure")

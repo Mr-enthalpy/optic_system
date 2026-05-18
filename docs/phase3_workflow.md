@@ -390,25 +390,25 @@ derived LCD_forward-compatible dataset without training a forward model.
 ### Capture plans
 
 - `plans/bishe_psf_dictionary.yaml` - representative single-wavelength measured
-  PSF dictionary.
+  measured PSF dictionary across the planned wavelength list.
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - Inputs: `effective_pupil_window.json` and `psf_roi.json`.
 - Masks: deterministic representative masks plus seeded random low/mid
   frequency masks and task-related patterns. Every physical mask is limited by
   the effective pupil window, and the lowres control mask is preserved.
-- Wavelengths: single wavelength in Phase 3.4.
+- Wavelengths: all wavelengths listed in `plans/bishe_psf_dictionary.yaml`.
 
 ### Analysis
 
 1. Load `raw_capture.h5` - extract full-frame averages, PSF crops, lowres
    masks, and complete provenance.
-2. Group by `mask_id`, compute repeat-averaged PSF crops, and summarize repeat
-   noise / center drift / energy variation.
+2. Group by `mask_id` and wavelength, compute repeat-averaged PSF crops, and
+   summarize repeat noise / center drift / energy variation.
 3. Write preview contact sheets and `.npy` stacks for reproducible analysis.
 4. Export repeat-averaged pairs as `LCD_forward`-compatible HDF5:
    ```text
    masks: [N, 1, 1, 64, 64]
-   psfs:  [N, 1, 1, Hp, Wp]
+   psfs:  [N, 1, L, Hp, Wp]
    ```
 5. Keep the raw HDF5 as the source of truth.
 
