@@ -37,9 +37,8 @@ prototype:
 - dOTF diagnostic evidence for low-dimensional / sparse pupil or
   LCD-induced structure
 - measured PSF dictionary
-- simple forward-model validation
-- three-wavelength multiframe linear reconstruction demo
-- thesis figures and report-ready results
+- target-capture export for downstream reconstruction
+- thesis figures and report-ready results are produced outside `optic_system`
 
 ## Phase 3 thesis roadmap
 
@@ -524,140 +523,66 @@ After this phase, the thesis has the "hardware acquisition -> data format
 
 ---
 
-### Phase 3.5 - Simple forward model validation
+### Phase 3.5 - skipped in optic_system
 
-**Status: planned**
+**Status: intentionally skipped in `optic_system`**
 
-Purpose:
-- validate that measured PSFs explain typical mask-dependent PSF differences
-- do not require a complex neural model
+Implemented in `LCD_forward`:
+- measured-PSF forward validation
+- forward error reporting
+- predicted-vs-measured figures
 
-Three-tier model complexity:
-```
-baseline 0: measured PSF lookup / dictionary
-baseline 1: low-rank PSF basis
-baseline 2: mask statistics / low-dimensional descriptor -> PSF basis coefficients
-```
-
-Can be implemented in `LCD_forward` or as standalone analysis scripts.
-
-Suggested additions:
-```
-LCD_forward/configs/forward_bishe_single_lambda.yaml
-LCD_forward/configs/forward_bishe_three_lambda.yaml
-LCD_forward/scripts/eval_measured_psf_dictionary.py
-LCD_forward/scripts/fit_psf_basis_forward.py
-LCD_forward/scripts/plot_forward_bishe_report.py
-```
-
-Validation metrics:
-```
-pixel L1 / MSE
-frequency-domain error
-centroid / main lobe shift
-dominant diffraction order position
-PSF energy normalization
-held-out mask family error
-```
-
-Exit criteria:
-1. Model explains main PSF differences for typical masks.
-2. Forward error smaller than between-mask differences.
-3. At least one held-out mask family tested.
-4. "Predicted PSF vs measured PSF" thesis figure ready.
-
-Risk control:
-If complex field basis models are unsatisfactory, the thesis can
-still stand on PSF dictionary / PSF basis baselines.
+`optic_system` does not implement forward validation, PSF basis fitting,
+or held-out forward-model evaluation from Phase 3.5 onward.
 
 ---
 
-### Phase 3.6 - Three-wavelength multiframe linear reconstruction
+### Phase 3.6 - partial in optic_system
 
-**Status: planned**
+**Status: target capture/export implemented in `optic_system`; reconstruction
+belongs to `LCD_forward`**
 
-Purpose:
-- demonstrate that multi-mask encoding improves multispectral recovery
-- complete the thesis end-to-end demo
+`optic_system` responsibilities:
+- real target multiframe / multi-wavelength capture
+- full-frame raw HDF5 preservation
+- PSF-ROI crop preservation
+- lowres mask preservation
+- LCD_forward-compatible target export
 
-Scripts:
-- `plans/bishe_multiframe_target.yaml`
-- `scripts/build_linear_forward_matrix.py`
-- `scripts/solve_linear_multispectral_recon.py`
-- `scripts/plot_multiframe_recon_report.py`
+Active scripts and plan:
+- `plans/bishe_target_capture.yaml`
+- `scripts/capture_target_multiframe.py`
+- `scripts/export_target_lcd_forward.py`
 
-Acquisition design:
+`LCD_forward` responsibilities:
+- forward operator assembly
+- linear reconstruction
+- result visualization
+- reconstruction figures and metrics
+
+`optic_system` Phase 3.6 outputs:
 ```
-wavelengths: 3 representative wavelengths
-masks: 3-5 stable representative masks
-targets: colour blocks / filter combinations / simple transmissive targets
-frames: multi-mask multi-frame per target
-```
-
-Reconstruction model (linear inverse):
-```
-x_hat = argmin ||A x - y||^2 + lambda * R(x)
-```
-
-Priorities:
-```
-Tikhonov least squares
-non-negative clipping
-optional TV or Laplacian smoothing
+data/raw/bishe_target_capture.h5
+outputs/target_capture/
+  export_lcd_forward/target_frames.h5
+  README.md
 ```
 
-Outputs:
-```
-outputs/linear_recon/
-  A_matrix_info.json
-  condition_number_report.json
-  recon_single_frame.npy
-  recon_multiframe.npy
-  recon_error.npy
-  recon_comparison.png
-  linear_recon_report.md
-```
-
-Exit criteria:
-1. At least three-wavelength data available.
-2. Single-frame vs multi-frame comparison produced.
-3. Multi-frame recovery quality better than single-frame, or condition
-   number / channel separation improved.
-4. Final thesis demonstration figure ready.
+Exit criteria on the `optic_system` side:
+1. At least one target capture run can be stored with complete provenance.
+2. Full-frame data, crops, lowres masks, wavelength labels, and mask IDs are preserved.
+3. LCD_forward can read the exported HDF5 without requiring `optic_system`
+   reconstruction code.
 
 ---
 
-### Phase 3.7 - Thesis figures and report freeze
+### Phase 3.7 - skipped in optic_system
 
-**Status: planned**
+**Status: intentionally skipped in `optic_system`**
 
-Purpose:
-- freeze experiments
-- prepare thesis figures
-- prepare thesis text and defense slides
-
-Outputs:
-```
-outputs/bishe_figures/
-  system_pipeline.png
-  psf_mask_examples.png
-  dotf_amp_phase.png
-  forward_prediction_vs_measurement.png
-  multiframe_recon_comparison.png
-
-docs/bishe_thesis_outline.md
-docs/bishe_results_summary.md
-docs/bishe_limitations.md
-```
-
-Recommended thesis narrative:
-1. Mono LCD programmable diffractive imaging system setup.
-2. Raw capture HDF5 and automated acquisition workflow.
-3. PSF stability and LCD encoding response analysis.
-4. dOTF diagnostic and low-dimensional pupil structure evidence.
-5. Measured PSF dictionary and simple forward model.
-6. Three-wavelength multi-frame linear reconstruction demo.
-7. Limitations and future research directions.
+Thesis figure aggregation, report freeze, defense-slide preparation, and
+final narrative assembly belong to `LCD_forward` outputs or a separate
+thesis-writing workspace.
 
 ---
 
@@ -673,8 +598,9 @@ When this branch closes, the following must hold:
    pupil-plane structure (Tier B).
 5. Measured PSF dictionary complete.
 6. `LCD_forward`-compatible HDF5 export working.
-7. Simple forward baseline complete.
-8. Three-wavelength multi-frame linear reconstruction demo complete.
+7. Phase 3.5 forward validation handled downstream in `LCD_forward`.
+8. Phase 3.6 target-capture export handled in `optic_system`, with
+   reconstruction handled downstream in `LCD_forward`.
 9. All thesis figures traceable to `raw_capture.h5`.
 10. No old data used as thesis evidence; no old-project acquisition paths
     revived.

@@ -145,22 +145,28 @@ provenance rule below.
 - **Boundary:** Data-first acquisition and export only. No forward-model
   training is performed here.
 
-### `outputs/linear_recon/`
+### `outputs/target_capture/`
 
-- **Phase:** 3.5 (forward model), 3.6 (multiframe reconstruction)
+- **Phase:** 3.6 - target multiframe / multi-wavelength capture export
 - **Depends on:**
-  - `outputs/psf_dictionary/` - PSF dictionary
-  - `outputs/linear_recon/multiframe_target_raw.h5` - target captures
+  - `data/raw/bishe_target_capture.h5`
+  - `outputs/psf_roi/psf_roi.json`
+  - `outputs/pupil_geometry/effective_pupil_window.json`
+  - `outputs/psf_dictionary/export_lcd_forward/*.h5`
 - **Produces:**
-  - `A_matrix_info.json` - forward matrix metadata
-  - `condition_number_report.json` - channel condition analysis
-  - `recon_single_frame.npy` - single-frame reconstruction
-  - `recon_multiframe.npy` - multi-frame reconstruction
-  - `recon_error.npy` - reconstruction error map
-  - `recon_comparison.png` - single vs multi-frame comparison
-  - `linear_recon_report.md`
-- **Script:** reconstruction scripts (to be created in Phase 3.5/3.6)
-- **Status:** planned
+  - `export_lcd_forward/target_frames.h5` - LCD_forward-compatible target-frame dataset
+  - `export_lcd_forward/README.md` - dataset note and shape summary
+- **Script:** `scripts/export_target_lcd_forward.py`
+- **Status:** scripts implemented; hardware data pending
+- **Boundary:** No reconstruction is performed in `optic_system`. This
+  directory contains only derived export data for `LCD_forward`.
+
+### Phase 3.5 / 3.7 note
+
+- Phase 3.5 forward validation is skipped in `optic_system` and belongs to
+  `LCD_forward`.
+- Phase 3.7 thesis figure aggregation and report freeze are skipped in
+  `optic_system` and belong to `LCD_forward` or a thesis-writing workspace.
 
 ### `outputs/bishe_figures/`
 

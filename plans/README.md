@@ -24,6 +24,7 @@ consume the raw HDF5 to produce processed results.
 | `bishe_psf_repeatability.yaml` | Phase 3.2b PSF repeatability and mask-induced diversity |
 | `bishe_dotf_diagnostic.yaml` | Phase 3.3 dOTF diagnostic visualization |
 | `bishe_psf_dictionary.yaml` | Phase 3.4 measured PSF dictionary and LCD_forward export |
+| `bishe_target_capture.yaml` | Phase 3.6 target multiframe / multi-wavelength capture and LCD_forward export |
 
 ### `plans/bishe_psf_safe_exposure.yaml`
 - **Phase:** 3.0.5b - PSF-safe exposure/gain refinement.
@@ -168,6 +169,31 @@ consume the raw HDF5 to produce processed results.
 - **Boundary:** Data-first acquisition and export only. No forward-model
   training, reconstruction, or mask optimization.
 
+### `plans/bishe_target_capture.yaml`
+- **Phase:** 3.6 - target multiframe / multi-wavelength capture and export
+- **Purpose:** Capture real target observations using the same lowres mask IDs
+  exported by the Phase 3.4 measured PSF dictionary so that `LCD_forward` can
+  pair target observations with measured PSFs.
+- **Inputs:**
+  - `outputs/psf_roi/psf_roi.json` (camera-frame crop)
+  - `outputs/pupil_geometry/effective_pupil_window.json` (LCD mask window)
+  - `outputs/exposure_calibration/camera_params_psf_safe.json`
+  - `outputs/psf_dictionary/export_lcd_forward/train.h5`
+  - `outputs/psf_dictionary/export_lcd_forward/val.h5`
+  - `outputs/psf_dictionary/export_lcd_forward/test.h5`
+- **Masks:** Selected existing lowres masks from the Phase 3.4 export. No new
+  random-mask generation is introduced here.
+- **Wavelengths:** One or more wavelengths listed under `wavelengths`.
+- **Camera:** Burst of N frames per condition, K repeats per
+  wavelength x mask.
+- **LCD settle:** Hardware validation rejects values below 100 ms; default is
+  200 ms.
+- **Output raw HDF5:** `data/raw/bishe_target_capture.h5`
+- **Downstream export:** `scripts/export_target_lcd_forward.py` writes
+  `outputs/target_capture/export_lcd_forward/target_frames.h5`.
+- **Boundary:** Hardware capture and export only. No forward validation,
+  reconstruction, or training is implemented in `optic_system`.
+
 ## Planned plans (later Phase 3 thesis)
 
 ### `plans/bishe_psf_dict_three_lambda.yaml`
@@ -181,16 +207,11 @@ consume the raw HDF5 to produce processed results.
 - **Expected output raw HDF5:** `outputs/psf_dictionary/psf_dict_three_lambda_raw.h5`
 - **Downstream analysis:** PSF extraction per wavelength, LCD_forward export.
 
-### `plans/bishe_multiframe_target.yaml`
-- **Phase:** 3.6 - Multiframe reconstruction
-- **Purpose:** Capture target scene frames for reconstruction validation.
-- **Masks:** 1-2 target scenes (e.g., combined grating patterns, simple
-  geometric shapes).
-- **Wavelengths:** 3 wavelengths (matching the PSF dictionary).
-- **Camera:** Averaged frames per mask per wavelength.
-- **Expected output raw HDF5:** `outputs/linear_recon/multiframe_target_raw.h5`
-- **Downstream analysis:** Linear inverse reconstruction -> reconstructed
-  scenes, metrics.
+### Phase 3.5 / 3.7 note
+- Phase 3.5 forward validation is skipped in `optic_system` and belongs to
+  `LCD_forward`.
+- Phase 3.7 thesis figure freeze is skipped in `optic_system` and belongs to
+  `LCD_forward` or the thesis-writing workspace.
 
 ## Plan format
 
