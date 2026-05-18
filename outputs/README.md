@@ -65,7 +65,7 @@ provenance rule below.
   - `psf_roi_preview.png` — crop window overlay on averaged frame
   - `psf_roi_report.md` — human-readable diagnostics
 - **Script:** `scripts/analyze_psf_roi.py`
-- **Status:** planned
+- **Status:** scripts implemented; hardware data pending
 - **Coordinate system:** This directory contains the camera sensor crop used by
   PSF repeatability, dOTF, and PSF dictionary captures.  It is distinct from
   `outputs/pupil_geometry/`, which is in LCD physical coordinates.
@@ -86,9 +86,13 @@ provenance rule below.
   - `pairwise_distance_matrix.npy` — between-mask pairwise distance matrix
   - `ssim_matrix.npy` — between-mask pairwise SSIM matrix
   - `psnr_matrix.npy` — between-mask pairwise PSNR matrix
+  - `diversity_metrics.json` - inter-mask diversity summary and
+    `inter_mask_distance / intra_mask_repeat_noise`
+  - `psf_diversity_metrics.json` - alias for the diversity summary
   - `repeatability_report.md`
+  - `report.md` - alias for the repeatability report
 - **Script:** `scripts/analyze_psf_repeatability.py`
-- **Status:** planned
+- **Status:** scripts implemented; hardware data pending
 
 ### `outputs/dotf/`
 

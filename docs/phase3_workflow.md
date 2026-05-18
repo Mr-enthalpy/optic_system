@@ -235,6 +235,10 @@ PSF crops (repeatability, dOTF, PSF dictionary).
 **Dependency:** `outputs/pupil_geometry/effective_pupil_window.json`
 (Phase 3.1, LCD domain).
 
+Phase 3.2 is data-first. It adds task-specific scripts and lightweight local
+helpers only; it does not introduce a reusable PSF framework, ROI subsystem,
+or workflow engine.
+
 ### Capture plan
 
 - `plans/bishe_psf_roi.yaml`
@@ -242,13 +246,16 @@ PSF crops (repeatability, dOTF, PSF dictionary).
 - LCD: display the effective pupil window (inside = all-open, outside = all-closed).
 - Wavelength: single wavelength, fixed.
 - Camera: burst of N frames per capture, K repeats.
+- Hardware validation rejects `lcd.settle_ms < 100`; the default is 200 ms.
+- Hardware capture refuses to overwrite an existing `output.raw_h5`; rename
+  the existing raw HDF5 or choose a new output path before rerunning.
 
 ### Analysis
 
 1. Load `data/raw/bishe_psf_roi.h5`.
 2. Apply dark subtraction or baseline correction on averaged frame.
-3. Locate PSF center via peak detection, center-of-mass, or energy connected-component.
-4. Choose fixed crop size (by energy envelope fraction or pre-configured size).
+3. Locate PSF center via peak detection followed by local center-of-mass.
+4. Choose the configured fixed crop size, currently 256 x 256.
 5. Write `outputs/psf_roi/psf_roi.json`.
 
 ### Output
@@ -259,9 +266,13 @@ outputs/psf_roi/psf_roi.json
   - task: "camera_frame_psf_roi_calibration"
   - roi: {x_min, x_max, y_min, y_max, width, height}
   - center: {x, y, method}
-  - crop_policy: {type, size, margin_policy, energy_fraction}
+  - quality: {peak_pixel, mean_pixel, background_level, roi_energy_fraction,
+    full_scale_in_avg_valid_domain}
   - validity: not scientific calibration valid, not training-ready
 ```
+
+`full_scale_in_avg_valid_domain` is an averaged-frame quality diagnostic. It
+is not equivalent to the Phase 3.0.5b raw-burst strict PSF-safety rule.
 
 ## PSF repeatability and mask-induced diversity
 
@@ -279,10 +290,15 @@ averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
 
 - `plans/bishe_psf_repeatability.yaml`
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
-- LCD: all masks inside `effective_pupil_window`.
+- LCD: all masks are restricted by
+  `outputs/pupil_geometry/effective_pupil_window.json`; outside the window is
+  opaque.
 - Masks: representative mask set, each repeated K times (K >= 10).
 - Wavelength: single wavelength, fixed.
 - Camera: burst of N frames per capture.
+- Hardware validation rejects `lcd.settle_ms < 100`; the default is 200 ms.
+- Hardware capture refuses to overwrite an existing `output.raw_h5`; rename
+  the existing raw HDF5 or choose a new output path before rerunning.
 
 ### Analysis
 
@@ -293,7 +309,8 @@ averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
 4. Inter-mask diversity: pairwise MSE, PSNR, SSIM, cross-correlation,
    Fourier magnitude difference.
 5. Confirm that between-mask differences exceed within-mask repeat noise.
-6. Write `outputs/psf_repeatability/repeatability_metrics.json`.
+6. Write `repeatability_metrics.json`, `diversity_metrics.json`,
+   `psf_diversity_metrics.json`, and the pairwise matrix `.npy` files.
 
 ### Output
 
@@ -301,8 +318,12 @@ averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
 outputs/psf_repeatability/repeatability_metrics.json
   - per-mask repeatability (mean, std, PSNR, SSIM, correlation)
   - between-mask pairwise distances (MSE, PSNR, SSIM)
+  - inter_mask_distance / intra_mask_repeat_noise
   - psf_roi provenance recorded
 ```
+
+The conclusion is limited to whether mask-induced PSF differences are larger
+than repeatability noise. It must not be described as forward-model success.
 
 ## dOTF diagnostic visualization
 
