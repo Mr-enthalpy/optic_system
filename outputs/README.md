@@ -3,11 +3,11 @@
 ## Role
 
 `outputs/` stores all processed analysis results from the Phase 3 thesis
-workflow.  Raw capture HDF5 files may also be placed here, at the user's
+workflow. Raw capture HDF5 files may also be placed here, at the user's
 discretion, but the canonical location for raw captures is the path specified
 by the capture plan.
 
-**Every output must trace back to a source `raw_capture.h5` file.**  See
+**Every output must trace back to a source `raw_capture.h5` file.** See the
 provenance rule below.
 
 ## Output subdirectories
@@ -39,8 +39,8 @@ provenance rule below.
 - **Depends on:** `data/raw/bishe_pupil_geometry.h5` produced by
   `scripts/capture_pupil_geometry.py`.
 - **Produces:**
-  - `effective_pupil_window.json` - effective circular pupil window,
-    circle estimate, ellipse-overlap fit, and provenance
+  - `effective_pupil_window.json` - effective circular pupil window, circle
+    estimate, ellipse-overlap fit, and provenance
   - `effective_pupil_window.npy` - physical mono circular window mask
   - `effective_pupil_window.png` - quick-look window visualization
   - `x_profile.csv` - dark-bar energy profile along physical x
@@ -55,37 +55,37 @@ provenance rule below.
 
 ### `outputs/psf_roi/`
 
-- **Phase:** 3.2a — Camera-frame PSF ROI calibration
+- **Phase:** 3.2a - Camera-frame PSF ROI calibration
 - **Depends on:**
   - `data/raw/bishe_psf_roi.h5` produced by `scripts/capture_psf_roi.py`
   - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
   - `outputs/exposure_calibration/camera_params_psf_safe.json` (Phase 3.0.5b)
 - **Produces:**
-  - `psf_roi.json` — camera-frame crop window, center, and policy
-  - `psf_roi_preview.png` — crop window overlay on averaged frame
-  - `psf_roi_report.md` — human-readable diagnostics
+  - `psf_roi.json` - camera-frame crop window, center, and policy
+  - `psf_roi_preview.png` - crop window overlay on averaged frame
+  - `psf_roi_report.md` - human-readable diagnostics
 - **Script:** `scripts/analyze_psf_roi.py`
 - **Status:** scripts implemented; hardware data pending
 - **Coordinate system:** This directory contains the camera sensor crop used by
-  PSF repeatability, dOTF, and PSF dictionary captures.  It is distinct from
+  PSF repeatability, dOTF, and PSF dictionary captures. It is distinct from
   `outputs/pupil_geometry/`, which is in LCD physical coordinates.
 
 ### `outputs/psf_repeatability/`
 
-- **Phase:** 3.2b — PSF repeatability and mask-induced diversity
+- **Phase:** 3.2b - PSF repeatability and mask-induced diversity
 - **Depends on:**
   - `data/raw/bishe_psf_repeatability.h5`
   - `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain)
   - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
 - **Produces:**
-  - `psfs_aligned.npy` — aligned PSF stack (all masks all repeats)
-  - `psfs_mean.npy` — per-mask mean PSF
-  - `psfs_std.npy` — per-mask PSF standard deviation
-  - `repeatability_metrics.json` — intra-mask repeatability (PSNR, SSIM,
+  - `psfs_aligned.npy` - aligned PSF stack (all masks all repeats)
+  - `psfs_mean.npy` - per-mask mean PSF
+  - `psfs_std.npy` - per-mask PSF standard deviation
+  - `repeatability_metrics.json` - intra-mask repeatability (PSNR, SSIM,
     coefficient of variation) and inter-mask pairwise distances
-  - `pairwise_distance_matrix.npy` — between-mask pairwise distance matrix
-  - `ssim_matrix.npy` — between-mask pairwise SSIM matrix
-  - `psnr_matrix.npy` — between-mask pairwise PSNR matrix
+  - `pairwise_distance_matrix.npy` - between-mask pairwise distance matrix
+  - `ssim_matrix.npy` - between-mask pairwise SSIM matrix
+  - `psnr_matrix.npy` - between-mask pairwise PSNR matrix
   - `diversity_metrics.json` - inter-mask diversity summary and
     `inter_mask_distance / intra_mask_repeat_noise`
   - `psf_diversity_metrics.json` - alias for the diversity summary
@@ -96,7 +96,7 @@ provenance rule below.
 
 ### `outputs/dotf/`
 
-- **Phase:** 3.3 — dOTF diagnostic visualization
+- **Phase:** 3.3 - dOTF diagnostic visualization
 - **Depends on:**
   - `data/raw/bishe_dotf_diagnostic.h5`
   - `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain)
@@ -123,42 +123,48 @@ provenance rule below.
 
 ### `outputs/psf_dictionary/`
 
-- **Phase:** 3.4 — PSF dictionary and LCD_forward export
+- **Phase:** 3.4 - PSF dictionary and LCD_forward export
 - **Depends on:**
-  - `data/raw/bishe_psf_dict_*.h5`
+  - `data/raw/bishe_psf_dictionary.h5`
   - `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain)
+  - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
 - **Produces:**
-  - `masks_physical.npy` — physical mask arrays
-  - `masks_downsampled.npy` — downsampled masks
-  - `psfs_mean.npy` — per-mask mean PSF
-  - `psfs_std.npy` — per-mask PSF standard deviation
-  - `wavelengths.npy` — wavelength list
-  - `dictionary_metadata.json`
-  - `psf_dict_lambda_<wl>nm.h5` — LCD_forward-compatible HDF5 (single lambda)
-  - `psf_dict_three_lambda.h5` — LCD_forward-compatible HDF5 (3 wavelengths)
-- **Script:** dictionary export scripts (to be created in Phase 3.4)
-- **Status:** planned
+  - `psf_dictionary_summary.json` - measured-PSF dictionary metadata and quality summary
+  - `psf_dictionary_manifest.json` - per-mask manifest with family and repeat count
+  - `mask_preview_contact_sheet.png` - tiled lowres mask preview
+  - `psf_preview_contact_sheet.png` - tiled repeat-averaged PSF preview
+  - `psf_mean_stack.npy` - repeat-averaged PSF crop per mask
+  - `psf_crop_stack.npy` - raw per-repeat PSF crops
+  - `mask_lowres_stack.npy` - lowres control masks `[N,1,64,64]`
+  - `export_lcd_forward/train.h5` - LCD_forward-compatible training split
+  - `export_lcd_forward/val.h5` - LCD_forward-compatible validation split
+  - `export_lcd_forward/test.h5` - LCD_forward-compatible test split
+  - `psf_dictionary_report.md`
+- **Script:** `scripts/analyze_psf_dictionary.py`
+- **Status:** scripts implemented; hardware data pending
+- **Boundary:** Data-first acquisition and export only. No forward-model
+  training is performed here.
 
 ### `outputs/linear_recon/`
 
 - **Phase:** 3.5 (forward model), 3.6 (multiframe reconstruction)
 - **Depends on:**
-  - `outputs/psf_dictionary/` — PSF dictionary
-  - `outputs/linear_recon/multiframe_target_raw.h5` — target captures
+  - `outputs/psf_dictionary/` - PSF dictionary
+  - `outputs/linear_recon/multiframe_target_raw.h5` - target captures
 - **Produces:**
-  - `A_matrix_info.json` — forward matrix metadata
-  - `condition_number_report.json` — channel condition analysis
-  - `recon_single_frame.npy` — single-frame reconstruction
-  - `recon_multiframe.npy` — multi-frame reconstruction
-  - `recon_error.npy` — reconstruction error map
-  - `recon_comparison.png` — single vs multi-frame comparison
+  - `A_matrix_info.json` - forward matrix metadata
+  - `condition_number_report.json` - channel condition analysis
+  - `recon_single_frame.npy` - single-frame reconstruction
+  - `recon_multiframe.npy` - multi-frame reconstruction
+  - `recon_error.npy` - reconstruction error map
+  - `recon_comparison.png` - single vs multi-frame comparison
   - `linear_recon_report.md`
 - **Script:** reconstruction scripts (to be created in Phase 3.5/3.6)
 - **Status:** planned
 
 ### `outputs/bishe_figures/`
 
-- **Phase:** 3.7 — Thesis figures and report freeze
+- **Phase:** 3.7 - Thesis figures and report freeze
 - **Depends on:** All preceding output directories
 - **Produces:**
   - Figures in publication-quality format (PNG, PDF)
@@ -181,17 +187,17 @@ accompanying metadata (JSON sidecar or HDF5 attribute):
 | `analysis_script` | Script name that produced this output |
 | `analysis_commit` | Git commit hash of the repository at analysis time |
 
-This rule exists because old experimental data was lost.  New results must be
+This rule exists because old experimental data was lost. New results must be
 fully auditable and reproducible.
 
-Scripts should embed this metadata automatically.  Manual entry is acceptable
+Scripts should embed this metadata automatically. Manual entry is acceptable
 for early exploration but must be replaced by automated recording before
 thesis freeze.
 
 ## Directory creation convention
 
 Subdirectories under `outputs/` may be created by analysis scripts as needed.
-This `README.md` defines the canonical directory names.  Scripts should create
+This `README.md` defines the canonical directory names. Scripts should create
 directories with `os.makedirs(..., exist_ok=True)`.
 
 If raw capture HDF5 files are written to `outputs/`, they should be placed in

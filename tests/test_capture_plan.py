@@ -259,6 +259,10 @@ class TestPlannedPhase3PlanStubs:
             "plan_id": "bishe_dotf_diagnostic",
             "phase": "3.3",
         },
+        "bishe_psf_dictionary.yaml": {
+            "plan_id": "bishe_psf_dictionary",
+            "phase": "3.4",
+        },
     }
 
     @pytest.mark.parametrize("filename,expected", list(STUB_PLANS.items()))
