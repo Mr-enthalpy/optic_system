@@ -477,16 +477,16 @@ Completed:
 - Phase 2B hardware smoke capture validation
 - Phase 3.0.5b PSF-safe exposure calibration
 - Phase 3.1 LCD-domain effective pupil geometry calibration
+- Phase 3.2 data-first PSF ROI/repeatability script and test scaffolding
 
 Next (thesis branch):
 
-1. Phase 3.2a camera-frame PSF ROI calibration.
-2. Phase 3.2b PSF repeatability and mask-induced diversity.
-3. Phase 3.3 dOTF diagnostic visualization.
-4. Phase 3.4 measured PSF dictionary and LCD_forward export.
-5. Phase 3.5 simple forward model validation.
-6. Phase 3.6 three-wavelength multiframe linear reconstruction.
-7. Phase 3.7 thesis figures and report freeze.
+1. Phase 3.2a/3.2b canonical hardware capture and analysis.
+2. Phase 3.3 dOTF diagnostic visualization.
+3. Phase 3.4 measured PSF dictionary and LCD_forward export.
+4. Phase 3.5 simple forward model validation.
+5. Phase 3.6 three-wavelength multiframe linear reconstruction.
+6. Phase 3.7 thesis figures and report freeze.
 
 Phase 3.2 and 3.3 are data-first experiment tasks.
 Do not introduce new architecture unless required for data capture.

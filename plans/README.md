@@ -20,6 +20,8 @@ consume the raw HDF5 to produce processed results.
 | `hardware_smoke_with_tls.yaml` | Hardware smoke test: camera + LCD + TLS |
 | `bishe_psf_safe_exposure.yaml` | Phase 3.0.5b PSF-safe exposure/gain refinement |
 | `bishe_pupil_geometry.yaml` | Phase 3.1 effective pupil geometry calibration |
+| `bishe_psf_roi.yaml` | Phase 3.2a camera-frame PSF ROI calibration |
+| `bishe_psf_repeatability.yaml` | Phase 3.2b PSF repeatability and mask-induced diversity |
 
 ### `plans/bishe_psf_safe_exposure.yaml`
 - **Phase:** 3.0.5b - PSF-safe exposure/gain refinement.
@@ -83,11 +85,6 @@ consume the raw HDF5 to produce processed results.
 - **Analysis:** `scripts/analyze_pupil_geometry.py` writes
   `outputs/pupil_geometry/effective_pupil_window.json` and diagnostics.
 
-## Planned plans (Phase 3 thesis)
-
-The following capture plans are defined for the Phase 3 thesis workflow.
-They will be implemented in their respective milestones.
-
 ### `plans/bishe_psf_roi.yaml`
 - **Phase:** 3.2a - Camera-frame PSF ROI calibration
 - **Purpose:** Determine a fixed crop window in camera sensor coordinates for
@@ -101,6 +98,8 @@ They will be implemented in their respective milestones.
 - **Masks:** Single mask (effective pupil window).  Not a mask list.
 - **Wavelengths:** Single wavelength.
 - **Camera:** Burst of N frames per capture, K repeats.
+- **LCD settle:** Hardware validation rejects values below 100 ms; default is
+  200 ms.
 - **Output raw HDF5:** `data/raw/bishe_psf_roi.h5`
 - **Downstream analysis:** `scripts/analyze_psf_roi.py` writes
   `outputs/psf_roi/psf_roi.json` and diagnostics.
@@ -113,14 +112,17 @@ They will be implemented in their respective milestones.
   - `outputs/psf_roi/psf_roi.json` (camera-frame crop)
   - `outputs/pupil_geometry/effective_pupil_window.json` (LCD mask window)
   - `outputs/exposure_calibration/camera_params_psf_safe.json`
-- **Masks:** Representative mask set (all_open, vertical_stripes,
-  horizontal_stripes, checkerboard, low_frequency_random, etc.), each repeated
-  K times (K >= 10).  All masks inside the effective pupil window.
+- **Masks:** Representative low-frequency mask set, each repeated K times.
+  Outside the effective pupil window is opaque for every mask.
 - **Wavelengths:** Single wavelength.
 - **Camera:** Burst of N frames per capture.
+- **LCD settle:** Hardware validation rejects values below 100 ms; default is
+  200 ms.
 - **Output raw HDF5:** `data/raw/bishe_psf_repeatability.h5`
 - **Downstream analysis:** `scripts/analyze_psf_repeatability.py` writes
-  `outputs/psf_repeatability/repeatability_metrics.json` and diagnostics.
+  repeatability/diversity JSON, matrix `.npy` files, and diagnostics.
+
+## Planned plans (later Phase 3 thesis)
 
 ### `plans/bishe_dotf_diagnostic.yaml`
 - **Phase:** 3.3 - dOTF diagnostic visualization

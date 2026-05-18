@@ -185,7 +185,7 @@ Phase 3.2a and uses **camera sensor coordinates**.
 
 ### Phase 3.2 - Camera-frame PSF ROI + PSF repeatability/diversity
 
-**Status: planned**
+**Status: data-first scripts implemented; hardware acquisition pending**
 
 This phase sets the camera-sensor coordinate baseline (PSF ROI) and then
 reacquires the two key old-project findings: same-mask PSF stability and
@@ -214,16 +214,18 @@ Minimum algorithm:
 1. Display the effective circular pupil window on LCD (inside = all-open,
    outside = all-closed).
 2. Acquire point-source PSF with K-frame burst averaging.
-3. Apply dark subtraction or baseline correction.
-4. Locate PSF center via peak detection, center-of-mass, or energy
-   connected-component analysis.
-5. Choose a fixed crop size (by energy envelope or pre-configured size).
+3. Apply simple baseline correction.
+4. Locate PSF center by peak pixel followed by local center-of-mass.
+5. Choose the configured fixed crop size, currently 256 x 256.
 6. Write `outputs/psf_roi/psf_roi.json`.
 
 Scripts:
 - `scripts/capture_psf_roi.py` — acquisition
 - `scripts/analyze_psf_roi.py` — analysis and ROI export
 - `plans/bishe_psf_roi.yaml`
+
+Hardware capture rejects `lcd.settle_ms < 100`; the default is 200 ms
+because the LCD frame period is about 20 ms.
 
 Outputs:
 ```
@@ -243,8 +245,7 @@ psf_roi.json schema:
   "source_raw_h5": "data/raw/bishe_psf_roi.h5",
   "pupil_window_source": "outputs/pupil_geometry/effective_pupil_window.json",
   "camera_params_source": "outputs/exposure_calibration/camera_params_psf_safe.json",
-  "camera_profile_requested": "canonical_low_gain",
-  "camera_profile_used": "global_safe_camera",
+  "camera_profile_used": "per_gain_safe_params:10.0",
   "wavelength_nm": 550.0,
   "frame_shape": [2048, 2448],
   "roi": {
@@ -258,13 +259,14 @@ psf_roi.json schema:
   "center": {
     "x": 1128.0,
     "y": 928.0,
-    "method": "center_of_mass"
+    "method": "peak_then_center_of_mass"
   },
-  "crop_policy": {
-    "type": "fixed_size_centered",
-    "size": [256, 256],
-    "margin_policy": "contains_energy_fraction",
-    "energy_fraction": 0.999
+  "quality": {
+    "peak_pixel": 0.0,
+    "mean_pixel": 0.0,
+    "background_level": 0.0,
+    "roi_energy_fraction": 0.0,
+    "full_scale_in_avg_valid_domain": false
   },
   "validity": {
     "psf_roi_estimated": true,
@@ -307,15 +309,16 @@ effective pupil window on LCD
   -> inter-mask: pairwise MSE / PSNR / SSIM / Fourier difference
 ```
 
-Suggested masks (all inside the effective pupil window):
+Default masks (all inside the effective pupil window):
 ```
-all_open_inside_effective_window
-all_closed
-vertical_stripes_inside_window
-horizontal_stripes_inside_window
-checkerboard_inside_window
-low_frequency_random_inside_window
-edge_perturbation_candidates
+all_open_window
+vertical_stripes_lowfreq
+horizontal_stripes_lowfreq
+checkerboard_lowfreq
+central_block
+edge_block
+random_lowfreq_1
+random_lowfreq_2
 ```
 
 Outputs:
@@ -326,10 +329,13 @@ outputs/psf_repeatability/
   psfs_mean.npy
   psfs_std.npy
   repeatability_metrics.json
+  diversity_metrics.json
+  psf_diversity_metrics.json
   pairwise_distance_matrix.npy
   ssim_matrix.npy
   psnr_matrix.npy
   repeatability_report.md
+  report.md
 ```
 
 Core metrics (intra-mask):
@@ -351,14 +357,17 @@ normalized cross-correlation
 Fourier magnitude difference
 ```
 
-Core conclusion: different masks produce PSF differences significantly larger
-than same-mask repeat noise.
+Core conclusion: report `inter_mask_distance / intra_mask_repeat_noise`.
+If the ratio is clearly greater than 1, the report may state that
+mask-induced PSF differences are larger than repeatability noise.
 
 Exit criteria:
 1. Within-mask PSF variance smaller than between-mask difference.
 2. PSF ROI crop is used for all frames; ROI metadata recorded.
 3. Representative mask PSF comparison figure ready for thesis.
-4. This is the first critical milestone.  If it fails, dOTF, forward
+4. The conclusion is limited to the Phase 3.2 data prerequisite and does not
+   claim a successful forward model.
+5. This is the first critical milestone.  If it fails, dOTF, forward
    model, and reconstruction should not proceed.
 
 Phase 3.2b does not include:

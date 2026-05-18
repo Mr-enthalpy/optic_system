@@ -22,6 +22,8 @@ class RunStatus:
     scan_strategy: str | None = None
     capture_index: int | None = None
     n_captures: int | None = None
+    repeat_index: int | None = None
+    n_repeats: int | None = None
     current_mask_id: str | None = None
     current_wavelength_nm: float | None = None
     target_wavelength_nm: float | None = None
@@ -45,6 +47,7 @@ class RunStatus:
     camera_profile_requested: str | None = None
     camera_profile_used: str | None = None
     camera_profile_fallback_used: bool | None = None
+    lcd_settle_ms: float | None = None
     current_position: float | None = None
     current_radius: float | None = None
     completed: bool | None = None
