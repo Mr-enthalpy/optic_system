@@ -360,22 +360,25 @@ and/or phase is sufficient for this milestone.
    - `PSF -> OTF` (FFT2 with shift)
    - `dOTF = OTF_perturbed - OTF_reference`
 5. Visualize dOTF abs, log_abs, phase, real, imag.
-6. Interpret observed structure.
+6. Interpret observed structure as a diagnostic only; do not stitch or claim
+   a final complex pupil reconstruction.
 
 ### Output
 
 ```text
 outputs/dotf/
   psf_reference.npy
-  psf_perturbed.npy
-  otf_reference.npy
-  otf_perturbed.npy
-  dotf_complex.npy
-  dotf_abs.png
-  dotf_log_abs.png
-  dotf_phase.png
-  dotf_real.png
-  dotf_imag.png
+  psf_reference.png
+  <perturbation_id>/psf_perturbed.npy
+  <perturbation_id>/otf_reference.npy
+  <perturbation_id>/otf_perturbed.npy
+  <perturbation_id>/dotf_complex.npy
+  <perturbation_id>/dotf_abs.png
+  <perturbation_id>/dotf_log_abs.png
+  <perturbation_id>/dotf_phase.png
+  <perturbation_id>/dotf_real.png
+  <perturbation_id>/dotf_imag.png
+  dotf_metrics.json
   dotf_report.md
 ```
 

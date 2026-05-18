@@ -62,6 +62,22 @@ def validate_phase32_plan(
         repeats = int(plan.get("capture", {}).get("repeats_per_mask", 0))
         if repeats <= 0:
             raise Phase32PlanError("capture.repeats_per_mask must be > 0")
+    elif task == "dotf":
+        if plan.get("phase") != "3.3":
+            raise Phase32PlanError("dOTF diagnostic plan phase must be '3.3'")
+        if not plan.get("psf_roi_source"):
+            raise Phase32PlanError("psf_roi_source is required")
+        perturbation_set = plan.get("dotf", {}).get("perturbation_set")
+        if not isinstance(perturbation_set, list) or not perturbation_set:
+            raise Phase32PlanError("dotf.perturbation_set must be a non-empty list")
+        repeats = int(plan.get("capture", {}).get("repeats", 0))
+        if repeats <= 0:
+            raise Phase32PlanError("capture.repeats must be > 0")
+        perturbation = plan.get("dotf", {}).get("perturbation", {})
+        if str(perturbation.get("type", "")) != "local_edge_occlusion":
+            raise Phase32PlanError("dotf.perturbation.type must be local_edge_occlusion")
+        if int(perturbation.get("size_px", 0)) <= 0:
+            raise Phase32PlanError("dotf.perturbation.size_px must be > 0")
     else:
         raise Phase32PlanError(f"unknown task: {task}")
     frames_per_capture = int(plan.get("capture", {}).get("frames_per_capture", 0))

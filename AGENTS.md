@@ -34,8 +34,10 @@ Those belong to `LCD_forward` or later experiment-specific layers.
 
 Thesis branch (`phase3-bishe-experimental-loop`) phase:
 Phase 3.0.5b implemented, Phase 3.1 implementation re-aligned with
-old/calibrating.py and old/ellipse.py physical model. Canonical hardware
-rerun pending.
+old/calibrating.py and old/ellipse.py physical model, Phase 3.2 data-first
+ROI and repeatability scripts implemented, and Phase 3.3 dOTF diagnostic
+capture/analysis scripts implemented. Canonical hardware reruns remain
+pending.
 
 Active roadmap: `docs/bishe_plan.md`.
 

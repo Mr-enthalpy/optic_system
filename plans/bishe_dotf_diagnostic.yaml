@@ -1,28 +1,47 @@
-# Phase 3.3 - dOTF diagnostic visualization (PLANNED STUB)
-#
-# Purpose: capture reference and edge-perturbed PSF pairs for direct
-# dOTF visualization.  Refer to docs/bishe_plan.md for the full specification.
-#
-# This is a schema sketch.  The plan is not yet executable.
-
 plan_id: bishe_dotf_diagnostic
 phase: "3.3"
 
 camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
-camera_profile: canonical_low_gain
+camera_gain_selection: "10.0"
+
 pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
 psf_roi_source: outputs/psf_roi/psf_roi.json
 
 wavelength:
   wavelength_nm: 550.0
   grating: 1
+  settle_ms: 500
 
-dotf:
-  perturbation: edge_local_block
+lcd:
+  display_index: 1
+  subpixel_axis: 1
+  settle_ms: 200
+
+capture:
   repeats: 20
   frames_per_capture: 10
+
+dotf:
+  perturbation_set:
+    - edge_block_left
+    - edge_block_right
+    - edge_block_top
+    - edge_block_bottom
+
+  perturbation:
+    type: local_edge_occlusion
+    size_px: 8
+    offset_from_effective_radius_px: 0
+    code_inside_reference: 255
+    code_perturbation: 0
+    background_code: 0
+
   normalize_energy: true
+  align_before_fft: true
+  window_before_fft: false
 
 output:
   raw_h5: data/raw/bishe_dotf_diagnostic.h5
   output_dir: outputs/dotf
+
+lock_file: outputs/run_status/capture_hardware.lock
