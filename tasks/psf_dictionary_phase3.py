@@ -152,6 +152,62 @@ def psf_dictionary_stats(crops: np.ndarray, mask_ids: list[str]) -> dict[str, An
     }
 
 
+def psf_dictionary_stats_by_mask_and_wavelength(
+    crops: np.ndarray,
+    mask_ids: list[str],
+    wavelength_index: np.ndarray,
+) -> dict[str, Any]:
+    arr = np.asarray(crops, dtype=np.float64)
+    ids = np.asarray([str(x) for x in mask_ids], dtype=object)
+    wl_idx = np.asarray(wavelength_index, dtype=np.int64)
+    if arr.ndim != 3:
+        raise ValueError(f"crops must be [N,H,W], got {arr.shape}")
+    if ids.shape[0] != arr.shape[0] or wl_idx.shape[0] != arr.shape[0]:
+        raise ValueError("crops, mask_ids, and wavelength_index must share the same length")
+
+    unique_ids = list(dict.fromkeys(ids.tolist()))
+    unique_wavelength_index = list(dict.fromkeys(int(x) for x in wl_idx.tolist()))
+    means = np.zeros((len(unique_ids), len(unique_wavelength_index), arr.shape[-2], arr.shape[-1]), dtype=np.float64)
+    stds = np.zeros_like(means)
+    repeat_mse: list[float] = []
+    total_energy_cv: list[float] = []
+    center_drift_max = 0.0
+
+    for i, mask_id in enumerate(unique_ids):
+        for j, wavelength in enumerate(unique_wavelength_index):
+            group_idx = np.where((ids == mask_id) & (wl_idx == int(wavelength)))[0]
+            if group_idx.size == 0:
+                raise ValueError(f"missing group for mask_id={mask_id} wavelength_index={wavelength}")
+            local = arr[group_idx]
+            means[i, j] = np.mean(local, axis=0)
+            stds[i, j] = np.std(local, axis=0)
+            energies = np.asarray([float(np.sum(np.maximum(item, 0.0))) for item in local], dtype=np.float64)
+            mean_energy = float(np.mean(energies)) if energies.size else 0.0
+            if mean_energy > 0.0:
+                total_energy_cv.append(float(np.std(energies) / mean_energy))
+            centers = np.asarray([center_of_mass(item) for item in local], dtype=np.float64)
+            if centers.size:
+                drift = np.linalg.norm(centers - np.mean(centers, axis=0), axis=1)
+                center_drift_max = max(center_drift_max, float(np.max(drift)))
+            for a in range(len(local)):
+                for b in range(a + 1, len(local)):
+                    diff = local[a] - local[b]
+                    repeat_mse.append(float(np.mean(diff * diff)))
+
+    return {
+        "mask_ids": unique_ids,
+        "wavelength_index": unique_wavelength_index,
+        "psf_mean_stack": means,
+        "psf_std_stack": stds,
+        "quality": {
+            "mean_repeat_mse": float(np.mean(repeat_mse)) if repeat_mse else 0.0,
+            "median_repeat_mse": float(np.median(repeat_mse)) if repeat_mse else 0.0,
+            "mean_total_energy_cv": float(np.mean(total_energy_cv)) if total_energy_cv else 0.0,
+            "max_center_drift_px": float(center_drift_max),
+        },
+    }
+
+
 def normalize_psf_for_export(psf: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
     arr = np.asarray(psf, dtype=np.float64)
     background = float(np.percentile(arr, 5.0))

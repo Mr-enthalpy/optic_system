@@ -8,7 +8,7 @@ import numpy as np
 import yaml
 
 from scripts.analyze_psf_dictionary import analyze_psf_dictionary
-from tasks.psf_dictionary_phase3 import PSFDictionaryRawWriter
+from tasks.psf_dictionary_phase3 import PSFDictionaryRawWriter, psf_dictionary_stats_by_mask_and_wavelength
 
 
 def _frame(center_x: float, center_y: float, shape: tuple[int, int] = (64, 64), amplitude: float = 100.0, seed: int = 0) -> np.ndarray:
@@ -83,6 +83,9 @@ def test_analyze_psf_dictionary_outputs_summary_and_export(tmp_path: Path) -> No
     assert (out_dir / "export_lcd_forward" / "val.h5").exists()
     assert (out_dir / "export_lcd_forward" / "test.h5").exists()
     assert summary["validity"]["training_ready"] is False
+    readme_text = (out_dir / "export_lcd_forward" / "README.md").read_text(encoding="utf-8")
+    assert "single-wavelength" not in readme_text
+    assert "- psfs:  [N, 1, L, Hp, Wp]" in readme_text
 
     split_ids: dict[str, set[str]] = {}
     for split_name in ("train", "val", "test"):
@@ -102,3 +105,19 @@ def test_analyze_psf_dictionary_outputs_summary_and_export(tmp_path: Path) -> No
     assert split_ids["train"].isdisjoint(split_ids["val"])
     assert split_ids["train"].isdisjoint(split_ids["test"])
     assert split_ids["val"].isdisjoint(split_ids["test"])
+
+
+def test_psf_dictionary_stats_groups_repeat_noise_within_wavelength_only() -> None:
+    crop_a_450 = np.full((8, 8), 10.0, dtype=np.float64)
+    crop_b_450 = np.full((8, 8), 10.0, dtype=np.float64)
+    crop_a_650 = np.full((8, 8), 30.0, dtype=np.float64)
+    crop_b_650 = np.full((8, 8), 30.0, dtype=np.float64)
+    crops = np.stack([crop_a_450, crop_b_450, crop_a_650, crop_b_650], axis=0)
+    mask_ids = ["all_open_window"] * 4
+    wavelength_index = np.asarray([0, 0, 1, 1], dtype=np.int64)
+
+    stats = psf_dictionary_stats_by_mask_and_wavelength(crops, mask_ids, wavelength_index)
+
+    assert stats["psf_mean_stack"].shape == (1, 2, 8, 8)
+    assert stats["quality"]["mean_repeat_mse"] == 0.0
+    assert stats["quality"]["median_repeat_mse"] == 0.0

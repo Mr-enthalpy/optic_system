@@ -26,7 +26,10 @@ def _ensure_sys_path() -> None:
 
 _ensure_sys_path()
 
-from tasks.psf_dictionary_phase3 import normalize_psf_for_export, psf_dictionary_stats  # noqa: E402
+from tasks.psf_dictionary_phase3 import (  # noqa: E402
+    normalize_psf_for_export,
+    psf_dictionary_stats_by_mask_and_wavelength,
+)
 from tasks.psf_phase3 import json_dumps, valid_pixel_mask, write_preview_png  # noqa: E402
 
 
@@ -59,13 +62,13 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
         default_wl = float(plan.get("wavelength", {}).get("wavelength_nm", float("nan")))
         wavelength_nm = np.full((len(mask_ids),), default_wl, dtype=np.float64)
         wavelength_index = np.zeros((len(mask_ids),), dtype=np.int64)
-    stats = psf_dictionary_stats(crops, mask_ids)
+    unique_wavelength_index = list(dict.fromkeys(int(x) for x in wavelength_index.tolist()))
+    unique_wavelength_nm = [float(wavelength_nm[np.where(wavelength_index == idx)[0][0]]) for idx in unique_wavelength_index]
+    stats = psf_dictionary_stats_by_mask_and_wavelength(crops, mask_ids, wavelength_index)
     unique_ids = stats["mask_ids"]
     ids_arr = np.asarray(mask_ids)
     family_by_id = {mid: mask_families[np.where(ids_arr == mid)[0][0]] for mid in unique_ids}
-    unique_wavelength_index = list(dict.fromkeys(int(x) for x in wavelength_index.tolist()))
-    unique_wavelength_nm = [float(wavelength_nm[np.where(wavelength_index == idx)[0][0]]) for idx in unique_wavelength_index]
-    mean_crops = _mean_crops_by_mask_and_wavelength(crops, mask_ids, wavelength_index, unique_ids, unique_wavelength_index)
+    mean_crops = stats["psf_mean_stack"]
     np.save(out_dir / "psf_mean_stack.npy", mean_crops)
     np.save(out_dir / "psf_crop_stack.npy", crops)
     unique_lowres = np.stack([masks_lowres[np.where(ids_arr == mid)[0][0]] for mid in unique_ids], axis=0)
@@ -227,10 +230,10 @@ def _export_lcd_forward(
     readme_lines = [
         "# LCD_forward export",
         "",
-        "This directory contains derived single-wavelength measured PSF dictionary exports.",
+        "This directory contains measured PSF dictionary exports.",
         "Shapes:",
         "- masks: [N, 1, 1, 64, 64]",
-        "- psfs:  [N, 1, 1, Hp, Wp]",
+        "- psfs:  [N, 1, L, Hp, Wp]",
         f"- wavelengths_nm: {export_wavelengths_nm}",
         "",
         "Normalization: background_subtract_then_sum_normalize.",
