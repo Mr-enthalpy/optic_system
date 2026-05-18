@@ -460,41 +460,47 @@ Phase 3.3 does not attempt:
 
 ### Phase 3.4 - Measured PSF dictionary and LCD_forward export
 
-**Status: planned**
+**Status: scripts implemented; hardware acquisition pending**
 
 Purpose:
 - build a measured mask-to-PSF dictionary as the foundation for forward
   modelling
 - export selected data into `LCD_forward`-compatible HDF5
 - all PSF crops use `outputs/psf_roi/psf_roi.json`
+- keep the work data-first; no forward training or mask optimization
 
 Scripts:
-- `scripts/make_psf_dictionary_masks.py`
-- `scripts/build_psf_dictionary.py`
-- `scripts/convert_to_lcd_forward_h5.py`
-- `plans/bishe_psf_dict_single_lambda.yaml`
-- `plans/bishe_psf_dict_three_lambda.yaml`
+- `tasks/psf_dictionary_masks.py`
+- `tasks/psf_dictionary_phase3.py`
+- `scripts/capture_psf_dictionary.py`
+- `scripts/analyze_psf_dictionary.py`
+- `plans/bishe_psf_dictionary.yaml`
 
 Flow:
 ```
 representative mask families
-  -> single / three-wavelength PSF acquisition
-  -> ROI / align / average
-  -> PSF dictionary
+  -> single-wavelength PSF acquisition
+  -> ROI crop preservation
+  -> repeat-averaged measured PSF dictionary
   -> train / val / test split
-  -> LCD_forward-compatible HDF5
+  -> LCD_forward-compatible HDF5 export
 ```
 
 `optic_system` side outputs:
 ```
-data/raw/bishe_psf_dict_*.h5
+data/raw/bishe_psf_dictionary.h5
 outputs/psf_dictionary/
-  masks_physical.npy
-  masks_downsampled.npy
-  psfs_mean.npy
-  psfs_std.npy
-  wavelengths.npy
-  dictionary_metadata.json
+  psf_dictionary_summary.json
+  psf_dictionary_manifest.json
+  mask_preview_contact_sheet.png
+  psf_preview_contact_sheet.png
+  psf_mean_stack.npy
+  psf_crop_stack.npy
+  mask_lowres_stack.npy
+  export_lcd_forward/train.h5
+  export_lcd_forward/val.h5
+  export_lcd_forward/test.h5
+  psf_dictionary_report.md
 ```
 
 `LCD_forward` side format:
@@ -508,10 +514,10 @@ psfs:  [N, T, L, Hp, Wp]
 ```
 
 Exit criteria:
-1. Single-wavelength PSF dictionary usable.
-2. Three-wavelength PSF dictionary usable (if TLS stable).
-3. Data readable by LCD_forward's `ForwardH5Dataset`.
-4. A simple mask-to-PSF forward baseline can be trained or fitted.
+1. Single-wavelength measured PSF dictionary acquired with complete provenance.
+2. Data readable by LCD_forward-compatible HDF5 readers.
+3. Raw full-frame data and per-repeat crops preserved.
+4. No training or optimization code introduced in `optic_system`.
 
 After this phase, the thesis has the "hardware acquisition -> data format
 -> forward modelling" main chain.

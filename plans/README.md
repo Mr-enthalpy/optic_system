@@ -23,6 +23,7 @@ consume the raw HDF5 to produce processed results.
 | `bishe_psf_roi.yaml` | Phase 3.2a camera-frame PSF ROI calibration |
 | `bishe_psf_repeatability.yaml` | Phase 3.2b PSF repeatability and mask-induced diversity |
 | `bishe_dotf_diagnostic.yaml` | Phase 3.3 dOTF diagnostic visualization |
+| `bishe_psf_dictionary.yaml` | Phase 3.4 measured PSF dictionary and LCD_forward export |
 
 ### `plans/bishe_psf_safe_exposure.yaml`
 - **Phase:** 3.0.5b - PSF-safe exposure/gain refinement.
@@ -123,8 +124,6 @@ consume the raw HDF5 to produce processed results.
 - **Downstream analysis:** `scripts/analyze_psf_repeatability.py` writes
   repeatability/diversity JSON, matrix `.npy` files, and diagnostics.
 
-## Planned plans (later Phase 3 thesis)
-
 ### `plans/bishe_dotf_diagnostic.yaml`
 - **Phase:** 3.3 - dOTF diagnostic visualization
 - **Purpose:** Capture base mask + perturbation mask PSF pairs for dOTF
@@ -146,16 +145,30 @@ consume the raw HDF5 to produce processed results.
 - **Boundary:** Diagnostic visualization only. No pupil stitching or full
   complex pupil reconstruction.
 
-### `plans/bishe_psf_dict_single_lambda.yaml`
-- **Phase:** 3.4 - PSF dictionary (1 wavelength)
-- **Purpose:** Build a mask-to-PSF dictionary at a single wavelength.
-- **Masks:** Gratings at various periods/orientations, checkerboards, radial
-  patterns.  ~10-20 distinct masks.
+### `plans/bishe_psf_dictionary.yaml`
+- **Phase:** 3.4 - measured PSF dictionary and LCD_forward export
+- **Purpose:** Capture a representative single-wavelength measured PSF
+  dictionary, preserve complete raw capture provenance, and export
+  repeat-averaged mask/PSF pairs in an LCD_forward-compatible HDF5 format.
+- **Inputs:**
+  - `outputs/psf_roi/psf_roi.json` (camera-frame crop)
+  - `outputs/pupil_geometry/effective_pupil_window.json` (LCD mask window)
+  - `outputs/exposure_calibration/camera_params_psf_safe.json`
+- **Masks:** Deterministic representative masks plus seeded random low/mid
+  frequency masks and task-related patterns. Every physical mask is restricted
+  by the effective pupil window and every lowres control mask is preserved.
 - **Wavelengths:** Single wavelength.
-- **Camera:** Averaged frames per mask.
-- **Camera params:** `outputs/exposure_calibration/camera_params_psf_safe.json`.
-- **Expected output raw HDF5:** `outputs/psf_dictionary/psf_dict_single_lambda_raw.h5`
-- **Downstream analysis:** PSF extraction, normalization, LCD_forward export.
+- **Camera:** Burst of N frames per mask repeat, K repeats per mask.
+- **LCD settle:** Hardware validation rejects values below 100 ms; default is
+  200 ms.
+- **Output raw HDF5:** `data/raw/bishe_psf_dictionary.h5`
+- **Downstream analysis:** `scripts/analyze_psf_dictionary.py` writes summary
+  JSON, preview sheets, `.npy` stacks, and `export_lcd_forward/train.h5`,
+  `val.h5`, and `test.h5`.
+- **Boundary:** Data-first acquisition and export only. No forward-model
+  training, reconstruction, or mask optimization.
+
+## Planned plans (later Phase 3 thesis)
 
 ### `plans/bishe_psf_dict_three_lambda.yaml`
 - **Phase:** 3.4 / 3.6 - PSF dictionary (3 wavelengths)

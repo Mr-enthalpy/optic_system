@@ -78,6 +78,31 @@ def validate_phase32_plan(
             raise Phase32PlanError("dotf.perturbation.type must be local_edge_occlusion")
         if int(perturbation.get("size_px", 0)) <= 0:
             raise Phase32PlanError("dotf.perturbation.size_px must be > 0")
+    elif task == "dictionary":
+        if plan.get("phase") != "3.4":
+            raise Phase32PlanError("PSF dictionary plan phase must be '3.4'")
+        if not plan.get("psf_roi_source"):
+            raise Phase32PlanError("psf_roi_source is required")
+        masks = plan.get("masks", {})
+        if str(masks.get("set", "")) != "psf_dictionary_representative":
+            raise Phase32PlanError("masks.set must be psf_dictionary_representative")
+        include = masks.get("include")
+        if not isinstance(include, list) or not include:
+            raise Phase32PlanError("masks.include must be a non-empty list")
+        lowres_shape = masks.get("lowres_shape")
+        if not isinstance(lowres_shape, list) or len(lowres_shape) != 2:
+            raise Phase32PlanError("masks.lowres_shape must be [H, W]")
+        if int(lowres_shape[0]) <= 0 or int(lowres_shape[1]) <= 0:
+            raise Phase32PlanError("masks.lowres_shape entries must be > 0")
+        repeats = int(plan.get("capture", {}).get("repeats_per_mask", 0))
+        if repeats <= 0:
+            raise Phase32PlanError("capture.repeats_per_mask must be > 0")
+        export = plan.get("export", {}).get("lcd_forward", {})
+        if bool(export.get("enabled", False)):
+            split = export.get("split", {})
+            total = float(split.get("train", 0.0)) + float(split.get("val", 0.0)) + float(split.get("test", 0.0))
+            if not math.isclose(total, 1.0, rel_tol=1e-6, abs_tol=1e-6):
+                raise Phase32PlanError("export.lcd_forward.split must sum to 1.0")
     else:
         raise Phase32PlanError(f"unknown task: {task}")
     frames_per_capture = int(plan.get("capture", {}).get("frames_per_capture", 0))

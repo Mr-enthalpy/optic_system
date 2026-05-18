@@ -384,37 +384,49 @@ outputs/dotf/
 
 ## PSF dictionary
 
-**Purpose:** Build measured mask-to-PSF dictionary and export to
-`LCD_forward`-compatible format.
+**Purpose:** Build a data-first measured mask-to-PSF dictionary and export a
+derived LCD_forward-compatible dataset without training a forward model.
 
 ### Capture plans
 
-- `plans/bishe_psf_dict_single_lambda.yaml` - dictionary at one wavelength.
-- `plans/bishe_psf_dict_three_lambda.yaml` - dictionary at three wavelengths.
+- `plans/bishe_psf_dictionary.yaml` - representative single-wavelength measured
+  PSF dictionary.
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
-- Masks: gratings at various periods and orientations, checkerboards, radial
-  patterns.
-- Wavelengths: 1 or 3 wavelengths.
+- Inputs: `effective_pupil_window.json` and `psf_roi.json`.
+- Masks: deterministic representative masks plus seeded random low/mid
+  frequency masks and task-related patterns. Every physical mask is limited by
+  the effective pupil window, and the lowres control mask is preserved.
+- Wavelengths: single wavelength in Phase 3.4.
 
 ### Analysis
 
-1. Load `raw_capture.h5` - extract averaged PSF for each mask.
-2. Apply ROI cropping and possible dark-frame subtraction.
-3. Normalize if needed.
-4. Package as `LCD_forward`-compatible HDF5:
+1. Load `raw_capture.h5` - extract full-frame averages, PSF crops, lowres
+   masks, and complete provenance.
+2. Group by `mask_id`, compute repeat-averaged PSF crops, and summarize repeat
+   noise / center drift / energy variation.
+3. Write preview contact sheets and `.npy` stacks for reproducible analysis.
+4. Export repeat-averaged pairs as `LCD_forward`-compatible HDF5:
    ```text
-   masks: [N, 1, Hm, Wm]
-   psfs:  [N, L, Hp, Wp]
+   masks: [N, 1, 1, 64, 64]
+   psfs:  [N, 1, 1, Hp, Wp]
    ```
-5. Write `outputs/psf_dictionary/psf_dict_<config>.h5`.
+5. Keep the raw HDF5 as the source of truth.
 
 ### Output
 
 ```text
 outputs/psf_dictionary/
-  psf_dict_lambda_<wl>nm.h5
-  psf_dict_three_lambda.h5
-  psf_dictionary_metadata.json
+  psf_dictionary_summary.json
+  psf_dictionary_manifest.json
+  mask_preview_contact_sheet.png
+  psf_preview_contact_sheet.png
+  psf_mean_stack.npy
+  psf_crop_stack.npy
+  mask_lowres_stack.npy
+  export_lcd_forward/train.h5
+  export_lcd_forward/val.h5
+  export_lcd_forward/test.h5
+  psf_dictionary_report.md
 ```
 
 ## Three-wavelength multiframe linear reconstruction
