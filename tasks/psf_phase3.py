@@ -110,7 +110,7 @@ def validate_phase32_plan(
         raise Phase32PlanError("capture.frames_per_capture must be > 0")
     settle_ms = float(plan.get("lcd", {}).get("settle_ms", 0))
     if hardware and settle_ms < 100.0 and not allow_unsafe_lcd_settle:
-        raise Phase32PlanError("hardware Phase 3.2 capture requires lcd.settle_ms >= 100")
+        raise Phase32PlanError("hardware Phase 3 capture requires lcd.settle_ms >= 100")
 
 
 def load_json_file(path: str | Path) -> dict[str, Any]:
