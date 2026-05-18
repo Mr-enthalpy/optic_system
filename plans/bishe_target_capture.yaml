@@ -23,7 +23,7 @@ mask_source:
     - edge_block_right
     - edge_block_top
     - edge_block_bottom
-  max_masks: 8
+  max_masks: 9
 
 target:
   target_id: bishe_demo_target_001

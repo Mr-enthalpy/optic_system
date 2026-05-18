@@ -15,6 +15,7 @@ def test_target_capture_plan_loads_and_validates() -> None:
     assert plan["phase"] == "3.6"
     assert plan["mask_source"]["type"] == "lcd_forward_export"
     assert plan["wavelengths"]
+    assert plan["mask_source"]["max_masks"] == len(plan["mask_source"]["selected_mask_ids"])
 
 
 def test_target_capture_plan_rejects_unsafe_lcd_settle_in_hardware() -> None:
