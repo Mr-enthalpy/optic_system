@@ -8,3 +8,4 @@ data/raw/
 plans/generated_masks/
 app/outputs/
 outputs/run_status/
+env.local.ps1

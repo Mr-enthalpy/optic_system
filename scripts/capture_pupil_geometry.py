@@ -453,12 +453,16 @@ def run_pupil_geometry_calibration(
             energy_x = _resume_bs["x"]["energies"][()]
             pos_y = _resume_bs["y"]["positions"][()]
             energy_y = _resume_bs["y"]["energies"][()]
-            bright_sum = float(_resume_f["references"]["bright_sum"][()])
-            dark_sum = float(_resume_f["references"]["dark_sum"][()])
             _resume_f.close()
             run_status.append_log("INFO", "bar scan data loaded from HDF5",
                                    source_h5=resume_from_h5,
                                    pos_x_n=len(pos_x), pos_y_n=len(pos_y))
+            for _ax, _pos, _enr in [("x", pos_x, energy_x), ("y", pos_y, energy_y)]:
+                for _i, (_p, _e) in enumerate(zip(_pos, _enr)):
+                    writer.append_bar_scan(
+                        axis=_ax, position=float(_p), energy=float(_e),
+                        frame_index=-1, mask_metadata={"mask_id": f"bar_{_ax}_resumed_{_i:04d}"},
+                    )
         else:
             pos_x, energy_x = _run_bar_axis(
                 axis="x",
