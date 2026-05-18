@@ -185,15 +185,24 @@ the writer truncates the source before the resume code reads it.
 Current implementation: output path gets `_resumed` suffix
 (e.g. `bishe_pupil_geometry.h5` to `bishe_pupil_geometry_resumed.h5`).
 
-### S5: Camera parameters from 3.0.5b per-gain table
+### S5: Camera parameters from 3.0.5b current default
 
-`camera_params_psf_safe.json` exposes `per_gain_safe_params` with
-gain-keyed safe exposure upper bounds.  Tasks should select a gain
-via plan field `camera_gain_selection` rather than hardcoding
-exposure_us / gain_db.
+`camera_params_psf_safe.json` exposes both:
 
-Phase 3.1 used `camera_gain_selection: "10.0"` (gain=10 dB,
-exposure=540 us, PSF-safe across all tested wavelengths).
+- `global_safe_camera`
+- `per_gain_safe_params`
+
+The current frozen downstream default is `global_safe_camera`, not an
+explicit `camera_gain_selection`.
+
+Current active baseline:
+
+- `gain_db = 0.0`
+- `exposure_us = 736.541748046875`
+
+If a later task intentionally selects a per-gain profile instead, that
+choice must be explicit in the plan and must not silently override the
+current default.
 
 ### S6: Provenance chain
 
@@ -257,3 +266,16 @@ all-closed, and inside is either all-open (3.2a) or the encoded pattern
 
 All PSF crops (repeatability, dOTF, PSF dictionary) must use the
 same `psf_roi.json`.  Do not re-derive the crop per script.
+
+### P4: Preview images are not exposure judgments
+
+`psf_roi_preview.png` is generated from a contrast-stretched preview image.
+It is suitable for checking ROI placement but not for deciding whether the
+raw PSF is overexposed, whether only the main lobe is present, or whether
+the PSF is physically "large" in the raw sensor values.
+
+Exposure judgment must come from the recorded numeric diagnostics:
+
+- raw-burst strict PSF safety: Phase 3.0.5b outputs
+- averaged-frame quality diagnostics: `peak_pixel`,
+  `full_scale_in_avg_valid_domain`, and related metrics

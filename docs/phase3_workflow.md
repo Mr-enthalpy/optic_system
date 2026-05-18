@@ -21,6 +21,14 @@ All downstream capture tasks use:
 outputs/exposure_calibration/camera_params_psf_safe.json
 ```
 
+Current frozen Phase 3.0.5b default:
+
+- `global_safe_camera.exposure_us = 736.541748046875`
+- `global_safe_camera.gain_db = 0.0`
+- `550 nm` is the limiting wavelength
+
+See [phase3_current_results.md](/C:/Users/Dell/PycharmProjects/optic_system/docs/phase3_current_results.md).
+
 ## Data flow overview
 
 ```text
@@ -178,9 +186,8 @@ window radius on a dark background and fits the circle/ellipse overlap model.
 Downstream captures should encode masks inside the resulting effective pupil
 window instead of using an all-transmissive LCD.
 
-Until `fast_pupil_scan` profile export is available,
-`global_safe_camera` fallback is allowed only when the plan explicitly enables
-it and the report records the fallback.
+The current frozen hardware result uses `global_safe_camera` directly.
+The active plan no longer requests `fast_pupil_scan`.
 
 ### Capture plan
 
@@ -223,6 +230,13 @@ coordinates**.  The camera-frame PSF crop is a separate calibration in
 Phase 3.2a (`outputs/psf_roi/psf_roi.json`) and uses **camera sensor
 coordinates**.  These are different coordinate systems and must not be
 conflated.
+
+Current frozen Phase 3.1 result:
+
+- `center ≈ (1065.2462, 1871.5352)` in LCD physical coordinates
+- `radius ≈ 52.7972 px`
+- this result comes from a cleaned `r scan`; the contaminated raw run was
+  preserved
 
 ## Camera-frame PSF ROI calibration
 
@@ -274,6 +288,17 @@ outputs/psf_roi/psf_roi.json
 `full_scale_in_avg_valid_domain` is an averaged-frame quality diagnostic. It
 is not equivalent to the Phase 3.0.5b raw-burst strict PSF-safety rule.
 
+Current frozen Phase 3.2a ROI:
+
+- center `≈ (1148.996, 934.200)` in camera sensor coordinates
+- ROI `x=[1021,1277), y=[806,1062), 256 x 256`
+
+Preview caveat:
+
+- `psf_roi_preview.png` is contrast-stretched. Use it to verify ROI placement,
+  not to decide whether the raw PSF is overexposed or whether only the main
+  lobe is present.
+
 ## PSF repeatability and mask-induced diversity
 
 **Phase:** 3.2b — PSF repeatability and mask-induced diversity
@@ -324,6 +349,15 @@ outputs/psf_repeatability/repeatability_metrics.json
 
 The conclusion is limited to whether mask-induced PSF differences are larger
 than repeatability noise. It must not be described as forward-model success.
+
+Current frozen Phase 3.2b result:
+
+- `mean_intra_mask_mse ≈ 0.0208245`
+- `mean_inter_mask_mse ≈ 15.6980484`
+- `inter_mask_distance_over_intra_noise ≈ 753.826336`
+- `mask_induced_differences_larger_than_repeat_noise = true`
+
+This is the current audited basis for entering Phase 3.3.
 
 ## dOTF diagnostic visualization
 
@@ -382,6 +416,24 @@ outputs/dotf/
   dotf_report.md
 ```
 
+Current frozen Phase 3.3 result:
+
+- `dotf_computed = true`
+- `pupil_stitching_performed = false`
+- perturbations completed:
+  - `edge_block_left`
+  - `edge_block_right`
+  - `edge_block_top`
+  - `edge_block_bottom`
+- `dotf_peak_abs` values:
+  - left `= 0.0004062839982924802`
+  - right `= 0.0004193781484524579`
+  - top `= 0.0004046599696057576`
+  - bottom `= 0.0005967033596909086`
+
+This is the current audited basis for entering Phase 3.4. It is a diagnostic
+visualization result only, not a stitched pupil result.
+
 ## PSF dictionary
 
 **Purpose:** Build a data-first measured mask-to-PSF dictionary and export a
@@ -428,6 +480,21 @@ outputs/psf_dictionary/
   export_lcd_forward/test.h5
   psf_dictionary_report.md
 ```
+
+Current Phase 3.4 state:
+
+- one hardware run was attempted under the current `global_safe_camera`
+- capture failed before useful acquisition
+- `data/raw/bishe_psf_dictionary.h5` currently records:
+  - `completed = false`
+  - `n_captures_written = 0`
+- current blocker:
+  - `'TLSService' object has no attribute 'set_target_wavelength_nm'`
+
+Operational implication:
+
+- Phase 3.4 is not yet complete.
+- There is no usable measured PSF dictionary export at the moment.
 
 ## Backend boundary from Phase 3.5 onward
 

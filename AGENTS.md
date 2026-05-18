@@ -33,14 +33,15 @@ Those belong to `LCD_forward` or later experiment-specific layers.
 ## Current phase
 
 Thesis branch (`phase3-bishe-experimental-loop`) phase:
-Phase 3.0.5b implemented, Phase 3.1 implementation re-aligned with
-old/calibrating.py and old/ellipse.py physical model, Phase 3.2 data-first
-ROI and repeatability scripts implemented, and Phase 3.3 dOTF diagnostic
-capture/analysis scripts implemented. Phase 3.4 measured PSF dictionary
-capture and LCD_forward export scripts are implemented. Canonical hardware
-reruns remain pending.
+Phase 3.0.5b hardware rerun complete, Phase 3.1 effective pupil window
+rerun complete with documented r-scan cleaning, and Phase 3.2a/3.2b
+hardware capture and analysis complete for the current baseline. Phase 3.3
+dOTF diagnostic hardware capture and analysis are also complete for the
+current baseline. Phase 3.4 measured PSF dictionary capture has been attempted
+but is currently blocked by a TLS API mismatch in the capture path.
 
 Active roadmap: `docs/bishe_plan.md`.
+Current frozen results: `docs/phase3_current_results.md`.
 
 Mainline GUI / diagnostics / architecture fixes may be periodically merged
 into this branch.

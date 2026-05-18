@@ -252,8 +252,11 @@ def _synthetic_dictionary_frame(*, mask_id: str, mask_family: str, wavelength_nm
 def _move_tls_to_wavelength(tls_service: Any, wavelength_entry: dict[str, Any], *, settle_ms: float) -> None:
     wavelength_nm = float(wavelength_entry["wavelength_nm"])
     grating = int(wavelength_entry.get("grating", 1))
-    tls_service.set_target_wavelength_nm(wavelength_nm)
-    tls_service.move_to_target_wavelength(grating=grating)
+    if grating is not None:
+        tls_service.set_grating(int(grating))
+    tls_service.set_wavelength_nm(wavelength_nm)
+    tls_service.move(timeout_s=60.0)
+    tls_service.wait_until_idle(timeout_s=60.0)
     time.sleep(float(settle_ms) / 1000.0)
 
 
