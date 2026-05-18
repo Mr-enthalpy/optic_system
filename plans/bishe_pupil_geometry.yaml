@@ -3,6 +3,7 @@ phase: "3.1"
 
 camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
 camera_profile: fast_pupil_scan
+camera_gain_selection: "10.0"
 allow_global_safe_camera_fallback: true
 
 wavelength:
@@ -13,7 +14,7 @@ wavelength:
 lcd:
   display_index: 1
   subpixel_axis: 1
-  settle_ms: 2
+  settle_ms: 200
   # physical_shape may be inferred from LCD metadata.
   # physical_shape: [2560, 1620]
 
@@ -21,11 +22,11 @@ calibration:
   strategy: bar_profiles_plus_radius_scan
 
   bar_scan:
-    bar_width: 16
-    step: 4
+    bar_width: 32
+    step: 8
     bg_code: 255
     bar_code: 0
-    avg_n: 10
+    avg_n: 20
     scan_range: null
 
   radius_scan:

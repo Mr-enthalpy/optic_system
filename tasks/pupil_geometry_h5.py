@@ -197,6 +197,10 @@ class PupilGeometryWriter:
         _append_scalar(grp["frame_indices"], int(frame_index))
         _append_string(grp["mask_metadata_json"], _json_str(mask_metadata))
 
+    def flush(self) -> None:
+        if self._file is not None and not self._closed:
+            self._file.file.flush()
+
     def finalize(self, *, completed: bool = True, error: str | None = None) -> None:
         if self._file is None or self._closed:
             return

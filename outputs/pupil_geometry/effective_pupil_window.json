@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "phase": "3.1",
+  "task": "pupil_geometry_calibration",
+  "strategy": "bar_profiles_plus_radius_scan",
+  "source_raw_h5": "data/raw/bishe_pupil_geometry_resumed.h5",
+  "capture_plan_id": "bishe_pupil_geometry_calibration",
+  "camera_params_source": "outputs/exposure_calibration/camera_params_psf_safe.json",
+  "camera_profile_requested": "10.0",
+  "camera_profile_used": "per_gain_safe_params:10.0",
+  "fallback_used": false,
+  "wavelength_nm": 550.0,
+  "physical_shape": [
+    2560,
+    1620
+  ],
+  "subpixel_axis": 1,
+  "circle_estimate": {
+    "xc": 1062.7861716206844,
+    "yc": 1882.8537880441838,
+    "r_x": 96.68175478040187,
+    "r_y": 71.89405587165682,
+    "r_avg": 84.28790532602935,
+    "s_x": 987.189621650215,
+    "s_y": 1747.4581447066564,
+    "rms_x": 278239706.602764,
+    "rms_y": 666585926.4444274,
+    "x_quad_a": -974543.3490938947,
+    "x_quad_b": 2071462390.1238012,
+    "x_quad_c": -1091651382444.4148,
+    "y_quad_a": -3053609.96750163,
+    "y_quad_b": 11499002189.039843,
+    "y_quad_c": -10809686552569.953
+  },
+  "window_type": "circle",
+  "center": {
+    "x": 1062.7861716206844,
+    "y": 1882.8537880441838
+  },
+  "radius": 50.069806982291475,
+  "radius_source": "factor_of_ellipse_semi_minor",
+  "radius_factor_of_b": 0.9,
+  "ellipse": {
+    "a": 118.96278391726575,
+    "b": 55.63311886921275,
+    "k": 21.657262751590814,
+    "r_squared": 0.9988050859424358,
+    "pearson": 0.9994419142050385,
+    "rmse": 5792.375216510815
+  },
+  "validity": {
+    "effective_window_estimated": true,
+    "scientific_calibration_valid": false,
+    "training_ready": false
+  }
+}

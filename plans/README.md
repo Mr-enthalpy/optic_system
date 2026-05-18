@@ -74,6 +74,11 @@ consume the raw HDF5 to produce processed results.
 - **Masks:** Generated procedurally at runtime by
   `tasks/pupil_geometry_masks.py`; the plan records bar width/step and radius
   scan range rather than listing mask files.
+- **TLS requirement:** Hardware runs require `--tls-serial` or `TLS_C1_SERIAL`.
+  Without TLS wavelength filtering the light source outputs broadband white
+  light, which will overexpose the camera with PSF-safe parameters.
+  The dangerous `--allow-wavelength-labels-without-tls` override is
+  reserved for explicit manual external wavelength control.
 - **Output raw HDF5:** `data/raw/bishe_pupil_geometry.h5`.
 - **Analysis:** `scripts/analyze_pupil_geometry.py` writes
   `outputs/pupil_geometry/effective_pupil_window.json` and diagnostics.
