@@ -40,7 +40,11 @@ def validate_phase32_plan(
     hardware: bool = False,
     allow_unsafe_lcd_settle: bool = False,
 ) -> None:
-    required = ["plan_id", "phase", "camera_params_source", "pupil_window_source", "wavelength", "lcd", "capture", "output"]
+    required = ["plan_id", "phase", "camera_params_source", "pupil_window_source", "lcd", "capture", "output"]
+    if task in {"dictionary", "target_capture"}:
+        required.append("wavelengths")
+    else:
+        required.append("wavelength")
     for key in required:
         if not plan.get(key):
             raise Phase32PlanError(f"{key} is required")
@@ -83,6 +87,9 @@ def validate_phase32_plan(
             raise Phase32PlanError("PSF dictionary plan phase must be '3.4'")
         if not plan.get("psf_roi_source"):
             raise Phase32PlanError("psf_roi_source is required")
+        wavelengths = plan.get("wavelengths")
+        if not isinstance(wavelengths, list) or not wavelengths:
+            raise Phase32PlanError("wavelengths must be a non-empty list")
         masks = plan.get("masks", {})
         if str(masks.get("set", "")) != "psf_dictionary_representative":
             raise Phase32PlanError("masks.set must be psf_dictionary_representative")
@@ -103,6 +110,26 @@ def validate_phase32_plan(
             total = float(split.get("train", 0.0)) + float(split.get("val", 0.0)) + float(split.get("test", 0.0))
             if not math.isclose(total, 1.0, rel_tol=1e-6, abs_tol=1e-6):
                 raise Phase32PlanError("export.lcd_forward.split must sum to 1.0")
+    elif task == "target_capture":
+        if plan.get("phase") != "3.6":
+            raise Phase32PlanError("target capture plan phase must be '3.6'")
+        if not plan.get("psf_roi_source"):
+            raise Phase32PlanError("psf_roi_source is required")
+        mask_source = plan.get("mask_source", {})
+        if str(mask_source.get("type", "")) != "lcd_forward_export":
+            raise Phase32PlanError("mask_source.type must be lcd_forward_export")
+        h5_paths = mask_source.get("h5_paths")
+        if not isinstance(h5_paths, list) or not h5_paths:
+            raise Phase32PlanError("mask_source.h5_paths must be a non-empty list")
+        wavelengths = plan.get("wavelengths")
+        if not isinstance(wavelengths, list) or not wavelengths:
+            raise Phase32PlanError("wavelengths must be a non-empty list")
+        frames_per_capture = int(plan.get("capture", {}).get("frames_per_capture", 0))
+        if frames_per_capture <= 0:
+            raise Phase32PlanError("capture.frames_per_capture must be > 0")
+        repeats = int(plan.get("capture", {}).get("repeats_per_condition", 0))
+        if repeats <= 0:
+            raise Phase32PlanError("capture.repeats_per_condition must be > 0")
     else:
         raise Phase32PlanError(f"unknown task: {task}")
     frames_per_capture = int(plan.get("capture", {}).get("frames_per_capture", 0))

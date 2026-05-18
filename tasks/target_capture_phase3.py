@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -7,11 +8,12 @@ from typing import Any
 import h5py
 import numpy as np
 
-from tasks.psf_phase3 import center_of_mass, json_dumps, now_ns, processing_flags
+from tasks.psf_dictionary_masks import lowres_mask_to_physical_mask
+from tasks.psf_phase3 import json_dumps, now_ns, processing_flags
 
 
-class PSFDictionaryRawWriter:
-    def __init__(self, output_path: str | Path, *, plan_id: str, phase: str = "3.4"):
+class TargetCaptureRawWriter:
+    def __init__(self, output_path: str | Path, *, plan_id: str, phase: str = "3.6"):
         self.path = Path(output_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.plan_id = str(plan_id)
@@ -19,7 +21,7 @@ class PSFDictionaryRawWriter:
         self._file: h5py.File | None = None
         self._n = 0
 
-    def open(self) -> "PSFDictionaryRawWriter":
+    def open(self) -> "TargetCaptureRawWriter":
         self._file = h5py.File(str(self.path), "w")
         string_dtype = h5py.string_dtype(encoding="utf-8")
         f = self._file
@@ -35,6 +37,7 @@ class PSFDictionaryRawWriter:
         raw.create_dataset("wavelength_nm", shape=(0,), maxshape=(None,), dtype=np.float64)
         raw.create_dataset("wavelength_index", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("repeat_index", shape=(0,), maxshape=(None,), dtype=np.int64)
+        raw.create_dataset("capture_role", shape=(0,), maxshape=(None,), dtype=string_dtype)
         raw.create_dataset("timestamp_ns", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("mask_metadata_json", shape=(0,), maxshape=(None,), dtype=string_dtype)
         capture = f.require_group("capture")
@@ -47,6 +50,8 @@ class PSFDictionaryRawWriter:
         provenance.create_dataset("pupil_window_source_json", data="", dtype=string_dtype)
         provenance.create_dataset("psf_roi_source_json", data="", dtype=string_dtype)
         provenance.create_dataset("camera_params_source_json", data="", dtype=string_dtype)
+        provenance.create_dataset("mask_source_metadata_json", data="", dtype=string_dtype)
+        f.require_group("target").create_dataset("target_metadata_json", data="", dtype=string_dtype)
         return self
 
     def write_json_sections(
@@ -59,6 +64,8 @@ class PSFDictionaryRawWriter:
         pupil_window_source: dict[str, Any],
         psf_roi_source: dict[str, Any],
         camera_params_source: dict[str, Any],
+        mask_source_metadata: dict[str, Any],
+        target_metadata: dict[str, Any],
     ) -> None:
         f = self._ensure_open()
         f["capture/plan_json"][()] = json_dumps(plan)
@@ -68,6 +75,8 @@ class PSFDictionaryRawWriter:
         f["provenance/pupil_window_source_json"][()] = json_dumps(pupil_window_source)
         f["provenance/psf_roi_source_json"][()] = json_dumps(psf_roi_source)
         f["provenance/camera_params_source_json"][()] = json_dumps(camera_params_source)
+        f["provenance/mask_source_metadata_json"][()] = json_dumps(mask_source_metadata)
+        f["target/target_metadata_json"][()] = json_dumps(target_metadata)
 
     def append_capture(
         self,
@@ -80,6 +89,7 @@ class PSFDictionaryRawWriter:
         wavelength_nm: float,
         wavelength_index: int,
         repeat_index: int,
+        capture_role: str,
         mask_metadata: dict[str, Any],
     ) -> int:
         f = self._ensure_open()
@@ -92,6 +102,7 @@ class PSFDictionaryRawWriter:
         _append_scalar(f["raw/wavelength_nm"], float(wavelength_nm))
         _append_scalar(f["raw/wavelength_index"], int(wavelength_index))
         _append_scalar(f["raw/repeat_index"], int(repeat_index))
+        _append_scalar(f["raw/capture_role"], str(capture_role))
         _append_scalar(f["raw/timestamp_ns"], int(time.time_ns()))
         _append_scalar(f["raw/mask_metadata_json"], json_dumps(mask_metadata))
         self._n += 1
@@ -115,109 +126,123 @@ class PSFDictionaryRawWriter:
         return self._file
 
 
-def psf_dictionary_stats(crops: np.ndarray, mask_ids: list[str]) -> dict[str, Any]:
-    arr = np.asarray(crops, dtype=np.float64)
-    ids = [str(x) for x in mask_ids]
-    unique_ids = list(dict.fromkeys(ids))
-    by_mask = {mid: np.where(np.asarray(ids) == mid)[0] for mid in unique_ids}
-    means = np.stack([np.mean(arr[idx], axis=0) for idx in by_mask.values()], axis=0)
-    stds = np.stack([np.std(arr[idx], axis=0) for idx in by_mask.values()], axis=0)
-    repeat_mse: list[float] = []
-    total_energy_cv: list[float] = []
-    center_drift_max = 0.0
-    for idx in by_mask.values():
-        local = arr[idx]
-        energies = np.asarray([float(np.sum(np.maximum(item, 0.0))) for item in local], dtype=np.float64)
-        mean_energy = float(np.mean(energies)) if energies.size else 0.0
-        if mean_energy > 0.0:
-            total_energy_cv.append(float(np.std(energies) / mean_energy))
-        centers = np.asarray([center_of_mass(item) for item in local], dtype=np.float64)
-        if centers.size:
-            drift = np.linalg.norm(centers - np.mean(centers, axis=0), axis=1)
-            center_drift_max = max(center_drift_max, float(np.max(drift)))
-        for i in range(len(local)):
-            for j in range(i + 1, len(local)):
-                diff = local[i] - local[j]
-                repeat_mse.append(float(np.mean(diff * diff)))
-    return {
-        "mask_ids": unique_ids,
-        "psf_mean_stack": means,
-        "psf_std_stack": stds,
-        "quality": {
-            "mean_repeat_mse": float(np.mean(repeat_mse)) if repeat_mse else 0.0,
-            "median_repeat_mse": float(np.median(repeat_mse)) if repeat_mse else 0.0,
-            "mean_total_energy_cv": float(np.mean(total_energy_cv)) if total_energy_cv else 0.0,
-            "max_center_drift_px": float(center_drift_max),
-        },
+def load_selected_masks_from_exports(
+    h5_paths: list[str | Path],
+    *,
+    selected_mask_ids: list[str],
+    max_masks: int | None,
+    required_wavelengths_nm: list[float] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    selected = [str(x) for x in selected_mask_ids]
+    selected_set = set(selected)
+    found: dict[str, dict[str, Any]] = {}
+    sources: dict[str, str] = {}
+    export_wavelengths: list[float] | None = None
+    for path in h5_paths:
+        h5_path = Path(path)
+        with h5py.File(str(h5_path), "r") as f:
+            masks = f["masks"][()]
+            mask_ids = [_decode(x) for x in f["mask_id"][()]]
+            mask_families = [_decode(x) for x in f["mask_family"][()]] if "mask_family" in f else ["unknown"] * len(mask_ids)
+            metadata_json = _decode(f["metadata_json"][()]) if "metadata_json" in f else ""
+            wavelengths_nm = [float(x) for x in f["wavelengths_nm"][()]] if "wavelengths_nm" in f else None
+            if wavelengths_nm is None and metadata_json:
+                try:
+                    metadata = json.loads(metadata_json)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"{h5_path}: metadata_json is not valid JSON") from exc
+                meta_wls = metadata.get("wavelengths_nm")
+                if isinstance(meta_wls, list):
+                    wavelengths_nm = [float(x) for x in meta_wls]
+                elif metadata.get("wavelength_nm") is not None:
+                    wavelengths_nm = [float(metadata["wavelength_nm"])]
+        if wavelengths_nm is None or not wavelengths_nm:
+            raise ValueError(f"{h5_path}: LCD_forward export is missing wavelength provenance")
+        rounded = [round(float(x), 6) for x in wavelengths_nm]
+        if export_wavelengths is None:
+            export_wavelengths = rounded
+        elif export_wavelengths != rounded:
+            raise ValueError(
+                f"inconsistent export wavelengths across mask-source HDF5 files: "
+                f"{export_wavelengths} vs {rounded} from {h5_path}"
+            )
+        for idx, mask_id in enumerate(mask_ids):
+            if selected_set and mask_id not in selected_set:
+                continue
+            if mask_id in found:
+                continue
+            lowres = np.asarray(masks[idx], dtype=np.uint8)
+            if lowres.ndim == 4:
+                lowres = lowres[0]
+            if lowres.ndim != 3 or lowres.shape[0] != 1:
+                raise ValueError(f"{h5_path}: expected lowres mask [1,H,W], got {lowres.shape}")
+            found[mask_id] = {
+                "mask_id": mask_id,
+                "mask_family": str(mask_families[idx]),
+                "lowres_mask": lowres,
+                "source_h5": str(h5_path),
+                "source_metadata_json": metadata_json,
+            }
+            sources[mask_id] = str(h5_path)
+            if max_masks is not None and len(found) >= int(max_masks):
+                break
+        if max_masks is not None and len(found) >= int(max_masks):
+            break
+    ordered = [found[mid] for mid in selected if mid in found]
+    if max_masks is not None:
+        ordered = ordered[: int(max_masks)]
+    if not ordered:
+        raise ValueError("no selected mask_ids were found in the provided LCD_forward export HDF5 files")
+    missing = [mid for mid in selected if mid not in found]
+    requested_wavelengths = [round(float(x), 6) for x in (required_wavelengths_nm or [])]
+    available_wavelengths = export_wavelengths or []
+    missing_wavelengths = [wl for wl in requested_wavelengths if wl not in available_wavelengths]
+    if missing_wavelengths:
+        raise ValueError(
+            "target capture wavelengths are not covered by the measured PSF dictionary export: "
+            f"requested={requested_wavelengths}, available={available_wavelengths}, "
+            f"missing={missing_wavelengths}"
+        )
+    meta = {
+        "mask_source_type": "lcd_forward_export",
+        "source_h5_paths": [str(Path(p)) for p in h5_paths],
+        "selected_mask_ids_requested": selected,
+        "selected_mask_ids_found": [item["mask_id"] for item in ordered],
+        "missing_mask_ids": missing,
+        "available_wavelengths_nm": available_wavelengths,
+        "requested_wavelengths_nm": requested_wavelengths,
+        "max_masks": None if max_masks is None else int(max_masks),
+        "mask_sources_by_id": sources,
     }
+    return ordered, meta
 
 
-def psf_dictionary_stats_by_mask_and_wavelength(
-    crops: np.ndarray,
-    mask_ids: list[str],
-    wavelength_index: np.ndarray,
-) -> dict[str, Any]:
-    arr = np.asarray(crops, dtype=np.float64)
-    ids = np.asarray([str(x) for x in mask_ids], dtype=object)
-    wl_idx = np.asarray(wavelength_index, dtype=np.int64)
-    if arr.ndim != 3:
-        raise ValueError(f"crops must be [N,H,W], got {arr.shape}")
-    if ids.shape[0] != arr.shape[0] or wl_idx.shape[0] != arr.shape[0]:
-        raise ValueError("crops, mask_ids, and wavelength_index must share the same length")
-
-    unique_ids = list(dict.fromkeys(ids.tolist()))
-    unique_wavelength_index = list(dict.fromkeys(int(x) for x in wl_idx.tolist()))
-    means = np.zeros((len(unique_ids), len(unique_wavelength_index), arr.shape[-2], arr.shape[-1]), dtype=np.float64)
-    stds = np.zeros_like(means)
-    repeat_mse: list[float] = []
-    total_energy_cv: list[float] = []
-    center_drift_max = 0.0
-
-    for i, mask_id in enumerate(unique_ids):
-        for j, wavelength in enumerate(unique_wavelength_index):
-            group_idx = np.where((ids == mask_id) & (wl_idx == int(wavelength)))[0]
-            if group_idx.size == 0:
-                raise ValueError(f"missing group for mask_id={mask_id} wavelength_index={wavelength}")
-            local = arr[group_idx]
-            means[i, j] = np.mean(local, axis=0)
-            stds[i, j] = np.std(local, axis=0)
-            energies = np.asarray([float(np.sum(np.maximum(item, 0.0))) for item in local], dtype=np.float64)
-            mean_energy = float(np.mean(energies)) if energies.size else 0.0
-            if mean_energy > 0.0:
-                total_energy_cv.append(float(np.std(energies) / mean_energy))
-            centers = np.asarray([center_of_mass(item) for item in local], dtype=np.float64)
-            if centers.size:
-                drift = np.linalg.norm(centers - np.mean(centers, axis=0), axis=1)
-                center_drift_max = max(center_drift_max, float(np.max(drift)))
-            for a in range(len(local)):
-                for b in range(a + 1, len(local)):
-                    diff = local[a] - local[b]
-                    repeat_mse.append(float(np.mean(diff * diff)))
-
-    return {
-        "mask_ids": unique_ids,
-        "wavelength_index": unique_wavelength_index,
-        "psf_mean_stack": means,
-        "psf_std_stack": stds,
-        "quality": {
-            "mean_repeat_mse": float(np.mean(repeat_mse)) if repeat_mse else 0.0,
-            "median_repeat_mse": float(np.median(repeat_mse)) if repeat_mse else 0.0,
-            "mean_total_energy_cv": float(np.mean(total_energy_cv)) if total_energy_cv else 0.0,
-            "max_center_drift_px": float(center_drift_max),
-        },
+def lowres_record_to_physical_mask(
+    record: dict[str, Any],
+    *,
+    physical_shape: tuple[int, int],
+    pupil_window: dict[str, Any],
+    bg_code: int,
+    open_code: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    mask = lowres_mask_to_physical_mask(
+        record["lowres_mask"],
+        physical_shape=physical_shape,
+        pupil_window=pupil_window,
+        bg_code=bg_code,
+        open_code=open_code,
+    )
+    meta = {
+        "mask_id": record["mask_id"],
+        "mask_family": record["mask_family"],
+        "lowres_shape": [int(record["lowres_mask"].shape[1]), int(record["lowres_mask"].shape[2])],
+        "physical_shape": [int(physical_shape[0]), int(physical_shape[1])],
+        "upsampling": "nearest_block",
+        "outside_effective_pupil": "opaque",
+        "inside_effective_pupil": "encoded_pattern",
+        "source_h5": record["source_h5"],
     }
-
-
-def normalize_psf_for_export(psf: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
-    arr = np.asarray(psf, dtype=np.float64)
-    background = float(np.percentile(arr, 5.0))
-    corrected = np.maximum(arr - background, 0.0)
-    psf_sum = float(np.sum(corrected))
-    if psf_sum > 0.0:
-        normalized = corrected / psf_sum
-    else:
-        normalized = corrected
-    return normalized, {"background_level": background, "pre_normalization_sum": psf_sum}
+    return mask, meta
 
 
 def _append_frame(dset: h5py.Dataset, row: int, frame: np.ndarray) -> None:
@@ -248,3 +273,9 @@ def _append_scalar(dset: h5py.Dataset, value: Any) -> None:
     n = dset.shape[0]
     dset.resize((n + 1,))
     dset[n] = value
+
+
+def _decode(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)

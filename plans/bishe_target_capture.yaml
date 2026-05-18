@@ -1,0 +1,65 @@
+plan_id: bishe_target_capture
+phase: "3.6"
+
+camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
+camera_gain_selection: "10.0"
+
+pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
+psf_roi_source: outputs/psf_roi/psf_roi.json
+
+mask_source:
+  type: lcd_forward_export
+  h5_paths:
+    - outputs/psf_dictionary/export_lcd_forward/train.h5
+    - outputs/psf_dictionary/export_lcd_forward/val.h5
+    - outputs/psf_dictionary/export_lcd_forward/test.h5
+  selected_mask_ids:
+    - all_open_window
+    - vertical_stripes_lowfreq
+    - horizontal_stripes_lowfreq
+    - checkerboard_lowfreq
+    - central_block
+    - edge_block_left
+    - edge_block_right
+    - edge_block_top
+    - edge_block_bottom
+  max_masks: 9
+
+target:
+  target_id: bishe_demo_target_001
+  description: "Static simple target for thesis multiframe reconstruction demo"
+  notes: "Record physical target description manually before hardware run."
+
+wavelengths:
+  - wavelength_nm: 450.0
+    grating: 1
+  - wavelength_nm: 550.0
+    grating: 1
+  - wavelength_nm: 650.0
+    grating: 1
+
+tls:
+  settle_ms: 500
+
+lcd:
+  display_index: 1
+  subpixel_axis: 1
+  settle_ms: 200
+
+capture:
+  frames_per_capture: 10
+  repeats_per_condition: 3
+  include_reference_open: true
+  include_reference_closed: false
+  interleave_reference: true
+
+export:
+  lcd_forward:
+    enabled: true
+    output_dir: outputs/target_capture/export_lcd_forward
+
+output:
+  raw_h5: data/raw/bishe_target_capture.h5
+  output_dir: outputs/target_capture
+
+lock_file: outputs/run_status/capture_hardware.lock

@@ -133,7 +133,7 @@ provenance rule below.
   - `psf_dictionary_manifest.json` - per-mask manifest with family and repeat count
   - `mask_preview_contact_sheet.png` - tiled lowres mask preview
   - `psf_preview_contact_sheet.png` - tiled repeat-averaged PSF preview
-  - `psf_mean_stack.npy` - repeat-averaged PSF crop per mask
+  - `psf_mean_stack.npy` - repeat-averaged PSF crop per mask and wavelength
   - `psf_crop_stack.npy` - raw per-repeat PSF crops
   - `mask_lowres_stack.npy` - lowres control masks `[N,1,64,64]`
   - `export_lcd_forward/train.h5` - LCD_forward-compatible training split
@@ -144,23 +144,32 @@ provenance rule below.
 - **Status:** scripts implemented; hardware data pending
 - **Boundary:** Data-first acquisition and export only. No forward-model
   training is performed here.
+- **Wavelength rule:** Phase 3.6 target capture must not request wavelengths
+  that are missing from these exports. The export records `wavelengths_nm`
+  explicitly so `optic_system` can fail fast before reconstruction.
 
-### `outputs/linear_recon/`
+### `outputs/target_capture/`
 
-- **Phase:** 3.5 (forward model), 3.6 (multiframe reconstruction)
+- **Phase:** 3.6 - target multiframe / multi-wavelength capture export
 - **Depends on:**
-  - `outputs/psf_dictionary/` - PSF dictionary
-  - `outputs/linear_recon/multiframe_target_raw.h5` - target captures
+  - `data/raw/bishe_target_capture.h5`
+  - `outputs/psf_roi/psf_roi.json`
+  - `outputs/pupil_geometry/effective_pupil_window.json`
+  - `outputs/psf_dictionary/export_lcd_forward/*.h5`
 - **Produces:**
-  - `A_matrix_info.json` - forward matrix metadata
-  - `condition_number_report.json` - channel condition analysis
-  - `recon_single_frame.npy` - single-frame reconstruction
-  - `recon_multiframe.npy` - multi-frame reconstruction
-  - `recon_error.npy` - reconstruction error map
-  - `recon_comparison.png` - single vs multi-frame comparison
-  - `linear_recon_report.md`
-- **Script:** reconstruction scripts (to be created in Phase 3.5/3.6)
-- **Status:** planned
+  - `export_lcd_forward/target_frames.h5` - LCD_forward-compatible target-frame dataset
+  - `export_lcd_forward/README.md` - dataset note and shape summary
+- **Script:** `scripts/export_target_lcd_forward.py`
+- **Status:** scripts implemented; hardware data pending
+- **Boundary:** No reconstruction is performed in `optic_system`. This
+  directory contains only derived export data for `LCD_forward`.
+
+### Phase 3.5 / 3.7 note
+
+- Phase 3.5 forward validation is skipped in `optic_system` and belongs to
+  `LCD_forward`.
+- Phase 3.7 thesis figure aggregation and report freeze are skipped in
+  `optic_system` and belong to `LCD_forward` or a thesis-writing workspace.
 
 ### `outputs/bishe_figures/`
 

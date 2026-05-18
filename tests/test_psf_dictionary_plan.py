@@ -14,6 +14,7 @@ def test_psf_dictionary_plan_loads_and_validates() -> None:
     assert plan["plan_id"] == "bishe_psf_dictionary"
     assert plan["phase"] == "3.4"
     assert plan["masks"]["lowres_shape"] == [64, 64]
+    assert [entry["wavelength_nm"] for entry in plan["wavelengths"]] == [450.0, 550.0, 650.0]
 
 
 def test_psf_dictionary_plan_rejects_unsafe_lcd_settle_in_hardware() -> None:

@@ -390,25 +390,25 @@ derived LCD_forward-compatible dataset without training a forward model.
 ### Capture plans
 
 - `plans/bishe_psf_dictionary.yaml` - representative single-wavelength measured
-  PSF dictionary.
+  measured PSF dictionary across the planned wavelength list.
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`.
 - Inputs: `effective_pupil_window.json` and `psf_roi.json`.
 - Masks: deterministic representative masks plus seeded random low/mid
   frequency masks and task-related patterns. Every physical mask is limited by
   the effective pupil window, and the lowres control mask is preserved.
-- Wavelengths: single wavelength in Phase 3.4.
+- Wavelengths: all wavelengths listed in `plans/bishe_psf_dictionary.yaml`.
 
 ### Analysis
 
 1. Load `raw_capture.h5` - extract full-frame averages, PSF crops, lowres
    masks, and complete provenance.
-2. Group by `mask_id`, compute repeat-averaged PSF crops, and summarize repeat
-   noise / center drift / energy variation.
+2. Group by `mask_id` and wavelength, compute repeat-averaged PSF crops, and
+   summarize repeat noise / center drift / energy variation.
 3. Write preview contact sheets and `.npy` stacks for reproducible analysis.
 4. Export repeat-averaged pairs as `LCD_forward`-compatible HDF5:
    ```text
    masks: [N, 1, 1, 64, 64]
-   psfs:  [N, 1, 1, Hp, Wp]
+   psfs:  [N, 1, L, Hp, Wp]
    ```
 5. Keep the raw HDF5 as the source of truth.
 
@@ -429,37 +429,74 @@ outputs/psf_dictionary/
   psf_dictionary_report.md
 ```
 
-## Three-wavelength multiframe linear reconstruction
+## Backend boundary from Phase 3.5 onward
 
-**Purpose:** Demonstrate multispectral recovery using measured PSFs and simple
-linear inverse reconstruction.
+From Phase 3.5 onward, `optic_system` is no longer the modelling backend.
+`optic_system` remains responsible only for hardware-side data acquisition and
+export. `LCD_forward` consumes exported HDF5 files and performs forward
+validation, rendering, reconstruction, and thesis figure generation.
+
+## Phase 3.5 in optic_system
+
+**Status:** skipped in `optic_system`
+
+Measured-PSF forward validation belongs to `LCD_forward`. `optic_system` does
+not implement forward-model fitting, held-out forward validation, or
+prediction-vs-measurement figure generation.
+
+## Phase 3.6 target capture and export
+
+**Purpose:** Capture real target observations under the same lowres mask
+sequence used by the measured PSF dictionary, preserve full-frame raw data,
+and export a reconstruction-ready HDF5 for `LCD_forward`.
 
 ### Capture plan
 
-- `plans/bishe_multiframe_target.yaml`
-- Masks: target scene(s) (possibly a combination of simple patterns).
-- Wavelengths: 3 wavelengths.
-- PSF dictionary: same masks acquired at each of the 3 wavelengths.
+- `plans/bishe_target_capture.yaml`
+- Inputs:
+  - `outputs/pupil_geometry/effective_pupil_window.json`
+  - `outputs/psf_roi/psf_roi.json`
+  - `outputs/exposure_calibration/camera_params_psf_safe.json`
+  - `outputs/psf_dictionary/export_lcd_forward/train.h5`
+  - `outputs/psf_dictionary/export_lcd_forward/val.h5`
+  - `outputs/psf_dictionary/export_lcd_forward/test.h5`
+- Masks: selected lowres masks from the Phase 3.4 measured dictionary export.
+- Wavelengths: one or more wavelengths, recorded explicitly in raw HDF5.
+- Target: real static target, documented by `target_id`, description, and notes.
 
-### Analysis
+### optic_system capture/export responsibilities
 
-1. Load PSF dictionary (from M4).
-2. Load target scene frames.
-3. Apply simple linear reconstruction (e.g., Tikhonov-regularized least squares
-   per wavelength, or joint multiframe formulation).
-4. Compare reconstruction against known target mask.
-5. Write results and metrics.
+1. Load the Phase 3.4 exported lowres masks and their `mask_id`s.
+2. Map lowres masks back to pupil-window-limited physical LCD masks.
+3. Capture full-frame averaged observations and PSF-ROI crops for each
+   wavelength x mask x repeat condition.
+4. Preserve lowres masks, wavelength labels, mask IDs, target metadata, and
+   complete provenance in `data/raw/bishe_target_capture.h5`.
+5. Export `outputs/target_capture/export_lcd_forward/target_frames.h5` for
+   downstream reconstruction.
+
+### LCD_forward responsibilities
+
+1. Load measured PSF dictionary exports and target-frame exports.
+2. Build the forward operator.
+3. Run reconstruction.
+4. Produce quantitative and qualitative result figures.
 
 ### Output
 
 ```text
-outputs/linear_recon/
-  multiframe_recon_results/
-    recon_<scene_id>_<wl>nm.npy
-    recon_<scene_id>_combined.npy
-  forward_model_validation.json
-  reconstruction_metrics.json
+data/raw/bishe_target_capture.h5
+outputs/target_capture/
+  export_lcd_forward/target_frames.h5
+  README.md
 ```
+
+## Phase 3.7 in optic_system
+
+**Status:** skipped in `optic_system`
+
+Thesis figure aggregation, report freeze, and final result packaging belong to
+`LCD_forward` outputs or a separate thesis-writing workspace.
 
 ## Implementation order
 
@@ -470,9 +507,9 @@ Phases should be implemented sequentially:
 3. **Phase 3.2b** - PSF repeatability and mask-induced diversity
 4. **Phase 3.3** - dOTF diagnostic visualization
 5. **Phase 3.4** - PSF dictionary and export
-6. **Phase 3.5** - Simple forward model validation
-7. **Phase 3.6** - Three-wavelength multiframe linear reconstruction
-8. **Phase 3.7** - Thesis figures and report freeze
+6. **Phase 3.5** - Forward validation in `LCD_forward`
+7. **Phase 3.6** - Target capture/export in `optic_system`, reconstruction in `LCD_forward`
+8. **Phase 3.7** - Thesis figure freeze outside `optic_system`
 
 Each phase depends on the outputs of the previous phases but not on
 implementation details.  Phase 3.2a needs the effective pupil window from 3.1

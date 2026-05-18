@@ -487,10 +487,18 @@ Next (thesis branch):
 1. Phase 3.2a/3.2b canonical hardware capture and analysis.
 2. Phase 3.3 dOTF diagnostic visualization.
 3. Phase 3.4 measured PSF dictionary and LCD_forward export.
-4. Phase 3.5 simple forward model validation.
-5. Phase 3.6 three-wavelength multiframe linear reconstruction.
-6. Phase 3.7 thesis figures and report freeze.
+4. Phase 3.5 measured-PSF forward validation in `LCD_forward` only.
+5. Phase 3.6 target multiframe / multi-wavelength capture and
+   LCD_forward export in `optic_system`.
+6. Phase 3.6 reconstruction in `LCD_forward`.
+7. Phase 3.7 thesis figure aggregation and report freeze outside
+   `optic_system`.
 
 Phase 3.2 and 3.3 are data-first experiment tasks.
 Do not introduce new architecture unless required for data capture.
 Do not import old/ directly; copy verified logic into active scripts if needed.
+From Phase 3.5 onward, `optic_system` is no longer the modelling backend.
+Do not implement Phase 3.5 or Phase 3.7 in `optic_system`.
+For Phase 3.6, implement hardware-side target capture and export only.
+Forward validation, reconstruction, and thesis figure generation belong to
+`LCD_forward` or the thesis-writing workspace.

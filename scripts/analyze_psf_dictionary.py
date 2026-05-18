@@ -26,7 +26,10 @@ def _ensure_sys_path() -> None:
 
 _ensure_sys_path()
 
-from tasks.psf_dictionary_phase3 import normalize_psf_for_export, psf_dictionary_stats  # noqa: E402
+from tasks.psf_dictionary_phase3 import (  # noqa: E402
+    normalize_psf_for_export,
+    psf_dictionary_stats_by_mask_and_wavelength,
+)
 from tasks.psf_phase3 import json_dumps, valid_pixel_mask, write_preview_png  # noqa: E402
 
 
@@ -45,6 +48,8 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
         masks_lowres = f["raw/masks_lowres"][()]
         mask_ids = [_decode(x) for x in f["raw/mask_id"][()]]
         mask_families = [_decode(x) for x in f["raw/mask_family"][()]]
+        wavelength_nm = np.asarray(f["raw/wavelength_nm"][()], dtype=np.float64) if "raw/wavelength_nm" in f else None
+        wavelength_index = np.asarray(f["raw/wavelength_index"][()], dtype=np.int64) if "raw/wavelength_index" in f else None
         repeat_indices = [int(x) for x in f["raw/repeat_index"][()]]
         plan = _require_json_dataset(f, "capture/plan_json")
         pupil_window = _require_json_dataset(f, "provenance/pupil_window_source_json")
@@ -53,7 +58,13 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
         camera_meta = _require_json_dataset(f, "camera/metadata_json")
 
     _validate_required_provenance(plan, pupil_window, psf_roi, camera_params_source)
-    stats = psf_dictionary_stats(crops, mask_ids)
+    if wavelength_nm is None or wavelength_index is None:
+        default_wl = float(plan.get("wavelength", {}).get("wavelength_nm", float("nan")))
+        wavelength_nm = np.full((len(mask_ids),), default_wl, dtype=np.float64)
+        wavelength_index = np.zeros((len(mask_ids),), dtype=np.int64)
+    unique_wavelength_index = list(dict.fromkeys(int(x) for x in wavelength_index.tolist()))
+    unique_wavelength_nm = [float(wavelength_nm[np.where(wavelength_index == idx)[0][0]]) for idx in unique_wavelength_index]
+    stats = psf_dictionary_stats_by_mask_and_wavelength(crops, mask_ids, wavelength_index)
     unique_ids = stats["mask_ids"]
     ids_arr = np.asarray(mask_ids)
     family_by_id = {mid: mask_families[np.where(ids_arr == mid)[0][0]] for mid in unique_ids}
@@ -63,7 +74,7 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
     unique_lowres = np.stack([masks_lowres[np.where(ids_arr == mid)[0][0]] for mid in unique_ids], axis=0)
     np.save(out_dir / "mask_lowres_stack.npy", unique_lowres)
     _write_mask_contact_sheet(out_dir / "mask_preview_contact_sheet.png", unique_lowres, unique_ids)
-    _write_psf_contact_sheet(out_dir / "psf_preview_contact_sheet.png", mean_crops, unique_ids)
+    _write_psf_contact_sheet(out_dir / "psf_preview_contact_sheet.png", mean_crops, unique_ids, unique_wavelength_nm)
 
     repeats_per_mask = int(plan["capture"]["repeats_per_mask"])
     family_counts: dict[str, int] = {}
@@ -82,7 +93,9 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
         "pupil_window_source": str(plan.get("pupil_window_source")),
         "psf_roi_source": str(plan.get("psf_roi_source")),
         "camera_params_source": str(plan.get("camera_params_source")),
-        "wavelength_nm": float(plan.get("wavelength", {}).get("wavelength_nm", float("nan"))),
+        "wavelength_nm": unique_wavelength_nm[0] if len(unique_wavelength_nm) == 1 else None,
+        "wavelengths_nm": unique_wavelength_nm,
+        "n_wavelengths": int(len(unique_wavelength_nm)),
         "n_masks": int(len(unique_ids)),
         "repeats_per_mask": repeats_per_mask,
         "lowres_shape": list(unique_lowres.shape[-2:]),
@@ -125,6 +138,7 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
         family_by_id=family_by_id,
         unique_lowres=unique_lowres,
         mean_crops=mean_crops,
+        unique_wavelength_nm=unique_wavelength_nm,
         source_raw_h5=_repo_relative(raw_path),
     )
     summary["export_lcd_forward"] = export_result
@@ -141,6 +155,7 @@ def _export_lcd_forward(
     family_by_id: dict[str, str],
     unique_lowres: np.ndarray,
     mean_crops: np.ndarray,
+    unique_wavelength_nm: list[float],
     source_raw_h5: str,
 ) -> dict[str, Any]:
     export_cfg = plan.get("export", {}).get("lcd_forward", {})
@@ -170,23 +185,30 @@ def _export_lcd_forward(
     }
     result: dict[str, Any] = {"enabled": True, "splits": {}}
     normalization_summary: dict[str, Any] = {}
+    export_wavelengths_nm = [float(x) for x in unique_wavelength_nm]
     for split_name, split_idx in splits.items():
         path = export_dir / f"{split_name}.h5"
         masks = unique_lowres[split_idx][:, np.newaxis, :, :, :]
         psf_list = []
         norm_meta = []
         for idx in split_idx:
-            normalized, meta = normalize_psf_for_export(mean_crops[idx])
-            psf_list.append(normalized)
-            norm_meta.append(meta)
+            wavelength_psfs = []
+            wavelength_meta = []
+            for wl_psf in mean_crops[idx]:
+                normalized, meta = normalize_psf_for_export(wl_psf)
+                wavelength_psfs.append(normalized)
+                wavelength_meta.append(meta)
+            psf_list.append(np.stack(wavelength_psfs, axis=0))
+            norm_meta.append(wavelength_meta)
         if psf_list:
-            psfs = np.stack(psf_list, axis=0)[:, np.newaxis, np.newaxis, :, :]
+            psfs = np.stack(psf_list, axis=0)[:, np.newaxis, :, :, :]
         else:
-            psfs = np.zeros((0, 1, 1, mean_crops.shape[-2], mean_crops.shape[-1]), dtype=np.float64)
+            psfs = np.zeros((0, 1, len(export_wavelengths_nm), mean_crops.shape[-2], mean_crops.shape[-1]), dtype=np.float64)
         with h5py.File(str(path), "w") as f:
             string_dtype = h5py.string_dtype(encoding="utf-8")
             f.create_dataset("masks", data=masks, compression="gzip", compression_opts=4)
             f.create_dataset("psfs", data=psfs, compression="gzip", compression_opts=4)
+            f.create_dataset("wavelengths_nm", data=np.asarray(export_wavelengths_nm, dtype=np.float64))
             f.create_dataset("mask_id", data=np.asarray([unique_ids[i] for i in split_idx], dtype=object), dtype=string_dtype)
             f.create_dataset("mask_family", data=np.asarray([family_by_id[unique_ids[i]] for i in split_idx], dtype=object), dtype=string_dtype)
             metadata = {
@@ -194,9 +216,9 @@ def _export_lcd_forward(
                 "pupil_window_source": str(plan.get("pupil_window_source")),
                 "psf_roi_source": str(plan.get("psf_roi_source")),
                 "camera_params_source": str(plan.get("camera_params_source")),
-                "wavelength_nm": float(plan.get("wavelength", {}).get("wavelength_nm", float("nan"))),
+                "wavelengths_nm": export_wavelengths_nm,
                 "T": 1,
-                "L": 1,
+                "L": int(len(export_wavelengths_nm)),
                 "mask_shape": list(masks.shape[2:]),
                 "psf_shape": list(psfs.shape[-2:]),
                 "normalization": "background_subtract_then_sum_normalize",
@@ -208,10 +230,11 @@ def _export_lcd_forward(
     readme_lines = [
         "# LCD_forward export",
         "",
-        "This directory contains derived single-wavelength measured PSF dictionary exports.",
+        "This directory contains measured PSF dictionary exports.",
         "Shapes:",
         "- masks: [N, 1, 1, 64, 64]",
-        "- psfs:  [N, 1, 1, Hp, Wp]",
+        "- psfs:  [N, 1, L, Hp, Wp]",
+        f"- wavelengths_nm: {export_wavelengths_nm}",
         "",
         "Normalization: background_subtract_then_sum_normalize.",
         "Raw HDF5 remains the source of truth.",
@@ -219,6 +242,7 @@ def _export_lcd_forward(
     (export_dir / "README.md").write_text("\n".join(readme_lines) + "\n", encoding="utf-8")
     result["output_dir"] = _repo_relative(export_dir)
     result["normalization"] = "background_subtract_then_sum_normalize"
+    result["wavelengths_nm"] = export_wavelengths_nm
     return result
 
 
@@ -236,9 +260,36 @@ def _write_mask_contact_sheet(path: Path, masks_lowres: np.ndarray, mask_ids: li
     write_preview_png(path, sheet)
 
 
-def _write_psf_contact_sheet(path: Path, mean_crops: np.ndarray, mask_ids: list[str]) -> None:
-    sheet = _tile_images(np.asarray(mean_crops))
+def _write_psf_contact_sheet(
+    path: Path,
+    mean_crops: np.ndarray,
+    mask_ids: list[str],
+    wavelengths_nm: list[float] | None = None,
+) -> None:
+    arr = np.asarray(mean_crops, dtype=np.float64)
+    if arr.ndim == 4:
+        arr = arr.reshape(arr.shape[0] * arr.shape[1], arr.shape[2], arr.shape[3])
+    sheet = _tile_images(arr)
     write_preview_png(path, sheet)
+
+
+def _mean_crops_by_mask_and_wavelength(
+    crops: np.ndarray,
+    mask_ids: list[str],
+    wavelength_index: np.ndarray,
+    unique_ids: list[str],
+    unique_wavelength_index: list[int],
+) -> np.ndarray:
+    arr = np.asarray(crops, dtype=np.float64)
+    ids_arr = np.asarray(mask_ids)
+    out = np.zeros((len(unique_ids), len(unique_wavelength_index), arr.shape[-2], arr.shape[-1]), dtype=np.float64)
+    for i, mask_id in enumerate(unique_ids):
+        for j, wl_idx in enumerate(unique_wavelength_index):
+            match = np.where((ids_arr == mask_id) & (wavelength_index == int(wl_idx)))[0]
+            if match.size == 0:
+                raise ValueError(f"missing captures for mask_id={mask_id} wavelength_index={wl_idx}")
+            out[i, j] = np.mean(arr[match], axis=0)
+    return out
 
 
 def _tile_images(images: np.ndarray) -> np.ndarray:
