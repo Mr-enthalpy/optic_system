@@ -72,10 +72,9 @@ consume the raw HDF5 to produce processed results.
   radius scan.
 - **Input:** `camera_params_source` from Phase 3.0.5b by default
   (`outputs/exposure_calibration/camera_params_psf_safe.json`).
-- **Camera profile:** `camera_profile: fast_pupil_scan` is preferred.
-  `global_safe_camera` fallback is allowed only when the plan explicitly sets
-  `allow_global_safe_camera_fallback: true`, and that provenance is recorded
-  in HDF5 and analysis outputs.
+- **Camera profile:** the current active plan uses `global_safe_camera`
+  directly. If a later rerun intentionally uses `camera_gain_selection` or a
+  named verified profile, that choice must be explicit and auditable.
 - **Masks:** Generated procedurally at runtime by
   `tasks/pupil_geometry_masks.py`; the plan records bar width/step and radius
   scan range rather than listing mask files.

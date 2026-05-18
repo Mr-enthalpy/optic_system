@@ -80,7 +80,7 @@ Exit criteria:
 
 ### Phase 3.0.5b - PSF-safe exposure/gain calibration
 
-**Status: implemented**
+**Status: hardware rerun complete**
 
 Purpose:
 - determine PSF-safe camera exposure/gain across thesis wavelengths
@@ -95,23 +95,27 @@ Outputs:
 - `data/raw/bishe_psf_safe_exposure.h5`
 - `outputs/exposure_calibration/camera_params_psf_safe.json`
 
+Current frozen result:
+- `global_safe_camera = 0.0 dB / 736.541748046875 us`
+- `550 nm` is the limiting wavelength with burst-peak margin `12 DN`
+
 Downstream default:
-All Phase 3 captures use `outputs/exposure_calibration/camera_params_psf_safe.json`.
+All Phase 3 captures use `outputs/exposure_calibration/camera_params_psf_safe.json`,
+and current active plans default to `global_safe_camera`.
 
 ---
 
 ### Phase 3.1 - Effective pupil geometry calibration
 
-**Status: implementation re-aligned with old/calibrating.py and old/ellipse.py
-physical model; canonical hardware rerun pending**
+**Status: hardware rerun complete; cleaned result frozen**
 
 Purpose:
 - calibrate an effective pupil window in LCD physical coordinates using
   energy-based bar profiles and circular-radius scans
 - produce `effective_pupil_window.json` as the window baseline for all
   subsequent mask-encoded experiments
-- use PSF-safe camera parameters from Phase 3.0.5b through
-  `camera_profile: fast_pupil_scan` when available
+- use PSF-safe camera parameters from Phase 3.0.5b; the current frozen result
+  uses `global_safe_camera`
 
 **Hardware constraint:** The TLS (monochromator) must filter the light
 source to the planned wavelength.  Without wavelength filtering the
@@ -143,6 +147,25 @@ bright reference + dark reference
 
 Outputs:
 ```
+
+Current frozen result:
+- center in LCD physical coordinates:
+  - `x ≈ 1065.2462`
+  - `y ≈ 1871.5352`
+- effective radius:
+  - `radius ≈ 52.7972 px`
+- ellipse fit:
+  - `a ≈ 115.5145`
+  - `b ≈ 58.6636`
+  - `R^2 ≈ 0.99918`
+
+Result note:
+- The final accepted Phase 3.1 result required documented `r scan` cleaning.
+- The contaminated raw file was preserved as
+  `data/raw/bishe_pupil_geometry_rscan_contaminated_20260519_025516.h5`.
+- The active output `data/raw/bishe_pupil_geometry.h5` is the cleaned
+  self-contained HDF5 used to generate the current
+  `outputs/pupil_geometry/effective_pupil_window.json`.
 data/raw/bishe_pupil_geometry.h5
 outputs/pupil_geometry/
   x_profile.csv
@@ -184,7 +207,7 @@ Phase 3.2a and uses **camera sensor coordinates**.
 
 ### Phase 3.2 - Camera-frame PSF ROI + PSF repeatability/diversity
 
-**Status: data-first scripts implemented; hardware acquisition pending**
+**Status: hardware acquisition and analysis complete for the current baseline**
 
 This phase sets the camera-sensor coordinate baseline (PSF ROI) and then
 reacquires the two key old-project findings: same-mask PSF stability and
@@ -228,6 +251,19 @@ because the LCD frame period is about 20 ms.
 
 Outputs:
 ```
+
+Current frozen result:
+- center in camera sensor coordinates:
+  - `x ≈ 1148.9956`
+  - `y ≈ 934.1996`
+- ROI:
+  - `x = [1021, 1277)`
+  - `y = [806, 1062)`
+  - `256 x 256`
+
+Display note:
+- `psf_roi_preview.png` is contrast-stretched for visibility.
+- It is valid for ROI placement checks, not for raw exposure judgment.
 data/raw/bishe_psf_roi.h5
 outputs/psf_roi/
   psf_roi.json
@@ -320,6 +356,19 @@ random_lowfreq_1
 random_lowfreq_2
 ```
 
+Current frozen conclusion:
+- `mean_intra_mask_mse ≈ 0.0208245`
+- `mean_inter_mask_mse ≈ 15.6980484`
+- `inter_mask_distance_over_intra_noise ≈ 753.826336`
+- `mask_induced_differences_larger_than_repeat_noise = true`
+
+Therefore the current data supports:
+1. same-mask PSFs are repeatable
+2. mask-induced PSF differences are much larger than repeatability noise
+
+This is the Phase 3.2 completion criterion. It is not a forward-model
+success claim.
+
 Outputs:
 ```
 data/raw/bishe_psf_repeatability.h5
@@ -382,7 +431,7 @@ These belong to LCD_forward or later Phase 3.4+.
 
 ### Phase 3.3 - dOTF diagnostic visualization
 
-**Status: scripts implemented; hardware acquisition pending**
+**Status: hardware acquisition and analysis complete for the current baseline**
 
 Purpose:
 - use dOTF to provide direct visible evidence for low-dimensional / sparse
@@ -436,6 +485,21 @@ outputs/dotf/
   dotf_report.md
 ```
 
+Current frozen result:
+
+- `dotf_computed = true`
+- `pupil_stitching_performed = false`
+- perturbation outputs are present for:
+  - `edge_block_left`
+  - `edge_block_right`
+  - `edge_block_top`
+  - `edge_block_bottom`
+- `dotf_peak_abs`:
+  - left `= 0.0004062839982924802`
+  - right `= 0.0004193781484524579`
+  - top `= 0.0004046599696057576`
+  - bottom `= 0.0005967033596909086`
+
 Acceptance:
 
 - LCD sub-pixel / stripe / array structure stably visible in dOTF amplitude
@@ -459,7 +523,7 @@ Phase 3.3 does not attempt:
 
 ### Phase 3.4 - Measured PSF dictionary and LCD_forward export
 
-**Status: scripts implemented; hardware acquisition pending**
+**Status: hardware run attempted but currently blocked**
 
 Purpose:
 - build a measured mask-to-PSF dictionary as the foundation for forward
@@ -511,6 +575,14 @@ data/bishe_forward/test.h5
 masks: [N, T, 1, Hm, Wm]
 psfs:  [N, T, L, Hp, Wp]
 ```
+
+Current attempted-run state:
+
+- `data/raw/bishe_psf_dictionary.h5` exists but is not a usable dataset
+- `processing_flags_json.completed = false`
+- `processing_flags_json.n_captures_written = 0`
+- current blocker:
+  - `'TLSService' object has no attribute 'set_target_wavelength_nm'`
 
 Exit criteria:
 1. Measured PSF dictionary acquired for every planned wavelength with complete provenance.

@@ -65,10 +65,14 @@ provenance rule below.
   - `psf_roi_preview.png` - crop window overlay on averaged frame
   - `psf_roi_report.md` - human-readable diagnostics
 - **Script:** `scripts/analyze_psf_roi.py`
-- **Status:** scripts implemented; hardware data pending
+- **Status:** hardware capture and analysis complete for current baseline
 - **Coordinate system:** This directory contains the camera sensor crop used by
   PSF repeatability, dOTF, and PSF dictionary captures. It is distinct from
   `outputs/pupil_geometry/`, which is in LCD physical coordinates.
+- **Current frozen ROI:** center `≈ (1148.996, 934.200)`, ROI
+  `x=[1021,1277), y=[806,1062), 256 x 256`.
+- **Display caveat:** `psf_roi_preview.png` is contrast-stretched and is for
+  ROI placement checks, not raw exposure judgment.
 
 ### `outputs/psf_repeatability/`
 
@@ -92,7 +96,12 @@ provenance rule below.
   - `repeatability_report.md`
   - `report.md` - alias for the repeatability report
 - **Script:** `scripts/analyze_psf_repeatability.py`
-- **Status:** scripts implemented; hardware data pending
+- **Status:** hardware capture and analysis complete for current baseline
+- **Current frozen conclusion:**
+  - `mean_intra_mask_mse ≈ 0.0208245`
+  - `mean_inter_mask_mse ≈ 15.6980484`
+  - `inter_mask_distance_over_intra_noise ≈ 753.826336`
+  - `mask_induced_differences_larger_than_repeat_noise = true`
 
 ### `outputs/dotf/`
 
@@ -117,7 +126,14 @@ provenance rule below.
   - `dotf_metrics.json`
   - `dotf_report.md`
 - **Script:** `scripts/analyze_dotf.py`
-- **Status:** scripts implemented; hardware data pending
+- **Status:** hardware capture and analysis complete for current baseline
+- **Current frozen conclusion:**
+  - `dotf_computed = true`
+  - `pupil_stitching_performed = false`
+  - `dotf_peak_abs(edge_block_left) ~= 4.06284e-4`
+  - `dotf_peak_abs(edge_block_right) ~= 4.19378e-4`
+  - `dotf_peak_abs(edge_block_top) ~= 4.04660e-4`
+  - `dotf_peak_abs(edge_block_bottom) ~= 5.96703e-4`
 - **Boundary:** Diagnostic visualization only. No pupil stitching or final
   complex pupil reconstruction is performed here.
 
@@ -141,7 +157,11 @@ provenance rule below.
   - `export_lcd_forward/test.h5` - LCD_forward-compatible test split
   - `psf_dictionary_report.md`
 - **Script:** `scripts/analyze_psf_dictionary.py`
-- **Status:** scripts implemented; hardware data pending
+- **Status:** hardware run attempted but blocked before capture
+- **Current blocker:** capture path TLS API mismatch:
+  `'TLSService' object has no attribute 'set_target_wavelength_nm'`
+- **Current attempted raw state:** `data/raw/bishe_psf_dictionary.h5` exists,
+  but `completed = false` and `n_captures_written = 0`
 - **Boundary:** Data-first acquisition and export only. No forward-model
   training is performed here.
 - **Wavelength rule:** Phase 3.6 target capture must not request wavelengths
@@ -202,6 +222,20 @@ fully auditable and reproducible.
 Scripts should embed this metadata automatically. Manual entry is acceptable
 for early exploration but must be replaced by automated recording before
 thesis freeze.
+
+## Current frozen baseline
+
+The current audited Phase 3 baseline is summarized in:
+
+- [phase3_current_results.md](/C:/Users/Dell/PycharmProjects/optic_system/docs/phase3_current_results.md)
+
+If any later rerun changes the active:
+
+- `outputs/exposure_calibration/camera_params_psf_safe.json`
+- `outputs/pupil_geometry/effective_pupil_window.json`
+- `outputs/psf_roi/psf_roi.json`
+
+then that document must be updated in the same change.
 
 ## Directory creation convention
 

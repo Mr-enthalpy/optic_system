@@ -2,9 +2,6 @@ plan_id: bishe_pupil_geometry_calibration
 phase: "3.1"
 
 camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
-camera_profile: fast_pupil_scan
-camera_gain_selection: "10.0"
-allow_global_safe_camera_fallback: true
 
 wavelength:
   wavelength_nm: 550.0

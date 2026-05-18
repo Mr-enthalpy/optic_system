@@ -2,7 +2,6 @@ plan_id: bishe_dotf_diagnostic
 phase: "3.3"
 
 camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
-camera_gain_selection: "10.0"
 
 pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
 psf_roi_source: outputs/psf_roi/psf_roi.json
