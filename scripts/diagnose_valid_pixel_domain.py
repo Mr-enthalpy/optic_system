@@ -230,7 +230,7 @@ def run_valid_pixel_domain_diagnostic(
                     tls.move(timeout_s=60.0)
                     tls.wait_until_idle(timeout_s=60.0)
 
-                lcd.show_all_transmissive()
+                lcd.show_all_opaque()
                 time.sleep(1.0)
                 reply = camera.open_camera(index=camera_index, disable_trigger=True)
                 camera_serial = str(reply.get("serial")) if reply.get("serial") is not None else None

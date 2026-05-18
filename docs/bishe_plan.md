@@ -114,6 +114,14 @@ Purpose:
 - use PSF-safe camera parameters from Phase 3.0.5b through
   `camera_profile: fast_pupil_scan` when available
 
+**Hardware constraint:** The TLS (monochromator) must filter the light
+source to the planned wavelength.  Without wavelength filtering the
+broadband white light will overexpose the camera with PSF-safe parameters
+that assume filtered monochromatic light.  Phase 3.1 therefore requires
+TLS participation by default (`--tls-serial` or `TLS_C1_SERIAL`).
+For explicit manual external wavelength control, use the dangerous
+`--allow-wavelength-labels-without-tls` override.
+
 Scripts:
 - `tasks/pupil_geometry_masks.py` - physical mono reference/bar/aperture masks
 - `tasks/pupil_geometry_model.py` - circle profile and ellipse-overlap model

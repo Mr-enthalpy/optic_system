@@ -66,6 +66,27 @@ For camera preview status, tasks publish raw frame arrays by default and leave
 Bayer display encoding to the read-only monitor. This keeps Bayer-pattern
 assumptions out of capture tasks when camera metadata is unavailable.
 
+## Data preservation rules
+
+Raw capture HDF5 files are the sole auditable record of every hardware run.
+They must not be casually deleted.
+
+1. Every HDF5 produced by a hardware task is experimental evidence.
+2. Before deleting any HDF5, confirm it is a duplicate, corrupted beyond
+   recovery, or explicitly superseded by a documented re-run whose output
+   has been validated.
+3. Corrupted or contaminated HDF5 must be **renamed** with a descriptive
+   suffix (e.g. ``_lamp_drift``, ``_y_contaminated``) rather than deleted.
+4. Each raw HDF5 whose bar scan fit fails still contains valid bar profile
+   data — it must be kept.  Use ``--resume-from-h5`` to load bar data and
+   re-run the radius scan without re-acquiring hardware.
+5. The provenance rule (``source_raw_capture_h5``) depends on these files
+   existing.  Downstream outputs referencing a deleted HDF5 become
+   unauditable.
+
+A ``dataset_manifest.json`` under each output directory records every run,
+its status (raw / cleaned / contaminated / complete), and cleaning history.
+
 ## Phase 3.0.5b full-scale rule
 
 Canonical hardware PSF-safe exposure calibration must resolve
@@ -109,6 +130,39 @@ Phase 3.1 capture scripts require `camera_params_psf_safe.json` to carry
 downstream pupil geometry, repeatability, and dictionary captures from consuming
 unscoped camera safety parameters.
 
+## Valid-pixel domain diagnostic (standalone, dark-field)
+
+**Phase:** 3.0.5b prerequisite.  Must run **before** `calibrate_psf_safe_exposure.py`.
+
+**This is a manual physical procedure and cannot be chained automatically.**
+
+The valid-pixel domain probe must run in true dark-field:
+no intentional light reaches the camera sensor.  Any detected full-scale
+pixel at short exposure under dark-field is a sensor defect, not a light
+signal.
+
+Procedure:
+
+1. Physically turn off the light source (Xe lamp off).
+2. Ensure the LCD displays all-opaque: `lcd.show_all_opaque()`.
+3. Run `scripts/diagnose_valid_pixel_domain.py --hardware ...`.
+4. This produces a JSON file under
+   `outputs/diagnostics/shutter_gain_peak_probe/`.
+5. Physically turn on the light source (Xe lamp on).
+6. Wait for the lamp to reach stable output (warm-up time depends on
+   the lamp model; consult the lamp manual).
+7. Update `plans/bishe_psf_safe_exposure.yaml` to point
+   `valid_pixel_domain.source_artifact` at the generated JSON.
+
+The Xe lamp start-up and shut-down are slow physical operations.
+Automation must not attempt to toggle the lamp between these steps.
+The script itself does **not** control the light source.
+
+If the probe is run with the light source on, light-responsive pixels
+may be misclassified as sensor defects, especially at higher exposures.
+The resulting `valid_pixel_domain` would exclude valid pixels from the
+PSF safety check, defeating its purpose.
+
 ## Effective Pupil Geometry Calibration
 
 **Purpose:** Calibrate an effective pupil window in LCD physical coordinates.
@@ -133,6 +187,12 @@ it and the report records the fallback.
 - `plans/bishe_pupil_geometry.yaml`
 - Camera parameters: `outputs/exposure_calibration/camera_params_psf_safe.json`
   is mandatory; `camera_profile: fast_pupil_scan` is preferred.
+- **TLS requirement:** The TLS must filter the light source to the planned
+  wavelength.  Without monochromatic filtering the broadband white light will
+  overexpose the camera with PSF-safe parameters.  Hardware runs require
+  `--tls-serial` or `TLS_C1_SERIAL`.  The dangerous
+  `--allow-wavelength-labels-without-tls` override is reserved for explicit
+  manual external wavelength control.
 - Masks: bright/dark references, X/Y dark bars, and circular apertures.
 - Wavelength: single wavelength, fixed.
 - Camera: averaged frames per reference, bar position, and aperture radius.

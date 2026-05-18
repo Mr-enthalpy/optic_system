@@ -206,36 +206,63 @@ def resolve_geometry_camera_settings(
 ) -> tuple[float, float, int, float, dict[str, Any]]:
     source = str(plan["camera_params_source"])
     global_safe = camera_params["global_safe_camera"]
-    profile_name = plan.get("camera_profile")
-    profiles = camera_params.get("verified_camera_profiles", {})
-    selected = global_safe
+    profile_name = None
     used_profile = "global_safe_camera"
     fallback_used = False
     fallback_reason = None
 
-    if profile_name:
-        if isinstance(profiles, dict) and profile_name in profiles:
-            selected = profiles[profile_name]
-            used_profile = str(profile_name)
-        elif bool(plan.get("allow_global_safe_camera_fallback", False)):
-            fallback_used = True
-            fallback_reason = (
-                f"verified_camera_profiles.{profile_name} is unavailable; "
-                "using global_safe_camera because allow_global_safe_camera_fallback=true"
-            )
-            print(f"WARNING: {fallback_reason}", file=sys.stderr)
+    gain_key = plan.get("camera_gain_selection")
+    if gain_key:
+        per_gain = camera_params.get("per_gain_safe_params", {})
+        gain_str = str(gain_key)
+        match = None
+        for gk in per_gain:
+            if format(float(gk), ".1f") == format(float(gain_key), ".1f"):
+                match = gk
+                break
+        if match is None and gain_str in per_gain:
+            match = gain_str
+        if match is not None:
+            gv = per_gain[match]
+            selected = {
+                "exposure_us": float(gv["exposure_us"]),
+                "gain_db": float(gv["gain_db"]),
+                "frames_per_capture": global_safe.get("frames_per_capture", 5),
+            }
+            used_profile = "per_gain_safe_params:" + match
         else:
             raise ValueError(
-                f"camera_profile={profile_name!r} not found in verified_camera_profiles "
-                "and allow_global_safe_camera_fallback is false"
+                f"camera_gain_selection={gain_str!r} not found in per_gain_safe_params. "
+                f"Available: {list(per_gain.keys())}"
             )
+    else:
+        profile_name = plan.get("camera_profile")
+        profiles = camera_params.get("verified_camera_profiles", {})
+        selected = global_safe
+
+        if profile_name:
+            if isinstance(profiles, dict) and profile_name in profiles:
+                selected = profiles[profile_name]
+                used_profile = str(profile_name)
+            elif bool(plan.get("allow_global_safe_camera_fallback", False)):
+                fallback_used = True
+                fallback_reason = (
+                    f"verified_camera_profiles.{profile_name} is unavailable; "
+                    "using global_safe_camera because allow_global_safe_camera_fallback=true"
+                )
+                print(f"WARNING: {fallback_reason}", file=sys.stderr)
+            else:
+                raise ValueError(
+                    f"camera_profile={profile_name!r} not found in verified_camera_profiles "
+                    "and allow_global_safe_camera_fallback is false"
+                )
 
     frames_per_capture = selected.get("frames_per_capture", global_safe.get("frames_per_capture"))
     if frames_per_capture is None:
         raise ValueError("frames_per_capture is required in selected camera profile or global_safe_camera")
     provenance = {
         "source": source,
-        "camera_profile_requested": profile_name,
+        "camera_profile_requested": str(profile_name) if profile_name else plan.get("camera_gain_selection"),
         "camera_profile_used": used_profile,
         "fallback_used": bool(fallback_used),
         "fallback_reason": fallback_reason,
@@ -260,6 +287,7 @@ def run_pupil_geometry_calibration(
     lcd_subpixel_axis: int | None = None,
     status_dir: Path | None = None,
     status_preview_every: int = 10,
+    resume_from_h5: str | None = None,
 ) -> Path:
     _ensure_sys_path()
     camera_params, _camera_params_path = load_camera_params(plan["camera_params_source"])
@@ -310,6 +338,15 @@ def run_pupil_geometry_calibration(
         lcd_meta["subpixel_axis"] = int(subpixel_axis)
 
         tls_meta = _configure_tls(plan, dry_run=dry_run, tls_service=tls_service)
+        run_status.update(
+            current_wavelength_nm=tls_meta.get("current_wavelength_nm"),
+            target_wavelength_nm=tls_meta.get("target_wavelength_nm"),
+            tls_grating=tls_meta.get("grating"),
+            tls_moving=bool(tls_meta.get("moving")),
+        )
+
+        if resume_from_h5 and not dry_run:
+            output_raw = output_raw.parent / (output_raw.stem + "_resumed" + output_raw.suffix)
         camera_meta = {
             "exposure_us": float(exposure_us),
             "gain_db": float(gain_db),
@@ -407,39 +444,67 @@ def run_pupil_geometry_calibration(
         writer.write_dark_reference(dark_frame, frame_index=dark_index)
         dark_sum = float(np.sum(dark_frame))
 
-        pos_x, energy_x = _run_bar_axis(
-            axis="x",
-            plan=plan,
-            physical_shape=physical_shape,
-            subpixel_axis=subpixel_axis,
-            bright_sum=bright_sum,
-            writer=writer,
-            dry_run=dry_run,
-            truth=truth,
-            lcd_service=lcd_service,
-            capture_adapter=capture_adapter,
-            run_status=run_status,
-            status_preview_every=status_preview_every,
-        )
-        pos_y, energy_y = _run_bar_axis(
-            axis="y",
-            plan=plan,
-            physical_shape=physical_shape,
-            subpixel_axis=subpixel_axis,
-            bright_sum=bright_sum,
-            writer=writer,
-            dry_run=dry_run,
-            truth=truth,
-            lcd_service=lcd_service,
-            capture_adapter=capture_adapter,
-            run_status=run_status,
-            status_preview_every=status_preview_every,
-        )
+        if resume_from_h5 and not dry_run:
+            print(f"Loading bar scan data from {resume_from_h5}", file=sys.stderr)
+            import h5py as _h5py
+            _resume_f = _h5py.File(resume_from_h5, "r")
+            _resume_bs = _resume_f["bar_scan"]
+            pos_x = _resume_bs["x"]["positions"][()]
+            energy_x = _resume_bs["x"]["energies"][()]
+            pos_y = _resume_bs["y"]["positions"][()]
+            energy_y = _resume_bs["y"]["energies"][()]
+            bright_sum = float(_resume_f["references"]["bright_sum"][()])
+            dark_sum = float(_resume_f["references"]["dark_sum"][()])
+            _resume_f.close()
+            run_status.append_log("INFO", "bar scan data loaded from HDF5",
+                                   source_h5=resume_from_h5,
+                                   pos_x_n=len(pos_x), pos_y_n=len(pos_y))
+        else:
+            pos_x, energy_x = _run_bar_axis(
+                axis="x",
+                plan=plan,
+                physical_shape=physical_shape,
+                subpixel_axis=subpixel_axis,
+                bright_sum=bright_sum,
+                writer=writer,
+                dry_run=dry_run,
+                truth=truth,
+                lcd_service=lcd_service,
+                capture_adapter=capture_adapter,
+                run_status=run_status,
+                status_preview_every=status_preview_every,
+            )
+            pos_y, energy_y = _run_bar_axis(
+                axis="y",
+                plan=plan,
+                physical_shape=physical_shape,
+                subpixel_axis=subpixel_axis,
+                bright_sum=bright_sum,
+                writer=writer,
+                dry_run=dry_run,
+                truth=truth,
+                lcd_service=lcd_service,
+                capture_adapter=capture_adapter,
+                run_status=run_status,
+                status_preview_every=status_preview_every,
+            )
+
+        if not resume_from_h5:
+            writer.flush()
+            backup_dir = _repo_root() / "outputs" / "pupil_geometry"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            np.save(str(backup_dir / "bar_scan_x_pos.npy"), pos_x)
+            np.save(str(backup_dir / "bar_scan_x_enr.npy"), energy_x)
+            np.save(str(backup_dir / "bar_scan_y_pos.npy"), pos_y)
+            np.save(str(backup_dir / "bar_scan_y_enr.npy"), energy_y)
+            run_status.append_log("INFO", "bar scan data flushed to disk")
 
         circle = solve_aperture_from_profiles(pos_x, energy_x, pos_y, energy_y)
-        center = (float(circle["xc"]), float(circle["yc"]))
+        cx = float(circle["xc"])
+        cy = float(circle["yc"])
         r_avg = float(circle["r_avg"])
-        run_status.append_log("INFO", "bar profile circle estimate complete", **circle)
+        center = (cx, cy)
+        run_status.append_log("INFO", "bar profile circle estimate complete", xc=cx, yc=cy, r_avg=r_avg)
 
         _run_radius_scan(
             plan=plan,
@@ -551,7 +616,7 @@ def _run_bar_axis(
             current_position=position,
         )
         frame_index = writer.append_frame(mask_id=mask_id, mask_metadata=meta, frame_avg=frame)
-        energy = float(bright_sum - np.sum(frame))
+        energy = float(abs(bright_sum - np.sum(frame)))
         writer.append_bar_scan(
             axis=axis,
             position=position,
@@ -619,7 +684,7 @@ def _run_radius_scan(
             current_radius=float(radius),
         )
         frame_index = writer.append_frame(mask_id=mask_id, mask_metadata=meta, frame_avg=frame)
-        energy = float(np.sum(frame) - dark_sum)
+        energy = float(abs(np.sum(frame) - dark_sum))
         writer.append_radius_scan(
             radius=float(radius),
             energy=energy,
@@ -800,8 +865,19 @@ def main() -> None:
     parser.add_argument("--lcd-display-index", type=int, default=None)
     parser.add_argument("--lcd-subpixel-axis", type=int, choices=(0, 1), default=None)
     parser.add_argument("--tls-serial", default=None)
+    parser.add_argument(
+        "--allow-wavelength-labels-without-tls",
+        action="store_true",
+        help=(
+            "Dangerous hardware override: allow the plan wavelength to be treated "
+            "as a label when TLS is not configured. Use only for manual external "
+            "wavelength control or fixed single-wavelength tests."
+        ),
+    )
     parser.add_argument("--status-dir", default=None)
     parser.add_argument("--status-preview-every", type=int, default=10)
+    parser.add_argument("--resume-from-h5", default=None,
+                        help="load bar scan data from existing HDF5, skip bar profile acquisition")
     args = parser.parse_args()
 
     if args.hardware and args.dry_run:
@@ -846,6 +922,18 @@ def main() -> None:
         except Exception as exc:
             print(f"TLS connection failed: {exc}")
 
+    if tls_service is None and not args.allow_wavelength_labels_without_tls:
+        print(
+            "ERROR: TLS service is required for hardware pupil geometry calibration. "
+            "Without TLS wavelength filtering the light source outputs broadband white "
+            "light, which will overexpose the camera with PSF-safe parameters that "
+            "assume filtered monochromatic light. "
+            "Pass --tls-serial or set TLS_C1_SERIAL. For explicit manual external "
+            "wavelength control, rerun with --allow-wavelength-labels-without-tls.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     try:
         camera_service.open_camera(index=args.camera_index, disable_trigger=True)
         run_pupil_geometry_calibration(
@@ -857,6 +945,7 @@ def main() -> None:
             lcd_subpixel_axis=args.lcd_subpixel_axis,
             status_dir=status_dir,
             status_preview_every=args.status_preview_every,
+            resume_from_h5=args.resume_from_h5,
         )
     finally:
         try:
