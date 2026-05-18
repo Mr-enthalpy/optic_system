@@ -383,7 +383,7 @@ These belong to LCD_forward or later Phase 3.4+.
 
 ### Phase 3.3 - dOTF diagnostic visualization
 
-**Status: planned**
+**Status: scripts implemented; hardware acquisition pending**
 
 Purpose:
 - use dOTF to provide direct visible evidence for low-dimensional / sparse
@@ -391,6 +391,8 @@ Purpose:
 - full pupil stitching is NOT the minimum success criterion
 - migrate the old-project `old/perturbation.py` dOTF computation and
   visualization logic into active scripts
+- keep the result as diagnostic visualization only; no pupil stitching or
+  full complex pupil reconstruction
 
 Input:
 - `outputs/pupil_geometry/effective_pupil_window.json`
@@ -435,24 +437,14 @@ outputs/dotf/
   dotf_report.md
 ```
 
-Two-tier acceptance:
+Acceptance:
 
-**Tier A:**
-- Two pupil-plane structures visible in dOTF.
-- Non-overlapping regions explainable.
-- Multi-perturbation stitching gives a rough pupil estimate.
-
-**Tier B:**
-- Full pupil stitching unsatisfactory, BUT:
-- LCD sub-pixel / stripe / array structure stably visible in dOTF
-  amplitude and phase across perturbations.
+- LCD sub-pixel / stripe / array structure stably visible in dOTF amplitude
+  and phase across perturbations.
 - dOTF results directly show structured / sparse / low-dimensional
   pupil-plane features without requiring full stitching.
-- Can support the conclusion that LCD encoding effects are low-dimensional,
-  sparse, and calibratable.
-
-The thesis minimum requirement is Tier B.  Do not tie the entire thesis
-to Tier A full-pupil stitching.
+- The result remains a diagnostic visualization and is not promoted to a full
+  stitched pupil estimate.
 
 Note: the raw dOTF result contains two conjugate pupils combined in the
 complex plane.  Even without de-convolution or stitching, structured pupil

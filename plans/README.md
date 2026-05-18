@@ -22,6 +22,7 @@ consume the raw HDF5 to produce processed results.
 | `bishe_pupil_geometry.yaml` | Phase 3.1 effective pupil geometry calibration |
 | `bishe_psf_roi.yaml` | Phase 3.2a camera-frame PSF ROI calibration |
 | `bishe_psf_repeatability.yaml` | Phase 3.2b PSF repeatability and mask-induced diversity |
+| `bishe_dotf_diagnostic.yaml` | Phase 3.3 dOTF diagnostic visualization |
 
 ### `plans/bishe_psf_safe_exposure.yaml`
 - **Phase:** 3.0.5b - PSF-safe exposure/gain refinement.
@@ -136,10 +137,14 @@ consume the raw HDF5 to produce processed results.
 - **Masks:** Base effective pupil window mask + perturbation masks
   (base with edge-local opaque blocks at various positions).
 - **Wavelengths:** Single wavelength.
-- **Camera:** Averaged frames per mask.
+- **Camera:** One reference burst plus one burst per perturbation for each
+  repeat. Reference and perturbed captures are interleaved by repeat to limit
+  source drift.
 - **Output raw HDF5:** `data/raw/bishe_dotf_diagnostic.h5`
-- **Downstream analysis:** `scripts/analyze_dotf.py` writes dOTF complex
-  arrays and abs/log_abs/phase/real/imag visualizations.
+- **Downstream analysis:** `scripts/analyze_dotf.py` writes per-perturbation
+  dOTF complex arrays and abs/log_abs/phase/real/imag visualizations.
+- **Boundary:** Diagnostic visualization only. No pupil stitching or full
+  complex pupil reconstruction.
 
 ### `plans/bishe_psf_dict_single_lambda.yaml`
 - **Phase:** 3.4 - PSF dictionary (1 wavelength)

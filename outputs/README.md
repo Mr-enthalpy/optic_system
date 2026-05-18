@@ -102,19 +102,24 @@ provenance rule below.
   - `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain)
   - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
 - **Produces:**
-  - `psf_reference.npy` — reference PSF
-  - `psf_perturbed.npy` — perturbed PSF
-  - `otf_reference.npy` — reference OTF
-  - `otf_perturbed.npy` — perturbed OTF
-  - `dotf_complex.npy` — complex dOTF
-  - `dotf_abs.png` — dOTF amplitude
-  - `dotf_log_abs.png` — dOTF log amplitude
-  - `dotf_phase.png` — dOTF phase
-  - `dotf_real.png` — dOTF real part
-  - `dotf_imag.png` — dOTF imaginary part
+  - `psf_reference.npy` - mean reference PSF
+  - `psf_reference.png` - quick-look reference PSF
+  - `<perturbation_id>/psf_perturbed.npy` - mean perturbed PSF
+  - `<perturbation_id>/otf_reference.npy` - reference OTF used for that
+    comparison
+  - `<perturbation_id>/otf_perturbed.npy` - perturbed OTF
+  - `<perturbation_id>/dotf_complex.npy` - complex dOTF
+  - `<perturbation_id>/dotf_abs.png` - dOTF amplitude
+  - `<perturbation_id>/dotf_log_abs.png` - dOTF log amplitude
+  - `<perturbation_id>/dotf_phase.png` - dOTF phase
+  - `<perturbation_id>/dotf_real.png` - dOTF real part
+  - `<perturbation_id>/dotf_imag.png` - dOTF imaginary part
+  - `dotf_metrics.json`
   - `dotf_report.md`
 - **Script:** `scripts/analyze_dotf.py`
-- **Status:** planned
+- **Status:** scripts implemented; hardware data pending
+- **Boundary:** Diagnostic visualization only. No pupil stitching or final
+  complex pupil reconstruction is performed here.
 
 ### `outputs/psf_dictionary/`
 
