@@ -4,6 +4,11 @@ Canonical external artifact root:
 
 - `D:/datasets/optic_system/phase3_release_20260520/`
 
+This is the local canonical payload location on the acquisition workstation.
+It is a location hint, not a hard dependency. Cross-machine copies should be
+identified by `RELEASE.json` source provenance and verified with
+`MANIFEST.json` / `SHA256SUMS.txt`.
+
 ## Views
 
 This release has one canonical artifact root with two consumer views:
@@ -105,3 +110,8 @@ Run from the repository root:
 ```powershell
 .venv\Scripts\python.exe scripts\verify_phase3_release.py D:\datasets\optic_system\phase3_release_20260520
 ```
+
+This verifies file presence and SHA-256 checksums only. LCD_forward-side
+ingestion should add an HDF5 schema check for `train.h5`, `val.h5`, and
+`test.h5`, including the required `masks`, `psfs`, `wavelengths_nm`, and
+`metadata_json` datasets and their expected shapes.

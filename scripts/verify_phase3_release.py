@@ -15,7 +15,7 @@ def sha256_file(path: Path) -> str:
 
 def parse_sha256sums(path: Path) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
