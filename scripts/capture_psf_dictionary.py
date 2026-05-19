@@ -38,7 +38,7 @@ from scripts.capture_pupil_geometry import (  # noqa: E402
 )
 from tasks.psf_dictionary_masks import generate_psf_dictionary_masks  # noqa: E402
 from tasks.psf_dictionary_phase3 import PSFDictionaryRawWriter  # noqa: E402
-from tasks.psf_phase3 import crop_frame, load_psf_roi, load_pupil_window, load_yaml_plan, validate_phase32_plan  # noqa: E402
+from tasks.psf_phase3 import crop_frame, load_psf_roi, load_pupil_window, load_yaml_plan, resolve_psf_roi_record, validate_phase32_plan  # noqa: E402
 
 
 def _resolve_repo_path(path: str | Path) -> Path:
@@ -68,6 +68,8 @@ def run_capture_psf_dictionary(
     full_scale = float(camera_params["frame_dtype_full_scale"])
     pupil_window = load_pupil_window(_resolve_repo_path(plan["pupil_window_source"]))
     psf_roi = load_psf_roi(_resolve_repo_path(plan["psf_roi_source"]))
+    psf_roi_key = str(plan["psf_roi_key"])
+    psf_roi_record = resolve_psf_roi_record(psf_roi, psf_roi_key)
     lock = HardwareLock(_resolve_repo_path(plan.get("lock_file", "outputs/run_status/capture_hardware.lock")))
     run_status = OptionalRunStatus(status_dir, run_id=plan["plan_id"])
     capture_adapter = None
@@ -127,7 +129,11 @@ def run_capture_psf_dictionary(
             lcd_metadata=lcd_meta,
             tls_metadata=tls_meta,
             pupil_window_source=pupil_window,
-            psf_roi_source=psf_roi,
+            psf_roi_source={
+                **psf_roi,
+                "psf_roi_key_used": psf_roi_key,
+                "psf_roi_record_used": psf_roi_record,
+            },
             camera_params_source=camera_params,
         )
         repeats = int(plan["capture"]["repeats_per_mask"])
@@ -149,6 +155,7 @@ def run_capture_psf_dictionary(
             lcd_physical_shape=list(physical_shape),
             lcd_subpixel_axis=int(subpixel_axis),
             lcd_settle_ms=float(plan["lcd"].get("settle_ms", 200)),
+            psf_roi_key_used=psf_roi_key,
         )
         for wavelength_index, wavelength_entry in enumerate(wavelengths):
             current_wavelength_nm = float(wavelength_entry["wavelength_nm"])
@@ -195,13 +202,15 @@ def run_capture_psf_dictionary(
                         time.sleep(settle_s)
                         capture = capture_adapter.acquire_burst(frames_per_capture)
                         frame = np.asarray(capture.frames_avg, dtype=np.float64)
-                    crop = crop_frame(frame, psf_roi["roi"])
+                    crop = crop_frame(frame, psf_roi_record)
                     mask_metadata = dict(record["mask_metadata"])
                     mask_metadata["repeat_index"] = int(repeat_index)
                     mask_metadata["wavelength_nm"] = current_wavelength_nm
                     mask_metadata["wavelength_index"] = int(wavelength_index)
                     mask_metadata["camera_profile_id"] = camera_profile["camera_profile_id"]
                     mask_metadata["camera_profile_policy"] = camera_profile["camera_profile_policy"]
+                    mask_metadata["psf_roi_key_used"] = psf_roi_key
+                    mask_metadata["psf_roi_record_used"] = psf_roi_record
                     writer.append_capture(
                         crop=crop,
                         lowres_mask=record["lowres_mask"],

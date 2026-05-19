@@ -27,6 +27,7 @@ def _write_dictionary_raw_h5(raw_h5: Path) -> dict:
     plan["masks"]["random"]["midfreq_count"] = 0
     plan["masks"]["random"]["task_related_count"] = 0
     plan["output"]["raw_h5"] = str(raw_h5)
+    plan["psf_roi_key"] = "roi_512"
     writer = PSFDictionaryRawWriter(raw_h5, plan_id=plan["plan_id"]).open()
     writer.write_json_sections(
         plan=plan,
@@ -34,7 +35,23 @@ def _write_dictionary_raw_h5(raw_h5: Path) -> dict:
         lcd_metadata={"physical_shape": [90, 270], "subpixel_axis": 1},
         tls_metadata={"current_wavelength_nm": 450.0, "wavelength_sequence": plan["wavelengths"]},
         pupil_window_source={"phase": "3.1", "physical_shape": [90, 270], "center": {"x": 135.0, "y": 45.0}, "radius": 32.0},
-        psf_roi_source={"phase": "3.2a", "roi": {"x_min": 8, "x_max": 56, "y_min": 8, "y_max": 56, "width": 48, "height": 48}},
+        psf_roi_source={
+            "phase": "3.2a",
+            "roi": {"x_min": 8, "x_max": 56, "y_min": 8, "y_max": 56, "width": 48, "height": 48},
+            "rois": {
+                "roi_512": {
+                    "x_min": 8,
+                    "x_max": 56,
+                    "y_min": 8,
+                    "y_max": 56,
+                    "width": 48,
+                    "height": 48,
+                    "fits_frame": True,
+                }
+            },
+            "psf_roi_key_used": "roi_512",
+            "psf_roi_record_used": {"x_min": 8, "x_max": 56, "y_min": 8, "y_max": 56, "width": 48, "height": 48},
+        },
         camera_params_source={"psf_safety_policy": {"valid_pixel_domain": None}, "validity": {"psf_exposure_safe": True}},
     )
     masks = [
@@ -83,6 +100,7 @@ def test_analyze_psf_dictionary_outputs_summary_and_export(tmp_path: Path) -> No
     assert (out_dir / "export_lcd_forward" / "val.h5").exists()
     assert (out_dir / "export_lcd_forward" / "test.h5").exists()
     assert summary["validity"]["training_ready"] is False
+    assert summary["psf_roi_key_used"] == "roi_512"
     readme_text = (out_dir / "export_lcd_forward" / "README.md").read_text(encoding="utf-8")
     assert "single-wavelength" not in readme_text
     assert "- psfs:  [N, 1, L, Hp, Wp]" in readme_text

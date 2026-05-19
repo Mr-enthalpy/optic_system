@@ -79,6 +79,17 @@ def _write_psf_roi(path: Path) -> None:
                 "width": 192,
                 "height": 128,
             },
+            "rois": {
+                "roi_512": {
+                    "x_min": 32,
+                    "x_max": 224,
+                    "y_min": 32,
+                    "y_max": 160,
+                    "width": 192,
+                    "height": 128,
+                    "fits_frame": True,
+                }
+            },
         },
     )
 
@@ -110,6 +121,7 @@ def _make_temp_plan(tmp_path: Path) -> Path:
         "camera_gain_selection": "10.0",
         "pupil_window_source": str(tmp_path / "effective_pupil_window.json"),
         "psf_roi_source": str(tmp_path / "psf_roi.json"),
+        "psf_roi_key": "roi_512",
         "mask_source": {
             "type": "lcd_forward_export",
             "h5_paths": [str(tmp_path / "mask_export.h5")],
@@ -180,6 +192,7 @@ def test_target_capture_writer_and_export_roundtrip(tmp_path: Path) -> None:
         "camera_params_source": "camera.json",
         "pupil_window_source": "pupil.json",
         "psf_roi_source": "roi.json",
+        "psf_roi_key": "roi_512",
     }
     writer.write_json_sections(
         plan=plan,
@@ -187,7 +200,23 @@ def test_target_capture_writer_and_export_roundtrip(tmp_path: Path) -> None:
         lcd_metadata={"physical_shape": [96, 192], "subpixel_axis": 1},
         tls_metadata={"wavelength_sequence": [{"wavelength_nm": 450.0}, {"wavelength_nm": 550.0}]},
         pupil_window_source={"phase": "3.1", "center": {"x": 96.0, "y": 48.0}, "radius": 32.0, "physical_shape": [96, 192]},
-        psf_roi_source={"phase": "3.2a", "roi": {"x_min": 0, "x_max": 16, "y_min": 0, "y_max": 16, "width": 16, "height": 16}},
+        psf_roi_source={
+            "phase": "3.2a",
+            "roi": {"x_min": 0, "x_max": 16, "y_min": 0, "y_max": 16, "width": 16, "height": 16},
+            "rois": {
+                "roi_512": {
+                    "x_min": 0,
+                    "x_max": 16,
+                    "y_min": 0,
+                    "y_max": 16,
+                    "width": 16,
+                    "height": 16,
+                    "fits_frame": True,
+                }
+            },
+            "psf_roi_key_used": "roi_512",
+            "psf_roi_record_used": {"x_min": 0, "x_max": 16, "y_min": 0, "y_max": 16, "width": 16, "height": 16},
+        },
         camera_params_source={"validity": {"psf_exposure_safe": True}},
         mask_source_metadata={"mask_source_type": "lcd_forward_export"},
         target_metadata={"target_id": "bishe_demo_target_001"},
@@ -254,6 +283,9 @@ def test_capture_target_multiframe_dry_run_writes_raw_h5(tmp_path: Path) -> None
         assert "raw/masks_lowres" in f
         assert "raw/wavelength_nm" in f
         assert "provenance/mask_source_metadata_json" in f
+        provenance = json.loads(f["provenance/psf_roi_source_json"][()].decode("utf-8") if isinstance(f["provenance/psf_roi_source_json"][()], bytes) else str(f["provenance/psf_roi_source_json"][()]))
+        assert provenance["psf_roi_key_used"] == "roi_512"
+        assert provenance["psf_roi_record_used"]["width"] == 192
         assert f["raw/masks_lowres"].shape[1:] == (1, 64, 64)
         roles = {x.decode("utf-8") if isinstance(x, bytes) else str(x) for x in f["raw/capture_role"][()]}
         assert "encoded_target" in roles

@@ -113,6 +113,8 @@ def validate_phase32_plan(
             raise Phase32PlanError("PSF dictionary plan phase must be '3.4'")
         if not plan.get("psf_roi_source"):
             raise Phase32PlanError("psf_roi_source is required")
+        if not isinstance(plan.get("psf_roi_key"), str) or not str(plan.get("psf_roi_key")).strip():
+            raise Phase32PlanError("psf_roi_key is required for Phase 3.4")
         wavelengths = plan.get("wavelengths")
         if not isinstance(wavelengths, list) or not wavelengths:
             raise Phase32PlanError("wavelengths must be a non-empty list")
@@ -141,6 +143,8 @@ def validate_phase32_plan(
             raise Phase32PlanError("target capture plan phase must be '3.6'")
         if not plan.get("psf_roi_source"):
             raise Phase32PlanError("psf_roi_source is required")
+        if not isinstance(plan.get("psf_roi_key"), str) or not str(plan.get("psf_roi_key")).strip():
+            raise Phase32PlanError("psf_roi_key is required for Phase 3.6")
         mask_source = plan.get("mask_source", {})
         if str(mask_source.get("type", "")) != "lcd_forward_export":
             raise Phase32PlanError("mask_source.type must be lcd_forward_export")
@@ -207,6 +211,40 @@ def load_psf_roi(path: str | Path) -> dict[str, Any]:
                 if roi_value.get(key) is None:
                     raise ValueError(f"{path}: rois.{roi_key}.{key} is required")
     return data
+
+
+def resolve_psf_roi_record(
+    psf_roi_json: dict[str, Any],
+    roi_key: str | None,
+    *,
+    allow_legacy_fallback: bool = False,
+) -> dict[str, Any]:
+    if roi_key is not None:
+        roi_key = str(roi_key).strip()
+    if roi_key:
+        rois = psf_roi_json.get("rois")
+        if not isinstance(rois, dict) or not rois:
+            raise ValueError("psf_roi JSON does not define rois; cannot resolve explicit roi_key")
+        if roi_key not in rois:
+            raise ValueError(f"psf_roi JSON does not contain roi_key={roi_key!r}")
+        roi = rois[roi_key]
+        if not isinstance(roi, dict):
+            raise ValueError(f"psf_roi JSON rois.{roi_key} must be an object")
+        if roi.get("fits_frame") is not True:
+            raise ValueError(f"psf_roi JSON roi_key={roi_key!r} is not usable because fits_frame is not true")
+        for key in ("x_min", "x_max", "y_min", "y_max", "width", "height"):
+            if roi.get(key) is None:
+                raise ValueError(f"psf_roi JSON rois.{roi_key}.{key} is required")
+        return dict(roi)
+    if allow_legacy_fallback:
+        roi = psf_roi_json.get("roi")
+        if not isinstance(roi, dict):
+            raise ValueError("psf_roi JSON legacy top-level roi is missing")
+        for key in ("x_min", "x_max", "y_min", "y_max", "width", "height"):
+            if roi.get(key) is None:
+                raise ValueError(f"psf_roi JSON roi.{key} is required")
+        return dict(roi)
+    raise ValueError("roi_key is required unless allow_legacy_fallback=True")
 
 
 def pupil_window_mask(

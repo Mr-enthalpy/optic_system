@@ -35,7 +35,7 @@ from scripts.capture_pupil_geometry import (  # noqa: E402
     load_camera_params,
     resolve_geometry_camera_settings,
 )
-from tasks.psf_phase3 import crop_frame, load_psf_roi, load_pupil_window, load_yaml_plan, validate_phase32_plan  # noqa: E402
+from tasks.psf_phase3 import crop_frame, load_psf_roi, load_pupil_window, load_yaml_plan, resolve_psf_roi_record, validate_phase32_plan  # noqa: E402
 from tasks.target_capture_phase3 import (  # noqa: E402
     TargetCaptureRawWriter,
     load_selected_masks_from_exports,
@@ -70,6 +70,8 @@ def run_capture_target_multiframe(
     full_scale = float(camera_params["frame_dtype_full_scale"])
     pupil_window = load_pupil_window(_resolve_repo_path(plan["pupil_window_source"]))
     psf_roi = load_psf_roi(_resolve_repo_path(plan["psf_roi_source"]))
+    psf_roi_key = str(plan["psf_roi_key"])
+    psf_roi_record = resolve_psf_roi_record(psf_roi, psf_roi_key)
     mask_source = plan["mask_source"]
     selected_masks, mask_source_meta = load_selected_masks_from_exports(
         [_resolve_repo_path(path) for path in mask_source["h5_paths"]],
@@ -136,7 +138,11 @@ def run_capture_target_multiframe(
             lcd_metadata=lcd_meta,
             tls_metadata=tls_meta,
             pupil_window_source=pupil_window,
-            psf_roi_source=psf_roi,
+            psf_roi_source={
+                **psf_roi,
+                "psf_roi_key_used": psf_roi_key,
+                "psf_roi_record_used": psf_roi_record,
+            },
             camera_params_source=camera_params,
             mask_source_metadata=mask_source_meta,
             target_metadata=dict(plan.get("target", {})),
@@ -164,6 +170,7 @@ def run_capture_target_multiframe(
             lcd_physical_shape=list(physical_shape),
             lcd_subpixel_axis=int(subpixel_axis),
             lcd_settle_ms=float(plan["lcd"].get("settle_ms", 200)),
+            psf_roi_key_used=psf_roi_key,
         )
         reference_open = _make_reference_mask(physical_shape, pupil_window, open_inside=True, bg_code=int(lcd_meta.get("opaque_code", 0)), open_code=int(lcd_meta.get("transmissive_code", 255)))
         reference_closed = _make_reference_mask(physical_shape, pupil_window, open_inside=False, bg_code=int(lcd_meta.get("opaque_code", 0)), open_code=int(lcd_meta.get("transmissive_code", 255)))
@@ -203,7 +210,8 @@ def run_capture_target_multiframe(
                     capture_role="reference_open",
                     capture_index=capture_index,
                     writer=writer,
-                    psf_roi=psf_roi,
+                    psf_roi_key=psf_roi_key,
+                    psf_roi_record=psf_roi_record,
                     exposure_us=float(exposure_us),
                     gain_db=float(gain_db),
                     camera_profile_id=str(camera_profile["camera_profile_id"]),
@@ -228,7 +236,8 @@ def run_capture_target_multiframe(
                     capture_role="reference_closed",
                     capture_index=capture_index,
                     writer=writer,
-                    psf_roi=psf_roi,
+                    psf_roi_key=psf_roi_key,
+                    psf_roi_record=psf_roi_record,
                     exposure_us=float(exposure_us),
                     gain_db=float(gain_db),
                     camera_profile_id=str(camera_profile["camera_profile_id"]),
@@ -254,7 +263,8 @@ def run_capture_target_multiframe(
                         capture_role="encoded_target",
                         capture_index=capture_index,
                         writer=writer,
-                        psf_roi=psf_roi,
+                        psf_roi_key=psf_roi_key,
+                        psf_roi_record=psf_roi_record,
                         exposure_us=float(exposure_us),
                         gain_db=float(gain_db),
                         camera_profile_id=str(camera_profile["camera_profile_id"]),
@@ -279,7 +289,8 @@ def run_capture_target_multiframe(
                     capture_role="reference_open",
                     capture_index=capture_index,
                     writer=writer,
-                    psf_roi=psf_roi,
+                    psf_roi_key=psf_roi_key,
+                    psf_roi_record=psf_roi_record,
                     exposure_us=float(exposure_us),
                     gain_db=float(gain_db),
                     camera_profile_id=str(camera_profile["camera_profile_id"]),
@@ -317,7 +328,8 @@ def _capture_one(
     capture_role: str,
     capture_index: int,
     writer: TargetCaptureRawWriter,
-    psf_roi: dict[str, Any],
+    psf_roi_key: str,
+    psf_roi_record: dict[str, Any],
     exposure_us: float,
     gain_db: float,
     camera_profile_id: str,
@@ -341,7 +353,12 @@ def _capture_one(
         time.sleep(settle_s)
         capture = capture_adapter.acquire_burst(frames_per_capture)
         frame = np.asarray(capture.frames_avg, dtype=np.float64)
-    crop = crop_frame(frame, psf_roi["roi"])
+    crop = crop_frame(frame, psf_roi_record)
+    capture_mask_metadata = {
+        **mask_metadata,
+        "psf_roi_key_used": psf_roi_key,
+        "psf_roi_record_used": psf_roi_record,
+    }
     writer.append_capture(
         frame_avg=frame,
         crop=crop,
@@ -355,7 +372,7 @@ def _capture_one(
         gain_db=float(gain_db),
         camera_profile_id=str(camera_profile_id),
         capture_role=capture_role,
-        mask_metadata=mask_metadata,
+        mask_metadata=capture_mask_metadata,
     )
     if capture_index % max(1, int(status_preview_every)) == 0:
         run_status.write_frame_preview(frame)

@@ -6,6 +6,7 @@ camera_profile_policy: wavelength_recommended
 
 pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
 psf_roi_source: outputs/psf_roi/psf_roi.json
+psf_roi_key: roi_512
 
 mask_source:
   type: lcd_forward_export

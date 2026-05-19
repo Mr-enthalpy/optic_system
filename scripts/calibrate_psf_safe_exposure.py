@@ -15,13 +15,16 @@ Constraints:
     GUI/session before running.  The read-only run-status monitor may remain open.
   - Always prefers gain_min.  Only elevates gain when gain_min yields
     safe-but-unusably-dim signal.
-  - Current thesis-branch selection is discrete and lexicographic, not
-    continuous joint optimization: strict PSF safety across all wavelengths,
-    then gain_min preference, then largest usable exposure at that gain, with
-    higher gain only as a low-signal fallback.
-  - The selected camera parameters are global across wavelengths.  Per-
-    wavelength camera parameters are out of scope for Phase 3.0.5b because
-    Phase 3.1+ captures need comparable camera response conditions.
+  - Current thesis-branch selection first searches each wavelength
+    independently for a recommended PSF-safe camera profile, then derives
+    `global_safe_camera` as a shared baseline from those per-wavelength safe
+    bounds.
+  - `global_safe_camera` is a derived shared-exposure diagnostic baseline.  It
+    does not replace the per-wavelength `camera_param_catalog`.
+  - Current thesis-branch selection is still discrete and lexicographic within
+    each wavelength search: strict PSF safety, then gain_min preference, then
+    largest usable exposure at that gain, with higher gain only as a
+    low-signal fallback.
   - If even gain_min + exposure_min has any pixel at full scale in raw
     burst frames, fails immediately.  Raising gain is never used to solve
     pixel saturation.
