@@ -2,9 +2,11 @@ plan_id: bishe_psf_dictionary
 phase: "3.4"
 
 camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
+camera_profile_policy: wavelength_recommended
 
 pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
 psf_roi_source: outputs/psf_roi/psf_roi.json
+psf_roi_key: roi_512
 
 wavelengths:
   - wavelength_nm: 450.0

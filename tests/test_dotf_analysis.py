@@ -22,10 +22,47 @@ def _write_raw_h5(raw_h5: Path, *, include_psf_roi_provenance: bool = True) -> d
     plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
     plan["capture"]["repeats"] = 3
     plan["dotf"]["perturbation_set"] = ["edge_block_right"]
+    plan["dotf"]["roi_keys"] = ["roi_256", "roi_512", "roi_1024"]
     plan["output"]["raw_h5"] = str(raw_h5)
     psf_roi = {
         "phase": "3.2a",
-        "roi": {"x_min": 8, "x_max": 56, "y_min": 8, "y_max": 56, "width": 48, "height": 48},
+        "roi": {"x_min": 272, "x_max": 528, "y_min": 272, "y_max": 528, "width": 256, "height": 256},
+        "rois": {
+            "roi_256": {
+                "x_min": 272,
+                "x_max": 528,
+                "y_min": 272,
+                "y_max": 528,
+                "width": 256,
+                "height": 256,
+                "fits_frame": True,
+                "purpose": ["current_baseline", "preview", "legacy_compatibility"],
+            },
+            "roi_512": {
+                "x_min": 144,
+                "x_max": 656,
+                "y_min": 144,
+                "y_max": 656,
+                "width": 512,
+                "height": 512,
+                "fits_frame": True,
+                "purpose": ["dotf_candidate", "model_candidate"],
+            },
+            "roi_1024": {
+                "x_min": -112,
+                "x_max": 912,
+                "y_min": -112,
+                "y_max": 912,
+                "width": 1024,
+                "height": 1024,
+                "fits_frame": False,
+                "skip_reason": "ROI exceeds frame boundary",
+                "purpose": ["dotf_candidate", "full_support_candidate"],
+            },
+        },
+        "current_baseline_roi_key": "roi_256",
+        "default_roi_key": "roi_256",
+        "final_selected_roi_key": None,
     }
     writer = DotfRawWriter(raw_h5, plan_id=plan["plan_id"]).open()
     writer.write_json_sections(
@@ -38,10 +75,10 @@ def _write_raw_h5(raw_h5: Path, *, include_psf_roi_provenance: bool = True) -> d
         camera_params_source={"validity": {"psf_exposure_safe": True}},
     )
     for idx in range(3):
-        ref = _gaussian(31.5, 31.0, amplitude=120.0)
-        pert = ref - 4.0 * _gaussian(37.0, 31.0, amplitude=1.0)
-        ref_crop = ref[8:56, 8:56]
-        pert_crop = pert[8:56, 8:56]
+        ref = _gaussian(399.5, 399.0, shape=(800, 800), amplitude=120.0)
+        pert = ref - 4.0 * _gaussian(437.0, 399.0, shape=(800, 800), amplitude=1.0)
+        ref_crop = ref[272:528, 272:528]
+        pert_crop = pert[272:528, 272:528]
         writer.append_capture(
             frame_avg=ref,
             crop=ref_crop,
@@ -74,17 +111,31 @@ def test_analyze_dotf_outputs_files(tmp_path: Path) -> None:
     out_dir = tmp_path / "out"
     result = analyze_dotf(raw_h5, out_dir)
     edge_dir = out_dir / "edge_block_right"
+    roi_256_dir = out_dir / "roi_256" / "edge_block_right"
+    roi_512_dir = out_dir / "roi_512" / "edge_block_right"
     assert (out_dir / "psf_reference.npy").exists()
     assert (out_dir / "psf_reference.png").exists() or (out_dir / "psf_reference.npy").exists()
     assert (edge_dir / "dotf_complex.npy").exists()
+    assert (roi_256_dir / "dotf_complex.npy").exists()
+    assert (roi_512_dir / "dotf_complex.npy").exists()
     assert (edge_dir / "dotf_abs.png").exists() or (edge_dir / "dotf_abs.npy").exists()
     assert (edge_dir / "dotf_phase.png").exists() or (edge_dir / "dotf_phase.npy").exists()
     assert (edge_dir / "dotf_real.png").exists() or (edge_dir / "dotf_real.npy").exists()
     assert (edge_dir / "dotf_imag.png").exists() or (edge_dir / "dotf_imag.npy").exists()
     metrics = json.loads((out_dir / "dotf_metrics.json").read_text(encoding="utf-8"))
+    comparison_manifest = json.loads((out_dir / "dotf_roi_comparison_manifest.json").read_text(encoding="utf-8"))
+    per_roi_metrics = json.loads((roi_512_dir / "dotf_metrics.json").read_text(encoding="utf-8"))
     report = (out_dir / "dotf_report.md").read_text(encoding="utf-8")
     assert result["validity"]["dotf_computed"] is True
     assert metrics["validity"]["pupil_stitching_performed"] is False
+    assert metrics["validity"]["roi_selection_performed"] is False
+    assert metrics["roi_key"] == "roi_256"
+    assert comparison_manifest["rois"]["roi_256"]["analyzed"] is True
+    assert comparison_manifest["rois"]["roi_512"]["analyzed"] is True
+    assert comparison_manifest["rois"]["roi_1024"]["analyzed"] is False
+    assert per_roi_metrics["roi_key"] == "roi_512"
+    assert per_roi_metrics["validity"]["roi_selection_performed"] is False
+    assert "edge_energy" in per_roi_metrics
     assert "pupil_stitching_performed=false" in report
 
 

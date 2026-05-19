@@ -2,10 +2,11 @@ plan_id: bishe_target_capture
 phase: "3.6"
 
 camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
-camera_gain_selection: "10.0"
+camera_profile_policy: wavelength_recommended
 
 pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
 psf_roi_source: outputs/psf_roi/psf_roi.json
+psf_roi_key: roi_512
 
 mask_source:
   type: lcd_forward_export

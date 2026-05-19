@@ -37,6 +37,9 @@ class TargetCaptureRawWriter:
         raw.create_dataset("wavelength_nm", shape=(0,), maxshape=(None,), dtype=np.float64)
         raw.create_dataset("wavelength_index", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("repeat_index", shape=(0,), maxshape=(None,), dtype=np.int64)
+        raw.create_dataset("exposure_us", shape=(0,), maxshape=(None,), dtype=np.float64)
+        raw.create_dataset("gain_db", shape=(0,), maxshape=(None,), dtype=np.float64)
+        raw.create_dataset("camera_profile_id", shape=(0,), maxshape=(None,), dtype=string_dtype)
         raw.create_dataset("capture_role", shape=(0,), maxshape=(None,), dtype=string_dtype)
         raw.create_dataset("timestamp_ns", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("mask_metadata_json", shape=(0,), maxshape=(None,), dtype=string_dtype)
@@ -89,6 +92,9 @@ class TargetCaptureRawWriter:
         wavelength_nm: float,
         wavelength_index: int,
         repeat_index: int,
+        exposure_us: float = 0.0,
+        gain_db: float = 0.0,
+        camera_profile_id: str = "unknown",
         capture_role: str,
         mask_metadata: dict[str, Any],
     ) -> int:
@@ -102,6 +108,9 @@ class TargetCaptureRawWriter:
         _append_scalar(f["raw/wavelength_nm"], float(wavelength_nm))
         _append_scalar(f["raw/wavelength_index"], int(wavelength_index))
         _append_scalar(f["raw/repeat_index"], int(repeat_index))
+        _append_scalar(f["raw/exposure_us"], float(exposure_us))
+        _append_scalar(f["raw/gain_db"], float(gain_db))
+        _append_scalar(f["raw/camera_profile_id"], str(camera_profile_id))
         _append_scalar(f["raw/capture_role"], str(capture_role))
         _append_scalar(f["raw/timestamp_ns"], int(time.time_ns()))
         _append_scalar(f["raw/mask_metadata_json"], json_dumps(mask_metadata))

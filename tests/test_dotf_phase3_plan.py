@@ -14,6 +14,8 @@ def test_dotf_plan_loads_and_validates() -> None:
     assert plan["plan_id"] == "bishe_dotf_diagnostic"
     assert plan["phase"] == "3.3"
     assert plan["dotf"]["perturbation_set"]
+    assert plan["dotf"]["roi_keys"] == ["roi_256", "roi_512", "roi_768", "roi_1024"]
+    assert plan["dotf"]["edge_energy"]["enabled"] is True
 
 
 def test_dotf_plan_rejects_unsafe_lcd_settle_in_hardware() -> None:

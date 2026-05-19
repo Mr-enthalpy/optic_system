@@ -51,6 +51,9 @@ def export_target_lcd_forward(raw_h5: str | Path, output_dir: str | Path) -> dic
         wavelength_nm = np.asarray(f["raw/wavelength_nm"][()], dtype=np.float64)
         wavelength_index = np.asarray(f["raw/wavelength_index"][()], dtype=np.int64)
         repeat_index = np.asarray(f["raw/repeat_index"][()], dtype=np.int64)
+        exposure_us = np.asarray(f["raw/exposure_us"][()], dtype=np.float64) if "raw/exposure_us" in f else None
+        gain_db = np.asarray(f["raw/gain_db"][()], dtype=np.float64) if "raw/gain_db" in f else None
+        camera_profile_id = [_decode(x) for x in f["raw/camera_profile_id"][()]] if "raw/camera_profile_id" in f else None
         capture_roles = [_decode(x) for x in f["raw/capture_role"][()]]
 
     _validate_required_provenance(plan, pupil_window, psf_roi, camera_params_source, mask_source_metadata)
@@ -64,6 +67,9 @@ def export_target_lcd_forward(raw_h5: str | Path, output_dir: str | Path) -> dic
     unique_mask_ids = list(dict.fromkeys(encoded_mask_ids))
     unique_wavelength_index = list(dict.fromkeys(encoded_wavelength_idx.tolist()))
     unique_wavelength_nm = [float(encoded_wavelength_nm[np.where(encoded_wavelength_idx == idx)[0][0]]) for idx in unique_wavelength_index]
+    exposure_by_wavelength = _constant_value_by_wavelength(exposure_us, wavelength_index, unique_wavelength_index, "exposure_us")
+    gain_by_wavelength = _constant_value_by_wavelength(gain_db, wavelength_index, unique_wavelength_index, "gain_db")
+    profile_by_wavelength = _constant_string_by_wavelength(camera_profile_id, wavelength_index, unique_wavelength_index, "camera_profile_id")
     T = len(unique_mask_ids)
     L = len(unique_wavelength_index)
     H, W = int(crops.shape[1]), int(crops.shape[2])
@@ -89,6 +95,9 @@ def export_target_lcd_forward(raw_h5: str | Path, output_dir: str | Path) -> dic
         f.create_dataset("frames", data=frames, compression="gzip", compression_opts=4)
         f.create_dataset("masks", data=masks, compression="gzip", compression_opts=4)
         f.create_dataset("wavelengths_nm", data=np.asarray(unique_wavelength_nm, dtype=np.float64))
+        f.create_dataset("exposure_us", data=np.asarray(exposure_by_wavelength, dtype=np.float64))
+        f.create_dataset("gain_db", data=np.asarray(gain_by_wavelength, dtype=np.float64))
+        f.create_dataset("camera_profile_id", data=np.asarray(profile_by_wavelength, dtype=object), dtype=string_dtype)
         f.create_dataset("mask_id", data=np.asarray(unique_mask_ids, dtype=object), dtype=string_dtype)
         f.create_dataset("mask_family", data=np.asarray(mask_family_out, dtype=object), dtype=string_dtype)
         metadata = {
@@ -104,6 +113,19 @@ def export_target_lcd_forward(raw_h5: str | Path, output_dir: str | Path) -> dic
             "masks_shape": list(masks.shape),
             "has_ground_truth_objects": False,
             "normalization": "raw_repeat_averaged_crop",
+            "camera_profile_policy": str(plan.get("camera_profile_policy", "global_safe_camera")),
+            "exposure_us_by_wavelength": {
+                _format_wavelength_key(unique_wavelength_nm[i]): float(exposure_by_wavelength[i])
+                for i in range(len(unique_wavelength_nm))
+            },
+            "gain_db_by_wavelength": {
+                _format_wavelength_key(unique_wavelength_nm[i]): float(gain_by_wavelength[i])
+                for i in range(len(unique_wavelength_nm))
+            },
+            "camera_profile_id_by_wavelength": {
+                _format_wavelength_key(unique_wavelength_nm[i]): str(profile_by_wavelength[i])
+                for i in range(len(unique_wavelength_nm))
+            },
             "L": int(L),
             "T": int(T),
         }
@@ -127,6 +149,9 @@ def export_target_lcd_forward(raw_h5: str | Path, output_dir: str | Path) -> dic
         "frames_shape": list(frames.shape),
         "masks_shape": list(masks.shape),
         "wavelengths_nm": unique_wavelength_nm,
+        "exposure_us": exposure_by_wavelength,
+        "gain_db": gain_by_wavelength,
+        "camera_profile_id": profile_by_wavelength,
     }
 
 
@@ -172,6 +197,47 @@ def _repo_relative(path: Path) -> str:
         return str(path.relative_to(_repo_root())).replace("\\", "/")
     except ValueError:
         return str(path)
+
+
+def _constant_value_by_wavelength(
+    values: np.ndarray | None,
+    wavelength_index: np.ndarray,
+    unique_wavelength_index: list[int],
+    label: str,
+) -> list[float]:
+    if values is None:
+        raise ValueError(f"raw/{label} is required for Phase 3.6 export")
+    out: list[float] = []
+    for idx in unique_wavelength_index:
+        match = np.where(wavelength_index == int(idx))[0]
+        unique = np.unique(np.asarray(values)[match])
+        if unique.size != 1:
+            raise ValueError(f"raw/{label} is not constant within wavelength_index={idx}")
+        out.append(float(unique[0]))
+    return out
+
+
+def _constant_string_by_wavelength(
+    values: list[str] | None,
+    wavelength_index: np.ndarray,
+    unique_wavelength_index: list[int],
+    label: str,
+) -> list[str]:
+    if values is None:
+        raise ValueError(f"raw/{label} is required for Phase 3.6 export")
+    values_arr = np.asarray(values, dtype=object)
+    out: list[str] = []
+    for idx in unique_wavelength_index:
+        match = np.where(wavelength_index == int(idx))[0]
+        unique = list(dict.fromkeys(str(values_arr[i]) for i in match))
+        if len(unique) != 1:
+            raise ValueError(f"raw/{label} is not constant within wavelength_index={idx}")
+        out.append(unique[0])
+    return out
+
+
+def _format_wavelength_key(wavelength_nm: float) -> str:
+    return format(float(wavelength_nm), ".1f")
 
 
 def main() -> None:

@@ -61,9 +61,13 @@ provenance rule below.
   - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
   - `outputs/exposure_calibration/camera_params_psf_safe.json` (Phase 3.0.5b)
 - **Produces:**
-  - `psf_roi.json` - camera-frame crop window, center, and policy
-  - `psf_roi_preview.png` - crop window overlay on averaged frame
-  - `psf_roi_report.md` - human-readable diagnostics
+  - `psf_roi.json` - camera-frame crop window, center, compatibility baseline,
+    and multi-ROI candidate metadata
+  - `psf_roi_preview.png` - legacy baseline overlay for `roi_256`
+  - `psf_roi_preview_roi_256.png` / `roi_512` / `roi_768` / `roi_1024` -
+    candidate overlays on the averaged frame
+  - `psf_roi_candidates_report.md` - human-readable candidate summary
+  - `psf_roi_report.md` - compatibility alias of the candidate summary
 - **Script:** `scripts/analyze_psf_roi.py`
 - **Status:** hardware capture and analysis complete for current baseline
 - **Coordinate system:** This directory contains the camera sensor crop used by
@@ -71,6 +75,10 @@ provenance rule below.
   `outputs/pupil_geometry/`, which is in LCD physical coordinates.
 - **Current frozen ROI:** center `≈ (1148.996, 934.200)`, ROI
   `x=[1021,1277), y=[806,1062), 256 x 256`.
+- **Frozen baseline rule:** `roi_256` remains the current audited baseline.
+- **Multi-ROI rule:** larger centered ROI candidates may be added for
+  diagnostic dOTF support/leakage inspection. They do not automatically select
+  the final Phase 3.4 modelling ROI.
 - **Display caveat:** `psf_roi_preview.png` is contrast-stretched and is for
   ROI placement checks, not raw exposure judgment.
 
@@ -125,6 +133,9 @@ provenance rule below.
   - `<perturbation_id>/dotf_imag.png` - dOTF imaginary part
   - `dotf_metrics.json`
   - `dotf_report.md`
+  - `dotf_roi_comparison_manifest.json` - per-ROI comparison summary
+  - `dotf_roi_comparison_report.md` - human-readable multi-ROI comparison
+  - `<roi_key>/<perturbation_id>/dotf_metrics.json` - per-ROI per-perturbation metrics
 - **Script:** `scripts/analyze_dotf.py`
 - **Status:** hardware capture and analysis complete for current baseline
 - **Current frozen conclusion:**
@@ -134,6 +145,8 @@ provenance rule below.
   - `dotf_peak_abs(edge_block_right) ~= 4.19378e-4`
   - `dotf_peak_abs(edge_block_top) ~= 4.04660e-4`
   - `dotf_peak_abs(edge_block_bottom) ~= 5.96703e-4`
+- **Multi-ROI rule:** dOTF may be recomputed for multiple ROI candidates from
+  existing full-frame raw data. No automatic ROI selection is performed.
 - **Boundary:** Diagnostic visualization only. No pupil stitching or final
   complex pupil reconstruction is performed here.
 
@@ -158,10 +171,21 @@ provenance rule below.
   - `psf_dictionary_report.md`
 - **Script:** `scripts/analyze_psf_dictionary.py`
 - **Status:** hardware run attempted but blocked before capture
-- **Current blocker:** capture path TLS API mismatch:
-  `'TLSService' object has no attribute 'set_target_wavelength_nm'`
-- **Current attempted raw state:** `data/raw/bishe_psf_dictionary.h5` exists,
-  but `completed = false` and `n_captures_written = 0`
+- **Historical failed run:** `data/raw/bishe_psf_dictionary.h5` exists, but
+  `completed = false` and `n_captures_written = 0`
+- **Current code status:** the historical TLS API mismatch in the capture path
+  has been repaired, but the previous / ongoing rerun attempt is superseded by
+  the Phase 3.0.5 schema v2 camera catalog update
+- **Current rerun rule:** Phase 3.4 must be rerun after the current
+  `camera_params_psf_safe.json` schema v2 per-wavelength catalog is produced
+  and adopted. No current Phase 3.4 raw file is valid for LCD_forward export.
+- **ROI rule:** Phase 3.4 must use a manually selected ROI after reviewing the
+  Phase 3.3 multi-ROI dOTF comparison. The current selected modelling ROI is
+  `roi_512`. `roi_256` remains the frozen baseline, not the current Phase 3.4
+  crop target.
+- **Storage rule:** Phase 3.4 raw dictionary capture stores PSF ROI crops only,
+  not full-frame raw averages. Full-frame preservation for ROI diagnostics and
+  dOTF support inspection belongs to Phase 3.2a / 3.3.
 - **Boundary:** Data-first acquisition and export only. No forward-model
   training is performed here.
 - **Wavelength rule:** Phase 3.6 target capture must not request wavelengths
@@ -183,6 +207,9 @@ provenance rule below.
 - **Status:** scripts implemented; hardware data pending
 - **Boundary:** No reconstruction is performed in `optic_system`. This
   directory contains only derived export data for `LCD_forward`.
+- **Raw storage note:** Phase 3.6 target capture may still preserve full-frame
+  averaged observations together with ROI crops. That is distinct from Phase
+  3.4 dictionary capture, which now stores the selected ROI crop only.
 
 ### Phase 3.5 / 3.7 note
 
@@ -227,7 +254,7 @@ thesis freeze.
 
 The current audited Phase 3 baseline is summarized in:
 
-- [phase3_current_results.md](/C:/Users/Dell/PycharmProjects/optic_system/docs/phase3_current_results.md)
+- `docs/phase3_current_results.md`
 
 If any later rerun changes the active:
 

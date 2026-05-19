@@ -23,18 +23,22 @@ camera:
   full_scale: 255
 
 camera_search:
+  wavelength_independent: true
+  inherit_upper_bound_across_wavelengths: false
+  gains_db: [0.0]
+  target_policy: near_full_scale_safe
+  safety_rule: all_frames_all_pixels_strictly_below_full_scale
   # exposure_us_start must be set to the MAXIMUM exposure you are willing to try
   # (the search upper bound).  The sweep starts at this ceiling and descends
   # by step_factor until reaching exposure_us_min or finding a safe exposure.
   exposure_us_start: 50000
   exposure_us_min: 100
-  # Phase 1 uses binary search per wavelength.  Search stops when the
+  # Each wavelength is searched independently. Search stops when the
   # exposure interval is narrower than binary_search_eps_us (microseconds).
   binary_search_eps_us: 50.0
   exposure_us_step_factor: 0.5
-  gain_db_start: 0.0
   gain_db_min: 0.0
-  gain_db_max: 10.0
+  gain_db_max: 0.0
   gain_db_step_db: 10.0
   frames_per_setting: 5
   camera_param_settle_ms: 300

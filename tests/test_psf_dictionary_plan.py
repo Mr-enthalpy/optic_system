@@ -13,6 +13,7 @@ def test_psf_dictionary_plan_loads_and_validates() -> None:
     validate_phase32_plan(plan, task="dictionary", hardware=False)
     assert plan["plan_id"] == "bishe_psf_dictionary"
     assert plan["phase"] == "3.4"
+    assert plan["psf_roi_key"] == "roi_512"
     assert plan["masks"]["lowres_shape"] == [64, 64]
     assert [entry["wavelength_nm"] for entry in plan["wavelengths"]] == [450.0, 550.0, 650.0]
 

@@ -90,8 +90,9 @@ consume the raw HDF5 to produce processed results.
 ### `plans/bishe_psf_roi.yaml`
 - **Phase:** 3.2a - Camera-frame PSF ROI calibration
 - **Purpose:** Determine a fixed crop window in camera sensor coordinates for
-  the point-source PSF.  Produces `psf_roi.json` as the single source of truth
-  for all subsequent PSF crops.
+  the point-source PSF. Produces `psf_roi.json` as the single source of truth
+  for all subsequent PSF crops while preserving `roi_256` as the frozen
+  baseline and recording larger centered ROI candidates for later diagnostics.
 - **Inputs:**
   - `outputs/pupil_geometry/effective_pupil_window.json` (LCD mask window)
   - `outputs/exposure_calibration/camera_params_psf_safe.json`
@@ -100,6 +101,9 @@ consume the raw HDF5 to produce processed results.
 - **Masks:** Single mask (effective pupil window).  Not a mask list.
 - **Wavelengths:** Single wavelength.
 - **Camera:** Burst of N frames per capture, K repeats.
+- **ROI candidates:** The active plan records `candidate_crop_sizes` for
+  `roi_256`, `roi_512`, `roi_768`, and `roi_1024`. These are analysis-time
+  candidates, not automatic final ROI selections.
 - **LCD settle:** Hardware validation rejects values below 100 ms; default is
   200 ms.
 - **Output raw HDF5:** `data/raw/bishe_psf_roi.h5`
@@ -139,9 +143,15 @@ consume the raw HDF5 to produce processed results.
 - **Camera:** One reference burst plus one burst per perturbation for each
   repeat. Reference and perturbed captures are interleaved by repeat to limit
   source drift.
+- **ROI comparison:** The active plan may request multiple `roi_keys`. Analysis
+  recomputes crops for those ROI candidates from existing full-frame raw data;
+  no repeated capture is required for each ROI.
+- **Edge diagnostics:** `dotf.edge_energy` records edge-band energy fractions
+  to help manual inspection of support truncation and window leakage.
 - **Output raw HDF5:** `data/raw/bishe_dotf_diagnostic.h5`
 - **Downstream analysis:** `scripts/analyze_dotf.py` writes per-perturbation
-  dOTF complex arrays and abs/log_abs/phase/real/imag visualizations.
+  dOTF complex arrays and abs/log_abs/phase/real/imag visualizations, plus
+  per-ROI comparison summaries.
 - **Boundary:** Diagnostic visualization only. No pupil stitching or full
   complex pupil reconstruction.
 
@@ -168,6 +178,9 @@ consume the raw HDF5 to produce processed results.
   `val.h5`, and `test.h5`.
 - **Boundary:** Data-first acquisition and export only. No forward-model
   training, reconstruction, or mask optimization.
+- **ROI rule:** Phase 3.4 must not auto-select the largest ROI. The final
+  modelling ROI remains a manual decision after Phase 3.3 multi-ROI dOTF
+  inspection.
 
 ### `plans/bishe_target_capture.yaml`
 - **Phase:** 3.6 - target multiframe / multi-wavelength capture and export
