@@ -95,27 +95,42 @@ provenance rule below.
   - `psfs_std.npy` - per-mask PSF standard deviation
   - `repeatability_metrics.json` - intra-mask repeatability (PSNR, SSIM,
     coefficient of variation) and inter-mask pairwise distances
+  - `repeatability_metrics_normalized.json` - background-subtracted +
+    unit-energy normalized companion analysis
   - `pairwise_distance_matrix.npy` - between-mask pairwise distance matrix
   - `ssim_matrix.npy` - between-mask pairwise SSIM matrix
   - `psnr_matrix.npy` - between-mask pairwise PSNR matrix
   - `diversity_metrics.json` - inter-mask diversity summary and
     `inter_mask_distance / intra_mask_repeat_noise`
+  - `diversity_metrics_normalized.json` - stricter diversity summary with
+    reduced global energy-scale influence
   - `psf_diversity_metrics.json` - alias for the diversity summary
+  - `spectral_diversity_metrics_normalized.json` - stricter same-mask
+    cross-wavelength shape-difference summary
   - `repeatability_report.md`
   - `report.md` - alias for the repeatability report
 - **Script:** `scripts/analyze_psf_repeatability.py`
 - **Status:** hardware capture and analysis complete for current baseline
 - **Current frozen conclusion:**
-  - `mean_intra_mask_mse ≈ 0.0208245`
-  - `mean_inter_mask_mse ≈ 15.6980484`
-  - `inter_mask_distance_over_intra_noise ≈ 753.826336`
+  - raw averaged crops:
+    - `mean_intra_mask_mse ≈ 0.0151267`
+    - `mean_inter_mask_mse ≈ 4.39363`
+    - `inter_mask_distance_over_intra_noise ≈ 290.455`
+  - background-subtracted + unit-energy normalized crops:
+    - `mean_intra_mask_mse ≈ 2.53772e-11`
+    - `mean_inter_mask_mse ≈ 7.55959e-09`
+    - `inter_mask_distance_over_intra_noise ≈ 297.889`
+    - `mean_cross_wavelength_same_mask_mse ≈ 3.30682e-08`
+    - `cross_wavelength_same_mask_over_intra_noise ≈ 1303.07`
+  - Interpretation: normalized companion metrics are the stricter basis for
+    cross-wavelength shape claims.
   - `mask_induced_differences_larger_than_repeat_noise = true`
 
 ### `outputs/dotf/`
 
 - **Phase:** 3.3 - dOTF diagnostic visualization
 - **Depends on:**
-  - `data/raw/bishe_dotf_diagnostic.h5`
+  - current audited raw: `data/raw/bishe_dotf_diagnostic_20260520_004205.h5`
   - `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain)
   - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
 - **Produces:**
@@ -149,12 +164,17 @@ provenance rule below.
   existing full-frame raw data. No automatic ROI selection is performed.
 - **Boundary:** Diagnostic visualization only. No pupil stitching or final
   complex pupil reconstruction is performed here.
+- **Current audited run:** the latest audited multi-wavelength dOTF result is
+  currently stored under `outputs/dotf_20260520_004205/` with raw source
+  `data/raw/bishe_dotf_diagnostic_20260520_004205.h5`. The legacy
+  `outputs/dotf/` directory should not be assumed to be the active baseline
+  unless a deliberate promotion is performed.
 
 ### `outputs/psf_dictionary/`
 
 - **Phase:** 3.4 - PSF dictionary and LCD_forward export
 - **Depends on:**
-  - `data/raw/bishe_psf_dictionary.h5`
+  - current audited raw: `data/raw/bishe_psf_dictionary_20260520_010603.h5`
   - `outputs/psf_roi/psf_roi.json` (Phase 3.2a, camera domain)
   - `outputs/pupil_geometry/effective_pupil_window.json` (Phase 3.1, LCD domain)
 - **Produces:**
@@ -170,15 +190,19 @@ provenance rule below.
   - `export_lcd_forward/test.h5` - LCD_forward-compatible test split
   - `psf_dictionary_report.md`
 - **Script:** `scripts/analyze_psf_dictionary.py`
-- **Status:** hardware run attempted but blocked before capture
-- **Historical failed run:** `data/raw/bishe_psf_dictionary.h5` exists, but
-  `completed = false` and `n_captures_written = 0`
-- **Current code status:** the historical TLS API mismatch in the capture path
-  has been repaired, but the previous / ongoing rerun attempt is superseded by
-  the Phase 3.0.5 schema v2 camera catalog update
-- **Current rerun rule:** Phase 3.4 must be rerun after the current
-  `camera_params_psf_safe.json` schema v2 per-wavelength catalog is produced
-  and adopted. No current Phase 3.4 raw file is valid for LCD_forward export.
+- **Status:** hardware capture and analysis complete for current baseline
+- **Current audited run:** the active audited result is
+  `outputs/psf_dictionary_20260520_010603/` with raw source
+  `data/raw/bishe_psf_dictionary_20260520_010603.h5`
+- **Current audited summary:**
+  - `psf_dictionary_acquired = true`
+  - `psf_roi_key_used = roi_512`
+  - `wavelengths_nm = [450.0, 550.0, 650.0]`
+  - `n_masks = 170`
+  - `repeats_per_mask = 5`
+  - `export_lcd_forward.enabled = true`
+- **Historical failed run:** the older failed raw files remain preserved for
+  audit and should not be treated as the current baseline
 - **ROI rule:** Phase 3.4 must use a manually selected ROI after reviewing the
   Phase 3.3 multi-ROI dOTF comparison. The current selected modelling ROI is
   `roi_512`. `roi_256` remains the frozen baseline, not the current Phase 3.4
@@ -188,6 +212,11 @@ provenance rule below.
   dOTF support inspection belongs to Phase 3.2a / 3.3.
 - **Boundary:** Data-first acquisition and export only. No forward-model
   training is performed here.
+- **Canonical-path note:** the latest audited Phase 3.4 result has not yet
+  been promoted to the canonical directory name `outputs/psf_dictionary/`.
+  Downstream consumers should point explicitly to
+  `outputs/psf_dictionary_20260520_010603/export_lcd_forward/` until that
+  promotion is performed.
 - **Wavelength rule:** Phase 3.6 target capture must not request wavelengths
   that are missing from these exports. The export records `wavelengths_nm`
   explicitly so `optic_system` can fail fast before reconstruction.
@@ -199,7 +228,10 @@ provenance rule below.
   - `data/raw/bishe_target_capture.h5`
   - `outputs/psf_roi/psf_roi.json`
   - `outputs/pupil_geometry/effective_pupil_window.json`
-  - `outputs/psf_dictionary/export_lcd_forward/*.h5`
+  - current audited Phase 3.4 export:
+    - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/train.h5`
+    - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/val.h5`
+    - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/test.h5`
 - **Produces:**
   - `export_lcd_forward/target_frames.h5` - LCD_forward-compatible target-frame dataset
   - `export_lcd_forward/README.md` - dataset note and shape summary

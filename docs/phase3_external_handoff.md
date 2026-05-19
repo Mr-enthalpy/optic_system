@@ -1,90 +1,124 @@
 # Phase 3 External Handoff
 
-This document defines what should be handed off to the external thesis project
-and to `LCD_forward`.
+This document defines the canonical external release layout.
 
-It is not an internal audit log for `optic_system`.
+There is one release artifact with two consumer views. Do not maintain
+separate independent handoffs for `LCD_forward` and the thesis project.
 
-## Purpose
+## Canonical Release
 
-The handoff must include:
+Artifact root:
 
-- the current mainline data products
-- the current mainline interpretation around those data products
-- the ROI decision context required for later modelling work
+- `D:/datasets/optic_system/phase3_release_20260520/`
 
-The handoff must not include:
+Git-tracked descriptor:
 
-- backup files
-- contaminated files
-- rollback history
-- long narratives tied only to superseded or degraded runs
+- `handoff/optic_system_phase3_release_20260520/`
 
-## Current handoff snapshot
+Required top-level files:
 
-The current external handoff should be assembled as a local export package,
-for example under:
+- `RELEASE.json`
+- `MANIFEST.json`
+- `SHA256SUMS.txt`
+- `common/`
+- `lcd_forward/`
+- `thesis/`
 
-- `handoff/phase3_external_release_20260519/`
+## Layout
 
-That package is intended to be copied outside `optic_system` as the current
-Phase 3 baseline handoff. The package contents are export artifacts rather
-than required repository-tracked source files.
+```text
+optic_system_phase3_release_YYYYMMDD/
+├── RELEASE.json
+├── MANIFEST.json
+├── SHA256SUMS.txt
+├── common/
+│   ├── docs/
+│   ├── provenance/
+│   └── roi_context/
+├── lcd_forward/
+│   ├── psf_dictionary/
+│   │   ├── train.h5
+│   │   ├── val.h5
+│   │   ├── test.h5
+│   │   └── README.md
+│   └── data_contract.md
+└── thesis/
+    ├── figures/
+    ├── metrics/
+    ├── reports/
+    └── thesis_evidence_summary.md
+```
 
-## Included phases
+## Common View
 
-Included now:
+`common/` contains shared provenance used by both views:
 
-- Phase 3.0.5b
-- Phase 3.1
-- Phase 3.2a
-- Phase 3.2b
-- Phase 3.3
+- frozen docs and workflow notes
+- audited raw HDF5 sources
+- generated hardware plans
+- ROI candidates and dOTF ROI comparison context
 
-Not included yet:
+This prevents the thesis narrative and `LCD_forward` ingestion from silently
+diverging on camera parameters, ROI choice, wavelength list, or source raw
+files.
 
-- Phase 3.4 data products
+## LCD_forward View
 
-Phase 3.4 remains intentionally empty in the package until the current
-hardware run finishes and is analyzed.
+`lcd_forward/` is data-interface-first.
 
-## ROI decision context
+It contains:
 
-The handoff must preserve both the selected result and the selectable context.
+- Phase 3.4 measured PSF dictionary export
+- compact metadata / provenance
+- data contract
 
-That means the package must carry:
+It excludes:
 
-- `outputs/psf_roi/psf_roi.json`
-- the ROI preview images for `roi_256`, `roi_512`, `roi_768`, and `roi_1024`
-- the multi-ROI dOTF comparison report and manifest
-- the per-ROI dOTF output directories under `outputs/dotf/roi_*`
+- Phase 3.0.5b to 3.3 thesis narrative
+- ROI-choice debate beyond minimal provenance
+- thesis figure discussion
 
-The handoff must not reduce the ROI story to only:
+## Thesis View
 
-- `final_selected_roi_key = roi_512`
+`thesis/` is narrative-first.
 
-The external consumer must be able to inspect:
+It contains:
 
-- which ROI candidates existed
-- what each ROI candidate looked like in dOTF
-- why `roi_512` was selected as the current modelling ROI
+- figures
+- metrics
+- reports
+- evidence summary for Phase 3.0.5b through Phase 3.3
 
-## Mainline interpretation to preserve
+It excludes:
 
-The external handoff should preserve these points:
+- Phase 3.4 `train.h5`, `val.h5`, `test.h5`
+- Phase 3.4 PSF dictionary arrays intended for downstream modelling
+- target-capture export data for reconstruction
 
-- `global_safe_camera` is the active Phase 3 camera baseline
-- `effective_pupil_window.json` is the active cleaned Phase 3.1 pupil window
-- `roi_256` remains the audited Phase 3.2a baseline ROI
-- `roi_512` is the current manually selected Phase 3.4 modelling ROI
-- Phase 3.2b established that mask-induced PSF differences are much larger
-  than repeat noise
-- Phase 3.3 established that dOTF can be computed and visually compared across
-  multiple ROI candidates from full-frame raw data
+## Git Boundary
 
-## Package boundary
+Large data must not be committed to git.
 
-This package is for external use.
+Git should track only:
 
-It should stand on its own without requiring the reader to reconstruct the
-history from chat context or from backup / contaminated files.
+- release structure documentation
+- `MANIFEST.json`
+- `SHA256SUMS.txt`
+- data contract docs
+- small summary JSON / Markdown
+- ingest / verify scripts
+
+Actual `.h5`, large `.npy`, and bulk `.png` payloads belong in external
+artifact storage:
+
+- local lab storage: `D:/datasets/optic_system/phase3_release_YYYYMMDD/`
+- compressed archive plus `SHA256SUMS.txt`
+- GitHub Release asset / cloud drive / NAS / object storage / DVC remote
+
+## Verification
+
+Run:
+
+```powershell
+.venv\Scripts\python.exe scripts\verify_phase3_release.py D:\datasets\optic_system\phase3_release_20260520
+```

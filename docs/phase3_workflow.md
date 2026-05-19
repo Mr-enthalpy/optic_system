@@ -21,11 +21,20 @@ All downstream capture tasks use:
 outputs/exposure_calibration/camera_params_psf_safe.json
 ```
 
-Current frozen Phase 3.0.5b default:
+Current frozen Phase 3.0.5b baseline:
 
-- `global_safe_camera.exposure_us = 736.541748046875`
+- `global_safe_camera.exposure_us = 487.3046875`
 - `global_safe_camera.gain_db = 0.0`
 - `550 nm` is the limiting wavelength
+
+Interpretation boundary:
+
+- `camera_params_psf_safe.json` is a per-wavelength safe camera parameter
+  catalog.
+- `global_safe_camera` is a derived shared baseline only.
+- Phases that explicitly declare `camera_profile_policy:
+  wavelength_recommended` must use the per-wavelength recommended profiles
+  rather than forcing `global_safe_camera`.
 
 See `docs/phase3_current_results.md`.
 
@@ -325,7 +334,8 @@ averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
   `outputs/pupil_geometry/effective_pupil_window.json`; outside the window is
   opaque.
 - Masks: representative mask set, each repeated K times (K >= 10).
-- Wavelength: single wavelength, fixed.
+- Wavelengths: one or more thesis wavelengths. The active plan uses
+  `wavelength_recommended` profiles for `450/550/650 nm`.
 - Camera: burst of N frames per capture.
 - Hardware validation rejects `lcd.settle_ms < 100`; the default is 200 ms.
 - Hardware capture refuses to overwrite an existing `output.raw_h5`; rename
@@ -335,13 +345,23 @@ averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
 
 1. Load `raw_capture.h5` - extract frames for each mask x repetition.
 2. Apply `psf_roi.json` crop to every frame.
-3. Intra-mask repeatability: mean PSF, std PSF, coefficient of variation,
-   normalized correlation, PSNR, SSIM among repeats.
-4. Inter-mask diversity: pairwise MSE, PSNR, SSIM, cross-correlation,
-   Fourier magnitude difference.
-5. Confirm that between-mask differences exceed within-mask repeat noise.
-6. Write `repeatability_metrics.json`, `diversity_metrics.json`,
-   `psf_diversity_metrics.json`, and the pairwise matrix `.npy` files.
+3. Group captures by wavelength.
+4. For each wavelength: intra-mask repeatability via mean PSF, std PSF,
+   coefficient of variation, normalized correlation, PSNR, and SSIM among
+   repeats.
+5. For each wavelength: inter-mask diversity via pairwise MSE, PSNR, SSIM,
+   cross-correlation, and Fourier magnitude difference.
+6. For each mask: compare repeat-averaged PSFs across wavelengths to measure
+   same-mask spectral diversity.
+7. Re-run the same comparisons after background subtraction and unit-energy
+   normalization so cross-wavelength shape claims are not driven mainly by
+   residual photometric scaling.
+8. Confirm that both between-mask and cross-wavelength PSF differences exceed
+   within-condition repeat noise where applicable.
+9. Write `repeatability_metrics.json`, `diversity_metrics.json`,
+   `psf_diversity_metrics.json`, wavelength-grouped outputs,
+   `spectral_diversity_metrics.json`, and normalized companion metrics when
+   multiple wavelengths are present.
 
 ### Output
 
@@ -349,21 +369,40 @@ averaging), `old/roi.py:find_max_energy_roi` (ROI selection)
 outputs/psf_repeatability/repeatability_metrics.json
   - per-mask repeatability (mean, std, PSNR, SSIM, correlation)
   - between-mask pairwise distances (MSE, PSNR, SSIM)
+  - same-mask cross-wavelength PSF difference summary when multiple
+    wavelengths are present
   - inter_mask_distance / intra_mask_repeat_noise
   - psf_roi provenance recorded
+outputs/psf_repeatability/repeatability_metrics_normalized.json
+  - background-subtracted + unit-energy normalized companion analysis
+outputs/psf_repeatability/diversity_metrics_normalized.json
+  - stricter mask-diversity analysis with reduced global energy-scale influence
+outputs/psf_repeatability/spectral_diversity_metrics_normalized.json
+  - stricter same-mask cross-wavelength shape-difference analysis
 ```
 
-The conclusion is limited to whether mask-induced PSF differences are larger
-than repeatability noise. It must not be described as forward-model success.
+The conclusion is limited to whether mask-induced and wavelength-induced PSF
+differences are larger than repeatability noise. For cross-wavelength claims,
+the normalized companion metrics are the stricter basis because they suppress
+global photometric scaling. It must not be described as forward-model success.
 
 Current frozen Phase 3.2b result:
 
-- `mean_intra_mask_mse ≈ 0.0208245`
-- `mean_inter_mask_mse ≈ 15.6980484`
-- `inter_mask_distance_over_intra_noise ≈ 753.826336`
+- raw averaged crops:
+  - `mean_intra_mask_mse ≈ 0.0151267`
+  - `mean_inter_mask_mse ≈ 4.39363`
+  - `inter_mask_distance_over_intra_noise ≈ 290.455`
+- background-subtracted + unit-energy normalized crops:
+  - `mean_intra_mask_mse ≈ 2.53772e-11`
+  - `mean_inter_mask_mse ≈ 7.55959e-09`
+  - `inter_mask_distance_over_intra_noise ≈ 297.889`
+  - `mean_cross_wavelength_same_mask_mse ≈ 3.30682e-08`
+  - `cross_wavelength_same_mask_over_intra_noise ≈ 1303.07`
+  - `wavelength_induced_differences_larger_than_repeat_noise = true`
 - `mask_induced_differences_larger_than_repeat_noise = true`
 
-This is the current audited basis for entering Phase 3.3.
+This is the current audited basis for entering Phase 3.3. PSF-difference
+claims belong to Phase 3.2b; Phase 3.3 is a dOTF visualization milestone.
 
 ## dOTF diagnostic visualization
 
@@ -371,7 +410,8 @@ This is the current audited basis for entering Phase 3.3.
 
 **Purpose:** Use dOTF to reveal low-dimensional / sparse pupil or
 LCD-induced structure.  Directly migrate old-project `old/perturbation.py`
-dOTF computation and visualization logic.
+dOTF computation and visualization logic. This phase is diagnostic
+visualization, not the main PSF-difference milestone.
 
 **Old-project reference:** `old/perturbation.py` (mask perturbation),
 `old/roi.py:compute_dotf`, `old/roi.py:show_complex_2d`
@@ -389,21 +429,38 @@ and/or phase is sufficient for this milestone.
 - LCD: all masks inside `effective_pupil_window`.
 - Masks: base window mask + base window with edge-local perturbations at
   various positions.
-- Wavelength: single wavelength, fixed.
+- Wavelengths: one or more thesis wavelengths. Current active plan uses the
+  configured wavelength list and analyzes each wavelength separately. Any
+  cross-wavelength comparison here is secondary diagnostic context, not the
+  Phase 3.2b PSF diversity conclusion.
 
 ### Analysis
 
-1. Load `raw_capture.h5` - extract base PSF and perturbed PSF.
-2. Apply `psf_roi.json` crop to both reference and perturbed PSF.
-3. Align and optionally normalize energy.
-4. Compute dOTF:
+1. Load `raw_capture.h5` and group captures by wavelength.
+2. For each wavelength, extract base PSF and perturbed PSF.
+3. Apply `psf_roi.json` crop to both reference and perturbed PSF.
+4. Align and optionally normalize energy.
+5. Compute dOTF:
    - `PSF -> OTF` (FFT2 with shift)
    - `dOTF = OTF_perturbed - OTF_reference`
-5. Visualize dOTF abs, log_abs, phase, real, imag.
-6. Interpret observed structure as a diagnostic only; do not stitch or claim
+6. Visualize dOTF abs, log_abs, phase, real, imag.
+7. Compare dOTF behavior across ROI candidates and wavelengths.
+8. Interpret observed structure as a diagnostic only; do not stitch or claim
    a final complex pupil reconstruction.
 
 ### Output
+
+```text
+outputs/dotf/
+  dotf_metrics.json
+  dotf_report.md
+  dotf_roi_comparison_manifest.json
+  dotf_roi_comparison_report.md
+  wl_450p0/<roi_key>/<perturbation_id>/...
+  wl_550p0/<roi_key>/<perturbation_id>/...
+  wl_650p0/<roi_key>/<perturbation_id>/...
+
+Single-wavelength runs keep the legacy top-level baseline outputs:
 
 ```text
 outputs/dotf/
@@ -418,27 +475,27 @@ outputs/dotf/
   <perturbation_id>/dotf_phase.png
   <perturbation_id>/dotf_real.png
   <perturbation_id>/dotf_imag.png
-  dotf_metrics.json
-  dotf_report.md
-  dotf_roi_comparison_manifest.json
-  dotf_roi_comparison_report.md
   <roi_key>/<perturbation_id>/...
+```
 ```
 
 Current frozen Phase 3.3 result:
 
 - `dotf_computed = true`
 - `pupil_stitching_performed = false`
+- analyzed wavelengths:
+  - `450 nm`
+  - `550 nm`
+  - `650 nm`
 - perturbations completed:
   - `edge_block_left`
   - `edge_block_right`
   - `edge_block_top`
   - `edge_block_bottom`
-- `dotf_peak_abs` values:
-  - left `= 0.0004062839982924802`
-  - right `= 0.0004193781484524579`
-  - top `= 0.0004046599696057576`
-  - bottom `= 0.0005967033596909086`
+- current audited raw:
+  - `data/raw/bishe_dotf_diagnostic_20260520_004205.h5`
+- current audited analysis:
+  - `outputs/dotf_20260520_004205/`
 
 This is the current audited basis for entering Phase 3.4. It is a diagnostic
 visualization result only, not a stitched pupil result.
@@ -468,8 +525,8 @@ derived LCD_forward-compatible dataset without training a forward model.
 
 ### Analysis
 
-1. Load `raw_capture.h5` - extract full-frame averages, PSF crops, lowres
-   masks, and complete provenance.
+1. Load `raw_capture.h5` - extract per-repeat PSF ROI crops, lowres masks,
+   wavelength labels, mask IDs, and complete provenance.
 2. Group by `mask_id` and wavelength, compute repeat-averaged PSF crops, and
    summarize repeat noise / center drift / energy variation.
 3. Write preview contact sheets and `.npy` stacks for reproducible analysis.
@@ -499,29 +556,34 @@ outputs/psf_dictionary/
 
 Current Phase 3.4 state:
 
-- one historical hardware run was attempted before the current schema v2
-  per-wavelength camera catalog policy
-- capture failed before useful acquisition
-- `data/raw/bishe_psf_dictionary.h5` currently records:
-  - `completed = false`
-  - `n_captures_written = 0`
-- the historical TLS API mismatch in the capture path has been repaired in code
-- the previous / ongoing rerun attempt is superseded by the camera catalog
-  policy change
-- Phase 3.4 must be rerun after the current `camera_params_psf_safe.json`
-  schema v2 catalog is produced and adopted
-- no current Phase 3.4 raw file is valid for LCD_forward export
+- current audited raw:
+  - `data/raw/bishe_psf_dictionary_20260520_010603.h5`
+- current audited analysis:
+  - `outputs/psf_dictionary_20260520_010603/`
+- `psf_dictionary_acquired = true`
+- `psf_roi_key_used = roi_512`
+- `wavelengths_nm = [450.0, 550.0, 650.0]`
+- `n_masks = 170`
+- `repeats_per_mask = 5`
+- `export_lcd_forward.enabled = true`
+- the historical failed raw file is preserved for audit only and is not part of
+  the current baseline
+- the current audited 3.4 result is timestamped and has not yet been promoted
+  to the canonical directory name `outputs/psf_dictionary/`
 
 Operational implication:
 
-- Phase 3.4 is not yet complete.
-- There is no usable measured PSF dictionary export at the moment.
+- Phase 3.4 is complete for the current baseline.
+- There is now a usable measured PSF dictionary export for `LCD_forward`.
 - Phase 3.4 uses the manually selected ROI `roi_512` after the Phase 3.3
   multi-ROI dOTF comparison.
 - `roi_256` remains the frozen baseline, but it is not the current modelling
   ROI.
 - Phase 3.4 now captures the selected ROI crop only. Full-frame preservation
   for ROI diagnostics belongs to Phase 3.2a / 3.3.
+- Until the 3.4 result is promoted to `outputs/psf_dictionary/`, downstream
+  consumers must point explicitly to
+  `outputs/psf_dictionary_20260520_010603/export_lcd_forward/`.
 
 ## Backend boundary from Phase 3.5 onward
 
@@ -551,9 +613,10 @@ and export a reconstruction-ready HDF5 for `LCD_forward`.
   - `outputs/pupil_geometry/effective_pupil_window.json`
   - `outputs/psf_roi/psf_roi.json`
   - `outputs/exposure_calibration/camera_params_psf_safe.json`
-  - `outputs/psf_dictionary/export_lcd_forward/train.h5`
-  - `outputs/psf_dictionary/export_lcd_forward/val.h5`
-  - `outputs/psf_dictionary/export_lcd_forward/test.h5`
+  - current audited 3.4 export, currently:
+    - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/train.h5`
+    - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/val.h5`
+    - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/test.h5`
 - Masks: selected lowres masks from the Phase 3.4 measured dictionary export.
 - Wavelengths: one or more wavelengths, recorded explicitly in raw HDF5.
 - Target: real static target, documented by `target_id`, description, and notes.
@@ -568,6 +631,15 @@ and export a reconstruction-ready HDF5 for `LCD_forward`.
    complete provenance in `data/raw/bishe_target_capture.h5`.
 5. Export `outputs/target_capture/export_lcd_forward/target_frames.h5` for
    downstream reconstruction.
+
+Phase 3.6 boundary:
+
+- Phase 3.6 may preserve full-frame averaged target observations together with
+  ROI crops.
+- This is intentionally different from Phase 3.4, which now stores the
+  selected PSF ROI crop only.
+- Phase 3.6 capture should use the current audited 3.4 export source unless
+  and until a canonical `outputs/psf_dictionary/` promotion is performed.
 
 ### LCD_forward responsibilities
 

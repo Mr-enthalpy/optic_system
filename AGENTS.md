@@ -40,9 +40,10 @@ dOTF diagnostic hardware capture and analysis are also complete for the
 current baseline. Phase 3.2a/3.3 also support multi-size ROI diagnostics:
 `roi_256` remains the frozen baseline, while larger centered ROI candidates
 may be recomputed for dOTF support/leakage inspection without repeating
-hardware capture. Phase 3.4 measured PSF dictionary capture had a historical
-failed run; the TLS API mismatch has been repaired in code, but the final
-modelling ROI still requires manual selection after the multi-ROI dOTF review.
+hardware capture. Phase 3.4 measured PSF dictionary capture and
+LCD_forward export are complete for the current baseline using the manually
+selected modelling ROI `roi_512`. Phase 3.4 stores ROI crops only; full-frame
+preservation for ROI diagnostics remains a Phase 3.2a / 3.3 responsibility.
 
 Active roadmap: `docs/bishe_plan.md`.
 Current frozen results: `docs/phase3_current_results.md`.
@@ -485,18 +486,17 @@ Completed:
 - Phase 2B hardware smoke capture validation
 - Phase 3.0.5b PSF-safe exposure calibration
 - Phase 3.1 LCD-domain effective pupil geometry calibration
-- Phase 3.2 data-first PSF ROI/repeatability script and test scaffolding
+- Phase 3.2a/3.2b canonical hardware capture and analysis
+- Phase 3.3 dOTF diagnostic visualization
+- Phase 3.4 measured PSF dictionary and LCD_forward export
 
 Next (thesis branch):
 
-1. Phase 3.2a/3.2b canonical hardware capture and analysis.
-2. Phase 3.3 dOTF diagnostic visualization.
-3. Phase 3.4 measured PSF dictionary and LCD_forward export.
-4. Phase 3.5 measured-PSF forward validation in `LCD_forward` only.
-5. Phase 3.6 target multiframe / multi-wavelength capture and
+1. Phase 3.5 measured-PSF forward validation in `LCD_forward` only.
+2. Phase 3.6 target multiframe / multi-wavelength capture and
    LCD_forward export in `optic_system`.
-6. Phase 3.6 reconstruction in `LCD_forward`.
-7. Phase 3.7 thesis figure aggregation and report freeze outside
+3. Phase 3.6 reconstruction in `LCD_forward`.
+4. Phase 3.7 thesis figure aggregation and report freeze outside
    `optic_system`.
 
 Phase 3.2 and 3.3 are data-first experiment tasks.

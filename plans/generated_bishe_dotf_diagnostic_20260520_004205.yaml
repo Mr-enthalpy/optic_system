@@ -1,4 +1,4 @@
-plan_id: bishe_dotf_diagnostic
+﻿plan_id: bishe_dotf_diagnostic_rerun_20260520_004205
 phase: "3.3"
 
 camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
@@ -57,7 +57,8 @@ dotf:
     edge_band_px: 10
 
 output:
-  raw_h5: data/raw/bishe_dotf_diagnostic.h5
-  output_dir: outputs/dotf
+  raw_h5: data/raw/bishe_dotf_diagnostic_20260520_004205.h5
+  output_dir: outputs/dotf_20260520_004205
 
 lock_file: outputs/run_status/capture_hardware.lock
+

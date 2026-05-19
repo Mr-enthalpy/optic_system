@@ -1,0 +1,15 @@
+﻿{
+  "release_id": "optic_system_phase3_release_20260520",
+  "created_from_repo": "C:/Users/Dell/PycharmProjects/optic_system",
+  "artifact_root": "D:/datasets/optic_system/phase3_release_20260520",
+  "date": "2026-05-20",
+  "views": {
+    "common": "shared docs, provenance, raw HDF5 sources, ROI context",
+    "lcd_forward": "Phase 3.4 measured PSF dictionary data interface",
+    "thesis": "Phase 3.0.5b to 3.3 evidence, figures, metrics, and reports"
+  },
+  "boundaries": {
+    "lcd_forward_excludes": "Phase 3.0.5b to 3.3 thesis narrative",
+    "thesis_excludes": "Phase 3.4 train/val/test export HDF5"
+  }
+}

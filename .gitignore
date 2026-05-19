@@ -9,3 +9,15 @@ plans/generated_masks/
 app/outputs/
 outputs/run_status/
 env.local.ps1
+
+# Large/generated experiment artifacts. Keep release descriptors and manifests
+# in git, but store payloads in external artifact storage.
+outputs/**/*.h5
+outputs/**/*.npy
+outputs/**/*.png
+handoff/**/*.h5
+handoff/**/*.npy
+handoff/**/*.png
+handoff/**/*.zip
+handoff/**/*.7z
+handoff/**/*.zst

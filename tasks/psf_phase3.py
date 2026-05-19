@@ -43,7 +43,7 @@ def validate_phase32_plan(
     required = ["plan_id", "phase", "camera_params_source", "pupil_window_source", "lcd", "capture", "output"]
     if task in {"dictionary", "target_capture"}:
         required.append("wavelengths")
-    else:
+    elif task == "roi":
         required.append("wavelength")
     for key in required:
         if not plan.get(key):
@@ -77,6 +77,13 @@ def validate_phase32_plan(
             raise Phase32PlanError("PSF repeatability plan phase must be '3.2b'")
         if not plan.get("psf_roi_source"):
             raise Phase32PlanError("psf_roi_source is required")
+        wavelengths = plan.get("wavelengths")
+        wavelength = plan.get("wavelength")
+        if wavelengths:
+            if not isinstance(wavelengths, list) or not wavelengths:
+                raise Phase32PlanError("wavelengths must be a non-empty list when provided")
+        elif not wavelength:
+            raise Phase32PlanError("wavelength or wavelengths is required")
         if not plan.get("masks", {}).get("include"):
             raise Phase32PlanError("masks.include must be non-empty")
         repeats = int(plan.get("capture", {}).get("repeats_per_mask", 0))
@@ -87,6 +94,13 @@ def validate_phase32_plan(
             raise Phase32PlanError("dOTF diagnostic plan phase must be '3.3'")
         if not plan.get("psf_roi_source"):
             raise Phase32PlanError("psf_roi_source is required")
+        wavelengths = plan.get("wavelengths")
+        wavelength = plan.get("wavelength")
+        if wavelengths:
+            if not isinstance(wavelengths, list) or not wavelengths:
+                raise Phase32PlanError("wavelengths must be a non-empty list when provided")
+        elif not wavelength:
+            raise Phase32PlanError("wavelength or wavelengths is required")
         perturbation_set = plan.get("dotf", {}).get("perturbation_set")
         if not isinstance(perturbation_set, list) or not perturbation_set:
             raise Phase32PlanError("dotf.perturbation_set must be a non-empty list")
@@ -594,6 +608,11 @@ class Phase32RawWriter:
             raw.create_dataset("crops", shape=(0, 1, 1), maxshape=(None, None, None), dtype=np.float64, chunks=(1, 64, 64), compression="gzip", compression_opts=4)
         raw.create_dataset("mask_id", shape=(0,), maxshape=(None,), dtype=string_dtype)
         raw.create_dataset("repeat_index", shape=(0,), maxshape=(None,), dtype=np.int64)
+        raw.create_dataset("wavelength_nm", shape=(0,), maxshape=(None,), dtype=np.float64)
+        raw.create_dataset("wavelength_index", shape=(0,), maxshape=(None,), dtype=np.int64)
+        raw.create_dataset("exposure_us", shape=(0,), maxshape=(None,), dtype=np.float64)
+        raw.create_dataset("gain_db", shape=(0,), maxshape=(None,), dtype=np.float64)
+        raw.create_dataset("camera_profile_used", shape=(0,), maxshape=(None,), dtype=string_dtype)
         raw.create_dataset("timestamp_ns", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("mask_metadata_json", shape=(0,), maxshape=(None,), dtype=string_dtype)
         cap = f.require_group("capture")
@@ -638,6 +657,11 @@ class Phase32RawWriter:
         repeat_index: int,
         mask_metadata: dict[str, Any],
         crop: np.ndarray | None = None,
+        wavelength_nm: float | None = None,
+        wavelength_index: int | None = None,
+        exposure_us: float | None = None,
+        gain_db: float | None = None,
+        camera_profile_used: str | None = None,
     ) -> int:
         f = self._ensure_open()
         row = self._n
@@ -648,6 +672,11 @@ class Phase32RawWriter:
             _append_frame(f["raw/crops"], row, np.asarray(crop, dtype=np.float64))
         _append_scalar(f["raw/mask_id"], str(mask_id))
         _append_scalar(f["raw/repeat_index"], int(repeat_index))
+        _append_scalar(f["raw/wavelength_nm"], float(wavelength_nm) if wavelength_nm is not None else float("nan"))
+        _append_scalar(f["raw/wavelength_index"], int(wavelength_index) if wavelength_index is not None else -1)
+        _append_scalar(f["raw/exposure_us"], float(exposure_us) if exposure_us is not None else float("nan"))
+        _append_scalar(f["raw/gain_db"], float(gain_db) if gain_db is not None else float("nan"))
+        _append_scalar(f["raw/camera_profile_used"], str(camera_profile_used or ""))
         _append_scalar(f["raw/timestamp_ns"], int(time.time_ns()))
         _append_scalar(f["raw/mask_metadata_json"], json_dumps(mask_metadata))
         self._n += 1

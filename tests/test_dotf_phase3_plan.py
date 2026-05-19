@@ -13,6 +13,8 @@ def test_dotf_plan_loads_and_validates() -> None:
     validate_phase32_plan(plan, task="dotf", hardware=False)
     assert plan["plan_id"] == "bishe_dotf_diagnostic"
     assert plan["phase"] == "3.3"
+    assert [float(item["wavelength_nm"]) for item in plan["wavelengths"]] == [450.0, 550.0, 650.0]
+    assert plan["camera_profile_policy"] == "wavelength_recommended"
     assert plan["dotf"]["perturbation_set"]
     assert plan["dotf"]["roi_keys"] == ["roi_256", "roi_512", "roi_768", "roi_1024"]
     assert plan["dotf"]["edge_energy"]["enabled"] is True

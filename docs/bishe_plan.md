@@ -96,12 +96,19 @@ Outputs:
 - `outputs/exposure_calibration/camera_params_psf_safe.json`
 
 Current frozen result:
-- `global_safe_camera = 0.0 dB / 736.541748046875 us`
-- `550 nm` is the limiting wavelength with burst-peak margin `12 DN`
+- `global_safe_camera = 0.0 dB / 487.3046875 us`
+- per-wavelength recommended profiles:
+  - `450 nm`: `0.0 dB / 779.6875 us`
+  - `550 nm`: `0.0 dB / 487.3046875 us`
+  - `650 nm`: `0.0 dB / 2241.6015625 us`
+- `550 nm` is still the limiting wavelength in the derived shared baseline
 
 Downstream default:
 All Phase 3 captures use `outputs/exposure_calibration/camera_params_psf_safe.json`,
-and current active plans default to `global_safe_camera`.
+but the file now represents a per-wavelength safe camera catalog rather than a
+single global setting. `global_safe_camera` is a derived shared baseline only.
+Phases that declare `camera_profile_policy: wavelength_recommended` should use
+the per-wavelength recommended profiles.
 
 ---
 
@@ -115,7 +122,7 @@ Purpose:
 - produce `effective_pupil_window.json` as the window baseline for all
   subsequent mask-encoded experiments
 - use PSF-safe camera parameters from Phase 3.0.5b; the current frozen result
-  uses `global_safe_camera`
+  was acquired after the schema v2 catalog update
 
 **Hardware constraint:** The TLS (monochromator) must filter the light
 source to the planned wavelength.  Without wavelength filtering the
@@ -340,6 +347,8 @@ Purpose:
 - reacquire the two key old-project findings with new data:
   1. Same-mask repeat captures yield stable PSFs (intra-mask repeatability).
   2. Between-mask PSF differences exceed repeat noise (inter-mask diversity).
+  3. Same-mask PSFs may also differ systematically across wavelengths
+     (cross-wavelength spectral diversity).
 
 Input:
 - `outputs/psf_roi/psf_roi.json` (camera-frame crop)
@@ -356,11 +365,16 @@ Flow:
 ```
 effective pupil window on LCD
   -> representative masks (inside window)
+  -> one or more thesis wavelengths with wavelength-specific camera profiles
   -> K repeats per mask, N-frame burst per capture
   -> raw capture HDF5
   -> psf_roi crop every frame
+  -> group by wavelength
   -> intra-mask: mean / std / coefficient-of-variation / PSNR / SSIM
   -> inter-mask: pairwise MSE / PSNR / SSIM / Fourier difference
+  -> same-mask cross-wavelength: pairwise PSF difference after repeat averaging
+  -> rerun cross-wavelength comparison after background subtraction and
+     unit-energy normalization
 ```
 
 Default masks (all inside the effective pupil window):
@@ -376,14 +390,26 @@ random_lowfreq_2
 ```
 
 Current frozen conclusion:
-- `mean_intra_mask_mse ≈ 0.0208245`
-- `mean_inter_mask_mse ≈ 15.6980484`
-- `inter_mask_distance_over_intra_noise ≈ 753.826336`
+- raw averaged crops:
+  - `mean_intra_mask_mse ≈ 0.0151267`
+  - `mean_inter_mask_mse ≈ 4.39363`
+  - `inter_mask_distance_over_intra_noise ≈ 290.455`
 - `mask_induced_differences_larger_than_repeat_noise = true`
+- background-subtracted + unit-energy normalized crops:
+  - `mean_intra_mask_mse ≈ 2.53772e-11`
+  - `mean_inter_mask_mse ≈ 7.55959e-09`
+  - `inter_mask_distance_over_intra_noise ≈ 297.889`
+  - `mean_cross_wavelength_same_mask_mse ≈ 3.30682e-08`
+  - `cross_wavelength_same_mask_over_intra_noise ≈ 1303.07`
+  - `wavelength_induced_differences_larger_than_repeat_noise = true`
 
 Therefore the current data supports:
 1. same-mask PSFs are repeatable
 2. mask-induced PSF differences are much larger than repeatability noise
+3. same-mask cross-wavelength PSF shape differences remain much larger than
+   repeatability noise after background subtraction and unit-energy normalization
+4. cross-wavelength PSF difference, when analyzed, belongs to this phase
+   rather than Phase 3.3
 
 This is the Phase 3.2 completion criterion. It is not a forward-model
 success claim.
@@ -427,6 +453,10 @@ Fourier magnitude difference
 Core conclusion: report `inter_mask_distance / intra_mask_repeat_noise`.
 If the ratio is clearly greater than 1, the report may state that
 mask-induced PSF differences are larger than repeatability noise.
+For multi-wavelength runs also report the same-mask
+`cross_wavelength_distance / intra_mask_repeat_noise` ratio.
+For cross-wavelength shape claims, prefer the background-subtracted +
+unit-energy normalized companion analysis over the raw-crop metrics.
 
 Exit criteria:
 1. Within-mask PSF variance smaller than between-mask difference.
@@ -460,6 +490,8 @@ Purpose:
   visualization logic into active scripts
 - keep the result as diagnostic visualization only; no pupil stitching or
   full complex pupil reconstruction
+- do not treat this phase as the main PSF diversity or spectral-difference
+  milestone; that belongs to Phase 3.2b
 
 Input:
 - `outputs/pupil_geometry/effective_pupil_window.json`
@@ -475,12 +507,15 @@ Scripts:
 Flow:
 ```
 effective pupil window on LCD
-  -> display base (reference) mask
-  -> capture reference PSF (N-frame burst average)
-  -> display edge-perturbed mask
-  -> capture perturbed PSF (N-frame burst average)
+  -> for each configured wavelength:
+       -> display base (reference) mask
+       -> capture reference PSF (N-frame burst average)
+       -> display edge-perturbed mask
+       -> capture perturbed PSF (N-frame burst average)
   -> store full-frame raw averages once
   -> recompute crops for one or more ROI candidates from psf_roi.json
+  -> group by wavelength and compare dOTF per wavelength as a secondary
+     diagnostic
   -> align, normalize energy
   -> OTF_ref = FFT2(PSF_ref)
   -> OTF_pert = FFT2(PSF_pert)
@@ -492,23 +527,12 @@ Outputs:
 ```
 data/raw/bishe_dotf_diagnostic.h5
 outputs/dotf/
-  psf_reference.npy
-  psf_perturbed.npy
-  otf_reference.npy
-  otf_perturbed.npy
-  dotf_complex.npy
-  dotf_abs.png
-  dotf_log_abs.png
-  dotf_phase.png
-  dotf_real.png
-  dotf_imag.png
   dotf_report.md
   dotf_roi_comparison_manifest.json
   dotf_roi_comparison_report.md
-  roi_256/
-  roi_512/
-  roi_768/
-  roi_1024/
+  wl_450p0/
+  wl_550p0/
+  wl_650p0/
 ```
 
 Current frozen result:
@@ -554,7 +578,7 @@ Phase 3.3 does not attempt:
 
 ### Phase 3.4 - Measured PSF dictionary and LCD_forward export
 
-**Status: historical failed run preserved; capture path repaired; previous rerun superseded by schema v2 camera catalog update; hardware rerun pending after catalog update**
+**Status: hardware capture and analysis complete for the current baseline; historical failed runs preserved for audit**
 
 Purpose:
 - build a measured mask-to-PSF dictionary as the foundation for forward
@@ -580,10 +604,10 @@ representative mask families
   -> LCD_forward-compatible HDF5 export
 ```
 
-`optic_system` side outputs:
+Current audited `optic_system` outputs:
 ```
-data/raw/bishe_psf_dictionary.h5
-outputs/psf_dictionary/
+data/raw/bishe_psf_dictionary_20260520_010603.h5
+outputs/psf_dictionary_20260520_010603/
   psf_dictionary_summary.json
   psf_dictionary_manifest.json
   mask_preview_contact_sheet.png
@@ -607,14 +631,20 @@ masks: [N, T, 1, Hm, Wm]
 psfs:  [N, T, L, Hp, Wp]
 ```
 
-Current attempted-run state:
+Current audited result:
 
-- `data/raw/bishe_psf_dictionary.h5` exists but is not a usable dataset
-- `processing_flags_json.completed = false`
-- `processing_flags_json.n_captures_written = 0`
-- the historical TLS API mismatch that caused this run to fail has been
-  repaired in code
-- no canonical hardware rerun has been performed yet
+- `data/raw/bishe_psf_dictionary_20260520_010603.h5` is the active audited raw
+  source
+- `outputs/psf_dictionary_20260520_010603/` is the active audited analysis and
+  export directory
+- `psf_dictionary_acquired = true`
+- `psf_roi_key_used = roi_512`
+- `wavelengths_nm = [450.0, 550.0, 650.0]`
+- `n_masks = 170`
+- `repeats_per_mask = 5`
+- `export_lcd_forward.enabled = true`
+- historical failed runs remain preserved for audit and are not part of the
+  current baseline
 
 Manual ROI selection rule:
 
@@ -625,11 +655,15 @@ Manual ROI selection rule:
 - Phase 3.4 dictionary capture stores the selected ROI crop only. Full-frame
   preservation for ROI diagnostics and dOTF support inspection belongs to
   Phase 3.2a / 3.3.
+- The current audited export is still timestamped. Until an explicit canonical
+  promotion is performed, downstream consumers should point to
+  `outputs/psf_dictionary_20260520_010603/export_lcd_forward/`.
 
 Exit criteria:
 1. Measured PSF dictionary acquired for every planned wavelength with complete provenance.
 2. Data readable by LCD_forward-compatible HDF5 readers.
-3. Raw full-frame data and per-repeat crops preserved.
+3. Raw per-repeat ROI crops, mask metadata, wavelength metadata, and export
+   provenance preserved.
 4. No training or optimization code introduced in `optic_system`.
 
 After this phase, the thesis has the "hardware acquisition -> data format

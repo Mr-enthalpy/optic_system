@@ -23,6 +23,7 @@ def _write_raw_h5(raw_h5: Path, *, include_psf_roi_provenance: bool = True) -> d
     plan["capture"]["repeats"] = 3
     plan["dotf"]["perturbation_set"] = ["edge_block_right"]
     plan["dotf"]["roi_keys"] = ["roi_256", "roi_512", "roi_1024"]
+    plan["wavelengths"] = [{"wavelength_nm": 550.0, "grating": 1, "settle_ms": 500}]
     plan["output"]["raw_h5"] = str(raw_h5)
     psf_roi = {
         "phase": "3.2a",
@@ -86,6 +87,11 @@ def _write_raw_h5(raw_h5: Path, *, include_psf_roi_provenance: bool = True) -> d
             repeat_index=idx,
             capture_role="reference",
             perturbation_id="none",
+            wavelength_nm=550.0,
+            wavelength_index=0,
+            exposure_us=1000.0,
+            gain_db=0.0,
+            camera_profile_used="wl550p0_gain0.0_near_full_scale",
             mask_metadata={"mask_id": "dotf_reference", "capture_role": "reference", "perturbation_id": "none"},
         )
         writer.append_capture(
@@ -95,6 +101,11 @@ def _write_raw_h5(raw_h5: Path, *, include_psf_roi_provenance: bool = True) -> d
             repeat_index=idx,
             capture_role="perturbed",
             perturbation_id="edge_block_right",
+            wavelength_nm=550.0,
+            wavelength_index=0,
+            exposure_us=1000.0,
+            gain_db=0.0,
+            camera_profile_used="wl550p0_gain0.0_near_full_scale",
             mask_metadata={
                 "mask_id": "dotf_right",
                 "capture_role": "perturbed",
@@ -137,6 +148,86 @@ def test_analyze_dotf_outputs_files(tmp_path: Path) -> None:
     assert per_roi_metrics["validity"]["roi_selection_performed"] is False
     assert "edge_energy" in per_roi_metrics
     assert "pupil_stitching_performed=false" in report
+
+
+def test_analyze_dotf_multi_wavelength_outputs_files(tmp_path: Path) -> None:
+    import numpy as np
+
+    raw_h5 = tmp_path / "dotf_multi_raw.h5"
+    plan_path = Path(__file__).resolve().parents[1] / "plans" / "bishe_dotf_diagnostic.yaml"
+    plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    plan["capture"]["repeats"] = 1
+    plan["dotf"]["perturbation_set"] = ["edge_block_right"]
+    plan["dotf"]["roi_keys"] = ["roi_256", "roi_512"]
+    plan["wavelengths"] = [
+        {"wavelength_nm": 450.0, "grating": 1, "settle_ms": 500},
+        {"wavelength_nm": 650.0, "grating": 1, "settle_ms": 500},
+    ]
+    writer = DotfRawWriter(raw_h5, plan_id=plan["plan_id"]).open()
+    writer.write_json_sections(
+        plan=plan,
+        camera_metadata={"frame_dtype_full_scale": 255.0, "camera_profile_used": "test"},
+        lcd_metadata={"physical_shape": [90, 270], "subpixel_axis": 1},
+        tls_metadata={"wavelength_sequence": [450.0, 650.0]},
+        pupil_window_source={"phase": "3.1", "physical_shape": [90, 270], "center": {"x": 120.0, "y": 45.0}, "radius": 32.0},
+        psf_roi_source={
+            "phase": "3.2a",
+            "roi": {"x_min": 272, "x_max": 528, "y_min": 272, "y_max": 528, "width": 256, "height": 256},
+            "rois": {
+                "roi_256": {"x_min": 272, "x_max": 528, "y_min": 272, "y_max": 528, "width": 256, "height": 256, "fits_frame": True},
+                "roi_512": {"x_min": 144, "x_max": 656, "y_min": 144, "y_max": 656, "width": 512, "height": 512, "fits_frame": True},
+            },
+            "current_baseline_roi_key": "roi_256",
+            "default_roi_key": "roi_256",
+        },
+        camera_params_source={"validity": {"psf_exposure_safe": True}},
+    )
+    for wavelength_index, wavelength_nm in enumerate((450.0, 650.0)):
+        amplitude = 100.0 + 0.05 * wavelength_nm
+        ref = _gaussian(399.5 + 0.01 * wavelength_nm, 399.0 - 0.01 * wavelength_nm, shape=(800, 800), amplitude=amplitude)
+        pert = ref - 4.0 * _gaussian(437.0 + 0.01 * wavelength_nm, 399.0, shape=(800, 800), amplitude=1.0)
+        ref_crop = ref[272:528, 272:528]
+        pert_crop = pert[272:528, 272:528]
+        writer.append_capture(
+            frame_avg=ref,
+            crop=ref_crop,
+            mask_id=f"dotf_reference_{wavelength_index}",
+            repeat_index=0,
+            capture_role="reference",
+            perturbation_id="none",
+            wavelength_nm=wavelength_nm,
+            wavelength_index=wavelength_index,
+            exposure_us=1000.0 + wavelength_index,
+            gain_db=0.0,
+            camera_profile_used=f"wl{str(wavelength_nm).replace('.', 'p')}_gain0.0_near_full_scale",
+            mask_metadata={"mask_id": "dotf_reference", "capture_role": "reference", "perturbation_id": "none"},
+        )
+        writer.append_capture(
+            frame_avg=pert,
+            crop=pert_crop,
+            mask_id=f"dotf_right_{wavelength_index}",
+            repeat_index=0,
+            capture_role="perturbed",
+            perturbation_id="edge_block_right",
+            wavelength_nm=wavelength_nm,
+            wavelength_index=wavelength_index,
+            exposure_us=1000.0 + wavelength_index,
+            gain_db=0.0,
+            camera_profile_used=f"wl{str(wavelength_nm).replace('.', 'p')}_gain0.0_near_full_scale",
+            mask_metadata={"mask_id": "dotf_right", "capture_role": "perturbed", "perturbation_id": "edge_block_right"},
+        )
+    writer.finalize(completed=True)
+
+    out_dir = tmp_path / "out_multi"
+    result = analyze_dotf(raw_h5, out_dir)
+    assert result["task"] == "dotf_multi_wavelength_diagnostic_visualization"
+    assert result["wavelengths_nm"] == [450.0, 650.0]
+    assert (out_dir / "wl_450p0" / "roi_256" / "edge_block_right" / "dotf_complex.npy").exists()
+    assert (out_dir / "wl_650p0" / "roi_512" / "edge_block_right" / "dotf_complex.npy").exists()
+    metrics = json.loads((out_dir / "dotf_metrics.json").read_text(encoding="utf-8"))
+    manifest = json.loads((out_dir / "dotf_roi_comparison_manifest.json").read_text(encoding="utf-8"))
+    assert sorted(metrics["per_wavelength"].keys()) == ["450.0", "650.0"]
+    assert sorted(manifest["wavelengths"].keys()) == ["450.0", "650.0"]
 
 
 def test_analyze_dotf_requires_psf_roi_provenance(tmp_path: Path) -> None:

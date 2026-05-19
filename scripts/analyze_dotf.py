@@ -42,6 +42,7 @@ def analyze_dotf(raw_h5: str | Path, output_dir: str | Path) -> dict[str, Any]:
     with h5py.File(str(raw_path), "r") as f:
         frames = f["raw/frames_avg"][()] if "frames_avg" in f["raw"] else None
         stored_crops = f["raw/crops"][()] if "crops" in f["raw"] else None
+        wavelength_nm_ds = np.asarray(f["raw/wavelength_nm"][()], dtype=np.float64) if "raw/wavelength_nm" in f["raw"] else None
         plan = _require_json_dataset(f, "capture/plan_json")
         pupil_window = _require_json_dataset(f, "provenance/pupil_window_source_json")
         psf_roi = _require_json_dataset(f, "provenance/psf_roi_source_json")
@@ -53,14 +54,20 @@ def analyze_dotf(raw_h5: str | Path, output_dir: str | Path) -> dict[str, Any]:
 
     _validate_required_provenance(plan, pupil_window, psf_roi, camera_params_source)
 
+    capture_wavelength_nm = _resolve_capture_wavelengths(
+        plan=plan,
+        capture_roles=capture_roles,
+        wavelength_nm_ds=wavelength_nm_ds,
+    )
     capture_roles_arr = np.asarray(capture_roles)
     perturbation_ids_arr = np.asarray(perturbation_ids)
-    reference_idx = np.where(capture_roles_arr == "reference")[0]
-    if reference_idx.size == 0:
+    if np.where(capture_roles_arr == "reference")[0].size == 0:
         raise ValueError("raw HDF5 does not contain any reference captures")
     unique_perturbations = [pid for pid in dict.fromkeys(perturbation_ids) if pid != "none"]
     if not unique_perturbations:
         raise ValueError("raw HDF5 does not contain any perturbed captures")
+    wavelength_order = _ordered_wavelengths(capture_wavelength_nm)
+    multi_wavelength = len(wavelength_order) > 1
 
     dotf_cfg = dict(plan.get("dotf", {}))
     normalize_energy = bool(dotf_cfg.get("normalize_energy", True))
@@ -72,85 +79,121 @@ def analyze_dotf(raw_h5: str | Path, output_dir: str | Path) -> dict[str, Any]:
     requested_roi_keys = _resolve_requested_roi_keys(plan, psf_roi)
     baseline_roi_key = _resolve_baseline_roi_key(psf_roi, requested_roi_keys)
     full_frame_available = frames is not None
+    manifest_wavelengths: dict[str, Any] = {}
+    per_wavelength_summary: dict[str, Any] = {}
     legacy_baseline_summary: dict[str, Any] | None = None
-    manifest_rois: dict[str, Any] = {}
+    legacy_baseline_wavelength_nm: float | None = None
 
-    for roi_key in requested_roi_keys:
-        roi_record = _resolve_roi_record(psf_roi, roi_key)
-        if not bool(roi_record.get("fits_frame", True)):
+    for wavelength_nm in wavelength_order:
+        wl_key = _format_wavelength_key(wavelength_nm)
+        wl_mask = np.asarray(
+            [_format_wavelength_key(value) == wl_key for value in capture_wavelength_nm],
+            dtype=bool,
+        )
+        wl_indices = np.where(wl_mask)[0]
+        wl_capture_roles = capture_roles_arr[wl_indices]
+        wl_perturbation_ids = perturbation_ids_arr[wl_indices]
+        wl_reference_idx = np.where(wl_capture_roles == "reference")[0]
+        if wl_reference_idx.size == 0:
+            raise ValueError(f"raw HDF5 does not contain any reference captures for wavelength {wl_key}")
+        wavelength_dir = out_dir if not multi_wavelength else out_dir / _wavelength_dir_name(wavelength_nm)
+        wavelength_dir.mkdir(parents=True, exist_ok=True)
+        manifest_rois: dict[str, Any] = {}
+        wavelength_baseline_summary: dict[str, Any] | None = None
+        for roi_key in requested_roi_keys:
+            roi_record = _resolve_roi_record(psf_roi, roi_key)
+            if not bool(roi_record.get("fits_frame", True)):
+                manifest_rois[roi_key] = {
+                    "roi": roi_record,
+                    "analyzed": False,
+                    "skip_reason": roi_record.get("skip_reason", "ROI exceeds frame boundary"),
+                }
+                continue
+            crops, crop_source = _roi_crops(
+                frames=frames[wl_indices] if frames is not None else None,
+                stored_crops=stored_crops[wl_indices] if stored_crops is not None else None,
+                roi_record=roi_record,
+                roi_key=roi_key,
+                baseline_roi_key=baseline_roi_key,
+            )
+            if crops is None:
+                manifest_rois[roi_key] = {
+                    "roi": roi_record,
+                    "analyzed": False,
+                    "skip_reason": (
+                        "Multi-ROI analysis requires full-frame raw frames or a stored baseline crop "
+                        "with matching shape"
+                    ),
+                }
+                continue
+            roi_dir = wavelength_dir / roi_key
+            roi_dir.mkdir(parents=True, exist_ok=True)
+            roi_summary = _analyze_single_roi(
+                roi_key=roi_key,
+                roi_record=roi_record,
+                crops=crops,
+                capture_roles_arr=wl_capture_roles,
+                perturbation_ids_arr=wl_perturbation_ids,
+                reference_idx=wl_reference_idx,
+                unique_perturbations=unique_perturbations,
+                normalize_energy=normalize_energy,
+                align_before_fft=align_before_fft,
+                edge_energy_enabled=edge_energy_enabled,
+                edge_band_px=edge_band_px,
+                output_dir=roi_dir,
+                legacy_output_dir=(out_dir if (not multi_wavelength and roi_key == baseline_roi_key) else None),
+                source_raw_h5=_repo_relative(raw_path),
+                plan=plan,
+                psf_roi=psf_roi,
+                mask_ids=[mask_ids[idx] for idx in wl_indices],
+                repeat_indices=[repeat_indices[idx] for idx in wl_indices],
+            )
             manifest_rois[roi_key] = {
                 "roi": roi_record,
-                "analyzed": False,
-                "skip_reason": roi_record.get("skip_reason", "ROI exceeds frame boundary"),
+                "analyzed": True,
+                "crop_source": crop_source,
+                "perturbations": roi_summary["perturbations"],
+                "output_dir": _repo_relative(roi_dir),
             }
-            continue
-        crops, crop_source = _roi_crops(
-            frames=frames,
-            stored_crops=stored_crops,
-            roi_record=roi_record,
-            roi_key=roi_key,
-            baseline_roi_key=baseline_roi_key,
-        )
-        if crops is None:
-            manifest_rois[roi_key] = {
-                "roi": roi_record,
-                "analyzed": False,
-                "skip_reason": (
-                    "Multi-ROI analysis requires full-frame raw frames or a stored baseline crop "
-                    "with matching shape"
-                ),
-            }
-            continue
-        roi_dir = out_dir / roi_key
-        roi_dir.mkdir(parents=True, exist_ok=True)
-        roi_summary = _analyze_single_roi(
-            roi_key=roi_key,
-            roi_record=roi_record,
-            crops=crops,
-            capture_roles_arr=capture_roles_arr,
-            perturbation_ids_arr=perturbation_ids_arr,
-            reference_idx=reference_idx,
-            unique_perturbations=unique_perturbations,
-            normalize_energy=normalize_energy,
-            align_before_fft=align_before_fft,
-            edge_energy_enabled=edge_energy_enabled,
-            edge_band_px=edge_band_px,
-            output_dir=roi_dir,
-            legacy_output_dir=out_dir if roi_key == baseline_roi_key else None,
-            source_raw_h5=_repo_relative(raw_path),
-            plan=plan,
-            psf_roi=psf_roi,
-            mask_ids=mask_ids,
-            repeat_indices=repeat_indices,
-        )
-        manifest_rois[roi_key] = {
-            "roi": roi_record,
-            "analyzed": True,
-            "crop_source": crop_source,
-            "perturbations": roi_summary["perturbations"],
-            "output_dir": _repo_relative(roi_dir),
+            if roi_key == baseline_roi_key:
+                wavelength_baseline_summary = roi_summary
+        if wavelength_baseline_summary is None:
+            raise ValueError(f"baseline ROI key {baseline_roi_key!r} was not analyzable for wavelength {wl_key}")
+        manifest_wavelengths[wl_key] = {
+            "wavelength_nm": float(wavelength_nm),
+            "requested_roi_keys": requested_roi_keys,
+            "current_baseline_roi_key": baseline_roi_key,
+            "rois": manifest_rois,
+            "output_dir": _repo_relative(wavelength_dir),
         }
-        if roi_key == baseline_roi_key:
-            legacy_baseline_summary = roi_summary
-
-    if legacy_baseline_summary is None:
-        raise ValueError(f"baseline ROI key {baseline_roi_key!r} was not analyzable")
+        per_wavelength_summary[wl_key] = {
+            "wavelength_nm": float(wavelength_nm),
+            "roi_key": baseline_roi_key,
+            "roi": wavelength_baseline_summary["roi"],
+            "perturbations": wavelength_baseline_summary["perturbations"],
+            "mask_ids": [mask_ids[idx] for idx in wl_indices],
+            "repeat_indices": [repeat_indices[idx] for idx in wl_indices],
+            "output_dir": _repo_relative(wavelength_dir),
+        }
+        if not multi_wavelength and legacy_baseline_summary is None:
+            legacy_baseline_summary = wavelength_baseline_summary
+            legacy_baseline_wavelength_nm = float(wavelength_nm)
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "phase": "3.3",
-        "task": "dotf_multi_roi_diagnostic_visualization",
+        "task": "dotf_multi_wavelength_multi_roi_diagnostic_visualization" if multi_wavelength else "dotf_multi_roi_diagnostic_visualization",
         "source_raw_h5": _repo_relative(raw_path),
         "pupil_window_source": str(plan.get("pupil_window_source")),
         "psf_roi_source": str(plan.get("psf_roi_source")),
         "camera_params_source": str(plan.get("camera_params_source")),
-        "wavelength_nm": float(plan.get("wavelength", {}).get("wavelength_nm", float("nan"))),
+        "wavelengths_nm": [float(item) for item in wavelength_order],
         "current_baseline_roi_key": baseline_roi_key,
         "final_selected_roi_key": None,
         "selection_policy": "manual_after_dotf_visual_inspection",
         "full_frame_available": bool(full_frame_available),
         "requested_roi_keys": requested_roi_keys,
-        "rois": manifest_rois,
+        "wavelengths": manifest_wavelengths,
         "analysis": {
             "script": "scripts/analyze_dotf.py",
             "git_commit": _git_commit(),
@@ -168,39 +211,74 @@ def analyze_dotf(raw_h5: str | Path, output_dir: str | Path) -> dict[str, Any]:
             "training_ready": False,
         },
     }
+    if not multi_wavelength:
+        single_wl_key = _format_wavelength_key(wavelength_order[0])
+        manifest["wavelength_nm"] = float(wavelength_order[0])
+        manifest["rois"] = manifest_wavelengths[single_wl_key]["rois"]
     (out_dir / "dotf_roi_comparison_manifest.json").write_text(json_dumps(manifest), encoding="utf-8")
     _write_comparison_report(out_dir / "dotf_roi_comparison_report.md", manifest=manifest)
 
-    baseline_metrics = {
-        "schema_version": 2,
-        "phase": "3.3",
-        "task": "dotf_diagnostic_visualization",
-        "source_raw_h5": _repo_relative(raw_path),
-        "pupil_window_source": str(plan.get("pupil_window_source")),
-        "psf_roi_source": str(plan.get("psf_roi_source")),
-        "camera_params_source": str(plan.get("camera_params_source")),
-        "wavelength_nm": float(plan.get("wavelength", {}).get("wavelength_nm", float("nan"))),
-        "mask_ids": mask_ids,
-        "repeat_indices": repeat_indices,
-        "roi_key": baseline_roi_key,
-        "roi": legacy_baseline_summary["roi"],
-        "perturbations": legacy_baseline_summary["perturbations"],
-        "validity": {
-            "dotf_computed": True,
-            "pupil_stitching_performed": False,
-            "roi_selection_performed": False,
-            "scientific_calibration_valid": False,
-            "training_ready": False,
-        },
-        "analysis": {
-            "script": "scripts/analyze_dotf.py",
-            "git_commit": _git_commit(),
-            "normalize_energy": normalize_energy,
-            "align_before_fft": align_before_fft,
-            "window_before_fft": bool(dotf_cfg.get("window_before_fft", False)),
-            "multi_roi_manifest": "outputs/dotf/dotf_roi_comparison_manifest.json",
-        },
-    }
+    if multi_wavelength:
+        baseline_metrics = {
+            "schema_version": 3,
+            "phase": "3.3",
+            "task": "dotf_multi_wavelength_diagnostic_visualization",
+            "source_raw_h5": _repo_relative(raw_path),
+            "pupil_window_source": str(plan.get("pupil_window_source")),
+            "psf_roi_source": str(plan.get("psf_roi_source")),
+            "camera_params_source": str(plan.get("camera_params_source")),
+            "wavelengths_nm": [float(item) for item in wavelength_order],
+            "roi_key": baseline_roi_key,
+            "per_wavelength": per_wavelength_summary,
+            "validity": {
+                "dotf_computed": True,
+                "pupil_stitching_performed": False,
+                "roi_selection_performed": False,
+                "scientific_calibration_valid": False,
+                "training_ready": False,
+            },
+            "analysis": {
+                "script": "scripts/analyze_dotf.py",
+                "git_commit": _git_commit(),
+                "normalize_energy": normalize_energy,
+                "align_before_fft": align_before_fft,
+                "window_before_fft": bool(dotf_cfg.get("window_before_fft", False)),
+                "multi_roi_manifest": "outputs/dotf/dotf_roi_comparison_manifest.json",
+            },
+        }
+    else:
+        if legacy_baseline_summary is None or legacy_baseline_wavelength_nm is None:
+            raise ValueError("single-wavelength baseline summary was not produced")
+        baseline_metrics = {
+            "schema_version": 2,
+            "phase": "3.3",
+            "task": "dotf_diagnostic_visualization",
+            "source_raw_h5": _repo_relative(raw_path),
+            "pupil_window_source": str(plan.get("pupil_window_source")),
+            "psf_roi_source": str(plan.get("psf_roi_source")),
+            "camera_params_source": str(plan.get("camera_params_source")),
+            "wavelength_nm": float(legacy_baseline_wavelength_nm),
+            "mask_ids": per_wavelength_summary[_format_wavelength_key(legacy_baseline_wavelength_nm)]["mask_ids"],
+            "repeat_indices": per_wavelength_summary[_format_wavelength_key(legacy_baseline_wavelength_nm)]["repeat_indices"],
+            "roi_key": baseline_roi_key,
+            "roi": legacy_baseline_summary["roi"],
+            "perturbations": legacy_baseline_summary["perturbations"],
+            "validity": {
+                "dotf_computed": True,
+                "pupil_stitching_performed": False,
+                "roi_selection_performed": False,
+                "scientific_calibration_valid": False,
+                "training_ready": False,
+            },
+            "analysis": {
+                "script": "scripts/analyze_dotf.py",
+                "git_commit": _git_commit(),
+                "normalize_energy": normalize_energy,
+                "align_before_fft": align_before_fft,
+                "window_before_fft": bool(dotf_cfg.get("window_before_fft", False)),
+                "multi_roi_manifest": "outputs/dotf/dotf_roi_comparison_manifest.json",
+            },
+        }
     (out_dir / "dotf_metrics.json").write_text(json_dumps(baseline_metrics), encoding="utf-8")
     _write_report(
         out_dir / "dotf_report.md",
@@ -406,6 +484,47 @@ def _resolve_requested_roi_keys(plan: dict[str, Any], psf_roi: dict[str, Any]) -
     return [str(baseline_key)]
 
 
+def _resolve_capture_wavelengths(
+    *,
+    plan: dict[str, Any],
+    capture_roles: list[str],
+    wavelength_nm_ds: np.ndarray | None,
+) -> np.ndarray:
+    if wavelength_nm_ds is not None:
+        if len(wavelength_nm_ds) != len(capture_roles):
+            raise ValueError("raw/wavelength_nm length does not match capture rows")
+        return np.asarray(wavelength_nm_ds, dtype=np.float64)
+    wavelength_entries = plan.get("wavelengths")
+    if isinstance(wavelength_entries, list) and wavelength_entries:
+        values = [float(item["wavelength_nm"]) for item in wavelength_entries]
+        block = len(capture_roles) // len(values) if values else 0
+        if block * len(values) != len(capture_roles):
+            raise ValueError("raw capture rows do not match plan.wavelengths and no raw/wavelength_nm dataset is present")
+        return np.asarray([values[idx // block] for idx in range(len(capture_roles))], dtype=np.float64)
+    wavelength = plan.get("wavelength", {})
+    wavelength_nm = float(wavelength.get("wavelength_nm", float("nan")))
+    return np.full((len(capture_roles),), wavelength_nm, dtype=np.float64)
+
+
+def _ordered_wavelengths(wavelength_nm: np.ndarray) -> list[float]:
+    ordered: list[float] = []
+    seen: set[str] = set()
+    for value in np.asarray(wavelength_nm, dtype=np.float64).tolist():
+        key = _format_wavelength_key(value)
+        if key not in seen:
+            seen.add(key)
+            ordered.append(float(value))
+    return ordered
+
+
+def _format_wavelength_key(wavelength_nm: float) -> str:
+    return format(float(wavelength_nm), ".1f")
+
+
+def _wavelength_dir_name(wavelength_nm: float) -> str:
+    return f"wl_{_format_wavelength_key(wavelength_nm).replace('.', 'p')}"
+
+
 def _resolve_baseline_roi_key(psf_roi: dict[str, Any], requested_roi_keys: list[str]) -> str:
     baseline = psf_roi.get("current_baseline_roi_key") or psf_roi.get("default_roi_key")
     if isinstance(baseline, str) and baseline:
@@ -432,36 +551,67 @@ def _write_report(
     psf_roi: dict[str, Any],
     camera_params_source: dict[str, Any],
 ) -> None:
-    lines = [
-        "# Phase 3.3 dOTF diagnostic report",
-        "",
-        f"- Source raw HDF5: `{metrics['source_raw_h5']}`",
-        f"- Wavelength (nm): {metrics['wavelength_nm']}",
-        f"- Pupil window source: `{metrics['pupil_window_source']}`",
-        f"- PSF ROI source: `{metrics['psf_roi_source']}`",
-        f"- Camera params source: `{metrics['camera_params_source']}`",
-        f"- Baseline ROI key: `{metrics['roi_key']}`",
-        "- pupil_stitching_performed=false",
-        "- roi_selection_performed=false",
-        "",
-        "dOTF is used here as a diagnostic visualization of structured pupil-domain response.",
-        "The result is not stitched into a full complex pupil.",
-        "The result is not a final pupil reconstruction.",
-        "",
-        f"- Effective pupil physical shape: {pupil_window.get('physical_shape')}",
-        f"- Baseline PSF ROI: {psf_roi.get('roi')}",
-        f"- Camera parameter validity: {camera_params_source.get('validity', {}).get('psf_exposure_safe')}",
-        "",
-        "Per-perturbation baseline summaries:",
-    ]
-    for perturbation_id, item in metrics["perturbations"].items():
-        lines.append(
-            f"- `{perturbation_id}`: reference_repeats={item['reference_repeats']}, "
-            f"perturbed_repeats={item['perturbed_repeats']}, "
-            f"psf_difference_relative_l2={item['psf_difference_relative_l2']:.6g}, "
-            f"dotf_peak_abs={item['dotf_peak_abs']:.6g}, "
-            f"difference_edge_fraction={item['edge_energy']['difference_edge_fraction']:.6g}"
-        )
+    if "per_wavelength" in metrics:
+        lines = [
+            "# Phase 3.3 dOTF diagnostic report",
+            "",
+            f"- Source raw HDF5: `{metrics['source_raw_h5']}`",
+            f"- Wavelengths (nm): {metrics['wavelengths_nm']}",
+            f"- Pupil window source: `{metrics['pupil_window_source']}`",
+            f"- PSF ROI source: `{metrics['psf_roi_source']}`",
+            f"- Camera params source: `{metrics['camera_params_source']}`",
+            f"- Baseline ROI key: `{metrics['roi_key']}`",
+            "- pupil_stitching_performed=false",
+            "- roi_selection_performed=false",
+            "",
+            "This Phase 3.3 run compares dOTF diagnostics across multiple wavelengths.",
+            "Per-wavelength outputs live under `outputs/dotf/wl_*`.",
+            "",
+            f"- Effective pupil physical shape: {pupil_window.get('physical_shape')}",
+            f"- Baseline PSF ROI: {psf_roi.get('roi')}",
+            f"- Camera parameter validity: {camera_params_source.get('validity', {}).get('psf_exposure_safe')}",
+            "",
+            "Per-wavelength baseline summaries:",
+        ]
+        for wl_key, entry in metrics["per_wavelength"].items():
+            lines.append(f"- `{wl_key} nm` -> `{entry['output_dir']}`")
+            for perturbation_id, item in entry["perturbations"].items():
+                lines.append(
+                    f"  - `{perturbation_id}`: psf_difference_relative_l2={item['psf_difference_relative_l2']:.6g}, "
+                    f"dotf_peak_abs={item['dotf_peak_abs']:.6g}, "
+                    f"difference_edge_fraction={item['edge_energy']['difference_edge_fraction']:.6g}"
+                )
+    else:
+        lines = [
+            "# Phase 3.3 dOTF diagnostic report",
+            "",
+            f"- Source raw HDF5: `{metrics['source_raw_h5']}`",
+            f"- Wavelength (nm): {metrics['wavelength_nm']}",
+            f"- Pupil window source: `{metrics['pupil_window_source']}`",
+            f"- PSF ROI source: `{metrics['psf_roi_source']}`",
+            f"- Camera params source: `{metrics['camera_params_source']}`",
+            f"- Baseline ROI key: `{metrics['roi_key']}`",
+            "- pupil_stitching_performed=false",
+            "- roi_selection_performed=false",
+            "",
+            "dOTF is used here as a diagnostic visualization of structured pupil-domain response.",
+            "The result is not stitched into a full complex pupil.",
+            "The result is not a final pupil reconstruction.",
+            "",
+            f"- Effective pupil physical shape: {pupil_window.get('physical_shape')}",
+            f"- Baseline PSF ROI: {psf_roi.get('roi')}",
+            f"- Camera parameter validity: {camera_params_source.get('validity', {}).get('psf_exposure_safe')}",
+            "",
+            "Per-perturbation baseline summaries:",
+        ]
+        for perturbation_id, item in metrics["perturbations"].items():
+            lines.append(
+                f"- `{perturbation_id}`: reference_repeats={item['reference_repeats']}, "
+                f"perturbed_repeats={item['perturbed_repeats']}, "
+                f"psf_difference_relative_l2={item['psf_difference_relative_l2']:.6g}, "
+                f"dotf_peak_abs={item['dotf_peak_abs']:.6g}, "
+                f"difference_edge_fraction={item['edge_energy']['difference_edge_fraction']:.6g}"
+            )
     lines.extend(
         [
             "",
@@ -481,24 +631,27 @@ def _write_comparison_report(path: Path, *, manifest: dict[str, Any]) -> None:
         f"- Final selected ROI key: `{manifest['final_selected_roi_key']}`",
         f"- Full-frame raw available: {manifest['full_frame_available']}",
         f"- Requested ROI keys: {manifest['requested_roi_keys']}",
+        f"- Wavelengths (nm): {manifest['wavelengths_nm']}",
         "",
         "This report compares dOTF behavior under multiple centered PSF support windows.",
         "No automatic ROI selection is performed here.",
         "",
-        "Per-ROI status:",
+        "Per-wavelength / per-ROI status:",
     ]
-    for roi_key, item in manifest["rois"].items():
-        if item["analyzed"]:
-            lines.append(
-                f"- `{roi_key}`: analyzed, crop_source={item['crop_source']}, output_dir=`{item['output_dir']}`"
-            )
-            for perturbation_id, metric in item["perturbations"].items():
+    for wl_key, wl_entry in manifest["wavelengths"].items():
+        lines.append(f"- `{wl_key} nm` -> `{wl_entry['output_dir']}`")
+        for roi_key, item in wl_entry["rois"].items():
+            if item["analyzed"]:
                 lines.append(
-                    f"  - `{perturbation_id}`: dotf_peak_abs={metric['dotf_peak_abs']:.6g}, "
-                    f"difference_edge_fraction={metric['edge_energy']['difference_edge_fraction']:.6g}"
+                    f"  - `{roi_key}`: analyzed, crop_source={item['crop_source']}, output_dir=`{item['output_dir']}`"
                 )
-        else:
-            lines.append(f"- `{roi_key}`: skipped, reason={item['skip_reason']}")
+                for perturbation_id, metric in item["perturbations"].items():
+                    lines.append(
+                        f"    - `{perturbation_id}`: dotf_peak_abs={metric['dotf_peak_abs']:.6g}, "
+                        f"difference_edge_fraction={metric['edge_energy']['difference_edge_fraction']:.6g}"
+                    )
+            else:
+                lines.append(f"  - `{roi_key}`: skipped, reason={item['skip_reason']}")
     lines.extend(
         [
             "",
@@ -565,7 +718,15 @@ def main() -> None:
     parser.add_argument("--output-dir", default="outputs/dotf")
     args = parser.parse_args()
     result = analyze_dotf(args.raw_h5, args.output_dir)
-    print(json_dumps({"validity": result["validity"], "roi_key": result["roi_key"], "perturbations": result["perturbations"]}))
+    print(
+        json_dumps(
+            {
+                "validity": result["validity"],
+                "roi_key": result["roi_key"],
+                "wavelengths_nm": result.get("wavelengths_nm"),
+            }
+        )
+    )
 
 
 if __name__ == "__main__":
