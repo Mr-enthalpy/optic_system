@@ -265,7 +265,12 @@ all-closed, and inside is either all-open (3.2a) or the encoded pattern
 ### P3: psf_roi.json is single source of truth
 
 All PSF crops (repeatability, dOTF, PSF dictionary) must use the
-same `psf_roi.json`.  Do not re-derive the crop per script.
+same `psf_roi.json`. Do not re-estimate the PSF center per script.
+
+The frozen baseline ROI is `roi_256`. Later multi-ROI diagnostics may
+recompute additional centered ROI candidates around that same frozen center.
+This is not a fresh center estimate and does not automatically select the
+final modelling ROI.
 
 ### P4: Preview images are not exposure judgments
 
@@ -279,3 +284,15 @@ Exposure judgment must come from the recorded numeric diagnostics:
 - raw-burst strict PSF safety: Phase 3.0.5b outputs
 - averaged-frame quality diagnostics: `peak_pixel`,
   `full_scale_in_avg_valid_domain`, and related metrics
+
+### P5: Multi-ROI dOTF comparison is analysis-only
+
+Phase 3.3 may recompute dOTF under multiple ROI candidates from existing
+full-frame raw frames. This is an analysis-only comparison.
+
+Rules:
+
+- do not repeat hardware capture just to compare ROI sizes
+- do not re-estimate the PSF center
+- do not automatically select the final Phase 3.4 ROI
+- until manual review is complete, `roi_256` remains the frozen baseline

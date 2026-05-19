@@ -2,6 +2,7 @@ plan_id: bishe_dotf_diagnostic
 phase: "3.3"
 
 camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
+camera_profile_policy: global_safe_camera
 
 pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
 psf_roi_source: outputs/psf_roi/psf_roi.json
@@ -21,6 +22,12 @@ capture:
   frames_per_capture: 10
 
 dotf:
+  roi_keys:
+    - roi_256
+    - roi_512
+    - roi_768
+    - roi_1024
+
   perturbation_set:
     - edge_block_left
     - edge_block_right
@@ -38,6 +45,10 @@ dotf:
   normalize_energy: true
   align_before_fft: true
   window_before_fft: false
+
+  edge_energy:
+    enabled: true
+    edge_band_px: 10
 
 output:
   raw_h5: data/raw/bishe_dotf_diagnostic.h5

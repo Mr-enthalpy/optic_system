@@ -68,7 +68,13 @@ def run_capture_psf_roi(
             "Rename the existing file or update output.raw_h5 in the plan."
         )
     camera_params, _ = load_camera_params(plan["camera_params_source"])
-    exposure_us, gain_db, _profile_frames, full_scale, camera_profile = resolve_geometry_camera_settings(plan, camera_params)
+    wavelength_nm = float(plan["wavelength"]["wavelength_nm"])
+    exposure_us, gain_db, _profile_frames, full_scale, camera_profile = resolve_geometry_camera_settings(
+        plan,
+        camera_params,
+        wavelength_nm=wavelength_nm,
+        task_name="roi",
+    )
     pupil_window_path = _resolve_repo_path(plan["pupil_window_source"])
     pupil_window = load_pupil_window(pupil_window_path)
     lock = HardwareLock(_resolve_repo_path(plan.get("lock_file", "outputs/run_status/capture_hardware.lock")))

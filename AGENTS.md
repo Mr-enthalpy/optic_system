@@ -37,8 +37,12 @@ Phase 3.0.5b hardware rerun complete, Phase 3.1 effective pupil window
 rerun complete with documented r-scan cleaning, and Phase 3.2a/3.2b
 hardware capture and analysis complete for the current baseline. Phase 3.3
 dOTF diagnostic hardware capture and analysis are also complete for the
-current baseline. Phase 3.4 measured PSF dictionary capture has been attempted
-but is currently blocked by a TLS API mismatch in the capture path.
+current baseline. Phase 3.2a/3.3 also support multi-size ROI diagnostics:
+`roi_256` remains the frozen baseline, while larger centered ROI candidates
+may be recomputed for dOTF support/leakage inspection without repeating
+hardware capture. Phase 3.4 measured PSF dictionary capture had a historical
+failed run; the TLS API mismatch has been repaired in code, but the final
+modelling ROI still requires manual selection after the multi-ROI dOTF review.
 
 Active roadmap: `docs/bishe_plan.md`.
 Current frozen results: `docs/phase3_current_results.md`.

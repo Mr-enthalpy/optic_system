@@ -43,13 +43,15 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
     out_dir = _resolve_repo_path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     with h5py.File(str(raw_path), "r") as f:
-        frames = f["raw/frames_avg"][()]
         crops = f["raw/crops"][()]
         masks_lowres = f["raw/masks_lowres"][()]
         mask_ids = [_decode(x) for x in f["raw/mask_id"][()]]
         mask_families = [_decode(x) for x in f["raw/mask_family"][()]]
         wavelength_nm = np.asarray(f["raw/wavelength_nm"][()], dtype=np.float64) if "raw/wavelength_nm" in f else None
         wavelength_index = np.asarray(f["raw/wavelength_index"][()], dtype=np.int64) if "raw/wavelength_index" in f else None
+        exposure_us = np.asarray(f["raw/exposure_us"][()], dtype=np.float64) if "raw/exposure_us" in f else None
+        gain_db = np.asarray(f["raw/gain_db"][()], dtype=np.float64) if "raw/gain_db" in f else None
+        camera_profile_id = [_decode(x) for x in f["raw/camera_profile_id"][()]] if "raw/camera_profile_id" in f else None
         repeat_indices = [int(x) for x in f["raw/repeat_index"][()]]
         plan = _require_json_dataset(f, "capture/plan_json")
         pupil_window = _require_json_dataset(f, "provenance/pupil_window_source_json")
@@ -64,6 +66,9 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
         wavelength_index = np.zeros((len(mask_ids),), dtype=np.int64)
     unique_wavelength_index = list(dict.fromkeys(int(x) for x in wavelength_index.tolist()))
     unique_wavelength_nm = [float(wavelength_nm[np.where(wavelength_index == idx)[0][0]]) for idx in unique_wavelength_index]
+    exposure_by_wavelength = _constant_value_by_wavelength(exposure_us, wavelength_index, unique_wavelength_index, "exposure_us")
+    gain_by_wavelength = _constant_value_by_wavelength(gain_db, wavelength_index, unique_wavelength_index, "gain_db")
+    profile_by_wavelength = _constant_string_by_wavelength(camera_profile_id, wavelength_index, unique_wavelength_index, "camera_profile_id")
     stats = psf_dictionary_stats_by_mask_and_wavelength(crops, mask_ids, wavelength_index)
     unique_ids = stats["mask_ids"]
     ids_arr = np.asarray(mask_ids)
@@ -80,11 +85,6 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
     family_counts: dict[str, int] = {}
     for family in family_by_id.values():
         family_counts[family] = family_counts.get(family, 0) + 1
-    full_scale_count = _count_full_scale_frames(
-        frames,
-        frame_dtype_full_scale=float(camera_meta.get("frame_dtype_full_scale", float("inf"))),
-        valid_pixel_domain=camera_params_source.get("psf_safety_policy", {}).get("valid_pixel_domain"),
-    )
     summary = {
         "schema_version": 1,
         "phase": "3.4",
@@ -103,7 +103,7 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
         "mask_families": family_counts,
         "quality": {
             **stats["quality"],
-            "full_scale_in_avg_valid_domain_count": int(full_scale_count),
+            "full_scale_in_avg_valid_domain_count": None,
         },
         "validity": {
             "psf_dictionary_acquired": True,
@@ -113,6 +113,21 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
         "analysis": {
             "script": "scripts/analyze_psf_dictionary.py",
             "git_commit": _git_commit(),
+        },
+        "camera_profile_policy": str(plan.get("camera_profile_policy", "global_safe_camera")),
+        "psf_crop_source": "raw/crops",
+        "full_frame_saved": False,
+        "exposure_us_by_wavelength": {
+            _format_wavelength_key(unique_wavelength_nm[i]): float(exposure_by_wavelength[i])
+            for i in range(len(unique_wavelength_nm))
+        },
+        "gain_db_by_wavelength": {
+            _format_wavelength_key(unique_wavelength_nm[i]): float(gain_by_wavelength[i])
+            for i in range(len(unique_wavelength_nm))
+        },
+        "camera_profile_id_by_wavelength": {
+            _format_wavelength_key(unique_wavelength_nm[i]): str(profile_by_wavelength[i])
+            for i in range(len(unique_wavelength_nm))
         },
     }
     manifest = {
@@ -139,6 +154,9 @@ def analyze_psf_dictionary(raw_h5: str | Path, output_dir: str | Path) -> dict[s
         unique_lowres=unique_lowres,
         mean_crops=mean_crops,
         unique_wavelength_nm=unique_wavelength_nm,
+        exposure_by_wavelength=exposure_by_wavelength,
+        gain_by_wavelength=gain_by_wavelength,
+        profile_by_wavelength=profile_by_wavelength,
         source_raw_h5=_repo_relative(raw_path),
     )
     summary["export_lcd_forward"] = export_result
@@ -156,6 +174,9 @@ def _export_lcd_forward(
     unique_lowres: np.ndarray,
     mean_crops: np.ndarray,
     unique_wavelength_nm: list[float],
+    exposure_by_wavelength: list[float],
+    gain_by_wavelength: list[float],
+    profile_by_wavelength: list[str],
     source_raw_h5: str,
 ) -> dict[str, Any]:
     export_cfg = plan.get("export", {}).get("lcd_forward", {})
@@ -221,6 +242,21 @@ def _export_lcd_forward(
                 "L": int(len(export_wavelengths_nm)),
                 "mask_shape": list(masks.shape[2:]),
                 "psf_shape": list(psfs.shape[-2:]),
+                "camera_profile_policy": str(plan.get("camera_profile_policy", "global_safe_camera")),
+                "psf_crop_source": "raw/crops",
+                "full_frame_saved": False,
+                "exposure_us_by_wavelength": {
+                    _format_wavelength_key(export_wavelengths_nm[i]): float(exposure_by_wavelength[i])
+                    for i in range(len(export_wavelengths_nm))
+                },
+                "gain_db_by_wavelength": {
+                    _format_wavelength_key(export_wavelengths_nm[i]): float(gain_by_wavelength[i])
+                    for i in range(len(export_wavelengths_nm))
+                },
+                "camera_profile_id_by_wavelength": {
+                    _format_wavelength_key(export_wavelengths_nm[i]): str(profile_by_wavelength[i])
+                    for i in range(len(export_wavelengths_nm))
+                },
                 "normalization": "background_subtract_then_sum_normalize",
                 "split_name": split_name,
             }
@@ -246,13 +282,41 @@ def _export_lcd_forward(
     return result
 
 
-def _count_full_scale_frames(frames: np.ndarray, *, frame_dtype_full_scale: float, valid_pixel_domain: dict[str, Any] | None) -> int:
-    count = 0
-    for frame in np.asarray(frames):
-        mask = valid_pixel_mask(frame.shape, valid_pixel_domain)
-        if np.any(np.asarray(frame)[mask] >= float(frame_dtype_full_scale)):
-            count += 1
-    return count
+def _constant_value_by_wavelength(
+    values: np.ndarray | None,
+    wavelength_index: np.ndarray,
+    unique_wavelength_index: list[int],
+    label: str,
+) -> list[float]:
+    if values is None:
+        raise ValueError(f"raw/{label} is required for Phase 3.4 analysis")
+    out: list[float] = []
+    for idx in unique_wavelength_index:
+        match = np.where(wavelength_index == int(idx))[0]
+        unique = np.unique(np.asarray(values)[match])
+        if unique.size != 1:
+            raise ValueError(f"raw/{label} is not constant within wavelength_index={idx}")
+        out.append(float(unique[0]))
+    return out
+
+
+def _constant_string_by_wavelength(
+    values: list[str] | None,
+    wavelength_index: np.ndarray,
+    unique_wavelength_index: list[int],
+    label: str,
+) -> list[str]:
+    if values is None:
+        raise ValueError(f"raw/{label} is required for Phase 3.4 analysis")
+    values_arr = np.asarray(values, dtype=object)
+    out: list[str] = []
+    for idx in unique_wavelength_index:
+        match = np.where(wavelength_index == int(idx))[0]
+        unique = list(dict.fromkeys(str(values_arr[i]) for i in match))
+        if len(unique) != 1:
+            raise ValueError(f"raw/{label} is not constant within wavelength_index={idx}")
+        out.append(unique[0])
+    return out
 
 
 def _write_mask_contact_sheet(path: Path, masks_lowres: np.ndarray, mask_ids: list[str]) -> None:
@@ -367,6 +431,10 @@ def _repo_relative(path: Path) -> str:
         return str(path.relative_to(_repo_root())).replace("\\", "/")
     except ValueError:
         return str(path)
+
+
+def _format_wavelength_key(wavelength_nm: float) -> str:
+    return format(float(wavelength_nm), ".1f")
 
 
 def _git_commit() -> str | None:

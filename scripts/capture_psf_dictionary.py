@@ -65,7 +65,7 @@ def run_capture_psf_dictionary(
             "Rename the existing file or update output.raw_h5 in the plan."
         )
     camera_params, _ = load_camera_params(plan["camera_params_source"])
-    exposure_us, gain_db, _profile_frames, full_scale, camera_profile = resolve_geometry_camera_settings(plan, camera_params)
+    full_scale = float(camera_params["frame_dtype_full_scale"])
     pupil_window = load_pupil_window(_resolve_repo_path(plan["pupil_window_source"]))
     psf_roi = load_psf_roi(_resolve_repo_path(plan["psf_roi_source"]))
     lock = HardwareLock(_resolve_repo_path(plan.get("lock_file", "outputs/run_status/capture_hardware.lock")))
@@ -93,7 +93,6 @@ def run_capture_psf_dictionary(
             frame_stream = FrameStreamClient(recv_timeout_ms=5000)
             capture_helper = FrameCaptureHelper(frame_stream)
             capture_adapter = CameraCaptureAdapter(capture_helper, camera_service)
-            capture_adapter.apply_camera_params(exposure_us=exposure_us, gain_db=gain_db)
             camera_service.start_stream()
 
         physical_shape, subpixel_axis = _resolve_lcd_geometry(plan, lcd_meta, lcd_subpixel_axis=lcd_subpixel_axis)
@@ -117,11 +116,9 @@ def run_capture_psf_dictionary(
         )
         tls_meta = _initial_tls_metadata(plan)
         camera_meta = {
-            "exposure_us": float(exposure_us),
-            "gain_db": float(gain_db),
             "frame_dtype_full_scale": float(full_scale),
-            "camera_profile_requested": camera_profile["camera_profile_requested"],
-            "camera_profile_used": camera_profile["camera_profile_used"],
+            "camera_profile_policy": str(plan.get("camera_profile_policy", "global_safe_camera")),
+            "full_frame_saved": False,
         }
         writer = PSFDictionaryRawWriter(output_raw, plan_id=plan["plan_id"]).open()
         writer.write_json_sections(
@@ -147,10 +144,7 @@ def run_capture_psf_dictionary(
             n_captures=n_captures,
             n_repeats=repeats,
             current_wavelength_nm=tls_meta.get("current_wavelength_nm"),
-            camera_exposure_us=float(exposure_us),
-            camera_gain_db=float(gain_db),
             camera_frame_dtype_full_scale=int(full_scale),
-            camera_profile_used=camera_profile["camera_profile_used"],
             lcd_display_index=int(lcd_meta.get("display_index", -1)),
             lcd_physical_shape=list(physical_shape),
             lcd_subpixel_axis=int(subpixel_axis),
@@ -158,6 +152,12 @@ def run_capture_psf_dictionary(
         )
         for wavelength_index, wavelength_entry in enumerate(wavelengths):
             current_wavelength_nm = float(wavelength_entry["wavelength_nm"])
+            exposure_us, gain_db, _profile_frames, _unused_full_scale, camera_profile = resolve_geometry_camera_settings(
+                plan,
+                camera_params,
+                wavelength_nm=current_wavelength_nm,
+                task_name="dictionary",
+            )
             run_status.update(current_stage="wavelength", current_wavelength_nm=current_wavelength_nm)
             if not dry_run and tls_service is not None:
                 _move_tls_to_wavelength(
@@ -165,6 +165,13 @@ def run_capture_psf_dictionary(
                     wavelength_entry,
                     settle_ms=float(plan.get("tls", {}).get("settle_ms", wavelength_entry.get("settle_ms", 500))),
                 )
+            if not dry_run:
+                capture_adapter.apply_camera_params(exposure_us=exposure_us, gain_db=gain_db)
+            run_status.update(
+                camera_exposure_us=float(exposure_us),
+                camera_gain_db=float(gain_db),
+                camera_profile_used=camera_profile["camera_profile_used"],
+            )
             for record in mask_records:
                 run_status.write_mask_preview(record["physical_mask"])
                 for repeat_index in range(repeats):
@@ -193,8 +200,9 @@ def run_capture_psf_dictionary(
                     mask_metadata["repeat_index"] = int(repeat_index)
                     mask_metadata["wavelength_nm"] = current_wavelength_nm
                     mask_metadata["wavelength_index"] = int(wavelength_index)
+                    mask_metadata["camera_profile_id"] = camera_profile["camera_profile_id"]
+                    mask_metadata["camera_profile_policy"] = camera_profile["camera_profile_policy"]
                     writer.append_capture(
-                        frame_avg=frame,
                         crop=crop,
                         lowres_mask=record["lowres_mask"],
                         mask_id=record["mask_id"],
@@ -202,6 +210,9 @@ def run_capture_psf_dictionary(
                         wavelength_nm=current_wavelength_nm,
                         wavelength_index=wavelength_index,
                         repeat_index=repeat_index,
+                        exposure_us=float(exposure_us),
+                        gain_db=float(gain_db),
+                        camera_profile_id=str(camera_profile["camera_profile_id"]),
                         mask_metadata=mask_metadata,
                     )
                     if capture_index % max(1, int(status_preview_every)) == 0:

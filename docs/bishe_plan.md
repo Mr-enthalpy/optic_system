@@ -161,8 +161,6 @@ Current frozen result:
 
 Result note:
 - The final accepted Phase 3.1 result required documented `r scan` cleaning.
-- The contaminated raw file was preserved as
-  `data/raw/bishe_pupil_geometry_rscan_contaminated_20260519_025516.h5`.
 - The active output `data/raw/bishe_pupil_geometry.h5` is the cleaned
   self-contained HDF5 used to generate the current
   `outputs/pupil_geometry/effective_pupil_window.json`.
@@ -221,6 +219,8 @@ Purpose:
   point-source PSF
 - produce `psf_roi.json` as the single source of truth for all subsequent
   PSF crops (3.2b, 3.3, 3.4+)
+- keep `roi_256` as the frozen audited baseline while allowing larger
+  centered ROI candidates for later dOTF diagnostics
 
 Phase 3.1 gives an **LCD-domain** effective pupil window
 (`effective_pupil_window.json`).  Phase 3.2a gives a **camera-frame**
@@ -238,8 +238,9 @@ Minimum algorithm:
 2. Acquire point-source PSF with K-frame burst averaging.
 3. Apply simple baseline correction.
 4. Locate PSF center by peak pixel followed by local center-of-mass.
-5. Choose the configured fixed crop size, currently 256 x 256.
-6. Write `outputs/psf_roi/psf_roi.json`.
+5. Choose the configured frozen baseline crop size, currently 256 x 256.
+6. Generate additional centered ROI candidates for later analysis-only use.
+7. Write `outputs/psf_roi/psf_roi.json`.
 
 Scripts:
 - `scripts/capture_psf_roi.py` — acquisition
@@ -264,6 +265,10 @@ Current frozen result:
 Display note:
 - `psf_roi_preview.png` is contrast-stretched for visibility.
 - It is valid for ROI placement checks, not for raw exposure judgment.
+- `roi_256` remains the current audited baseline.
+- Larger ROI candidates are diagnostic only and do not automatically change
+  the current baseline.
+- The current manual Phase 3.4 modelling choice is `roi_512`.
 data/raw/bishe_psf_roi.h5
 outputs/psf_roi/
   psf_roi.json
@@ -274,7 +279,7 @@ outputs/psf_roi/
 psf_roi.json schema:
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "phase": "3.2a",
   "task": "camera_frame_psf_roi_calibration",
   "source_raw_h5": "data/raw/bishe_psf_roi.h5",
@@ -303,8 +308,18 @@ psf_roi.json schema:
     "roi_energy_fraction": 0.0,
     "full_scale_in_avg_valid_domain": false
   },
+  "rois": {
+    "roi_256": {},
+    "roi_512": {},
+    "roi_768": {},
+    "roi_1024": {}
+  },
+  "current_baseline_roi_key": "roi_256",
+  "default_roi_key": "roi_256",
+  "final_selected_roi_key": null,
   "validity": {
-    "psf_roi_estimated": true,
+    "psf_roi_candidates_estimated": true,
+    "final_roi_selected": false,
     "scientific_calibration_valid": false,
     "training_ready": false
   }
@@ -314,6 +329,10 @@ psf_roi.json schema:
 **psf_roi.json is camera-frame coordinates.**
 **effective_pupil_window.json is LCD physical coordinates.**
 Both are recorded in every downstream raw HDF5 as provenance.
+
+The 256 x 256 baseline has `roi_energy_fraction ≈ 0.44883`. Larger centered
+ROI candidates are therefore useful for diagnosing PSF support truncation and
+windowed-dOTF leakage. No automatic final ROI selection is performed here.
 
 #### Phase 3.2b — PSF repeatability and mask-induced diversity
 
@@ -460,7 +479,8 @@ effective pupil window on LCD
   -> capture reference PSF (N-frame burst average)
   -> display edge-perturbed mask
   -> capture perturbed PSF (N-frame burst average)
-  -> psf_roi crop both reference & perturbed PSF
+  -> store full-frame raw averages once
+  -> recompute crops for one or more ROI candidates from psf_roi.json
   -> align, normalize energy
   -> OTF_ref = FFT2(PSF_ref)
   -> OTF_pert = FFT2(PSF_pert)
@@ -483,6 +503,12 @@ outputs/dotf/
   dotf_real.png
   dotf_imag.png
   dotf_report.md
+  dotf_roi_comparison_manifest.json
+  dotf_roi_comparison_report.md
+  roi_256/
+  roi_512/
+  roi_768/
+  roi_1024/
 ```
 
 Current frozen result:
@@ -508,6 +534,11 @@ Acceptance:
   pupil-plane features without requiring full stitching.
 - The result remains a diagnostic visualization and is not promoted to a full
   stitched pupil estimate.
+- Multiple ROI candidates may be compared without repeating hardware capture,
+  as long as full-frame raw frames are available.
+- No automatic ROI selection is performed; later modelling ROI choice remains
+  manual.
+- The current manual outcome of that comparison is `roi_512` for Phase 3.4.
 
 Note: the raw dOTF result contains two conjugate pupils combined in the
 complex plane.  Even without de-convolution or stitching, structured pupil
@@ -523,7 +554,7 @@ Phase 3.3 does not attempt:
 
 ### Phase 3.4 - Measured PSF dictionary and LCD_forward export
 
-**Status: hardware run attempted but currently blocked**
+**Status: historical failed run preserved; capture path repaired; canonical hardware rerun pending**
 
 Purpose:
 - build a measured mask-to-PSF dictionary as the foundation for forward
@@ -581,8 +612,16 @@ Current attempted-run state:
 - `data/raw/bishe_psf_dictionary.h5` exists but is not a usable dataset
 - `processing_flags_json.completed = false`
 - `processing_flags_json.n_captures_written = 0`
-- current blocker:
-  - `'TLSService' object has no attribute 'set_target_wavelength_nm'`
+- the historical TLS API mismatch that caused this run to fail has been
+  repaired in code
+- no canonical hardware rerun has been performed yet
+
+Manual ROI selection rule:
+
+- Phase 3.4 uses the manually selected ROI `roi_512` after reviewing the
+  Phase 3.3 multi-ROI dOTF comparison.
+- `roi_256` remains the frozen baseline, but it is not the current modelling
+  ROI.
 
 Exit criteria:
 1. Measured PSF dictionary acquired for every planned wavelength with complete provenance.

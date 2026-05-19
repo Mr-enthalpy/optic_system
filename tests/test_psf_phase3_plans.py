@@ -14,6 +14,7 @@ def test_phase32_plans_load_and_validate():
     validate_phase32_plan(roi_plan, task="roi", hardware=False)
     validate_phase32_plan(repeat_plan, task="repeatability", hardware=False)
     assert roi_plan["lcd"]["settle_ms"] >= 100
+    assert roi_plan["psf_roi"]["candidate_crop_sizes"] == [[256, 256], [512, 512], [768, 768], [1024, 1024]]
     assert repeat_plan["lcd"]["settle_ms"] >= 100
 
 

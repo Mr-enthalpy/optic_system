@@ -27,7 +27,6 @@ class PSFDictionaryRawWriter:
         f.attrs["phase"] = self.phase
         f.attrs["created_at_ns"] = now_ns()
         raw = f.require_group("raw")
-        raw.create_dataset("frames_avg", shape=(0, 1, 1), maxshape=(None, None, None), dtype=np.float64, chunks=(1, 128, 128), compression="gzip", compression_opts=4)
         raw.create_dataset("crops", shape=(0, 1, 1), maxshape=(None, None, None), dtype=np.float64, chunks=(1, 64, 64), compression="gzip", compression_opts=4)
         raw.create_dataset("masks_lowres", shape=(0, 1, 1, 1), maxshape=(None, 1, None, None), dtype=np.uint8, chunks=(1, 1, 64, 64), compression="gzip", compression_opts=4)
         raw.create_dataset("mask_id", shape=(0,), maxshape=(None,), dtype=string_dtype)
@@ -35,6 +34,9 @@ class PSFDictionaryRawWriter:
         raw.create_dataset("wavelength_nm", shape=(0,), maxshape=(None,), dtype=np.float64)
         raw.create_dataset("wavelength_index", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("repeat_index", shape=(0,), maxshape=(None,), dtype=np.int64)
+        raw.create_dataset("exposure_us", shape=(0,), maxshape=(None,), dtype=np.float64)
+        raw.create_dataset("gain_db", shape=(0,), maxshape=(None,), dtype=np.float64)
+        raw.create_dataset("camera_profile_id", shape=(0,), maxshape=(None,), dtype=string_dtype)
         raw.create_dataset("timestamp_ns", shape=(0,), maxshape=(None,), dtype=np.int64)
         raw.create_dataset("mask_metadata_json", shape=(0,), maxshape=(None,), dtype=string_dtype)
         capture = f.require_group("capture")
@@ -72,7 +74,7 @@ class PSFDictionaryRawWriter:
     def append_capture(
         self,
         *,
-        frame_avg: np.ndarray,
+        frame_avg: np.ndarray | None = None,
         crop: np.ndarray,
         lowres_mask: np.ndarray,
         mask_id: str,
@@ -80,11 +82,14 @@ class PSFDictionaryRawWriter:
         wavelength_nm: float,
         wavelength_index: int,
         repeat_index: int,
+        exposure_us: float = 0.0,
+        gain_db: float = 0.0,
+        camera_profile_id: str = "unknown",
         mask_metadata: dict[str, Any],
     ) -> int:
         f = self._ensure_open()
+        _ = frame_avg  # Phase 3.4 raw dictionary stores ROI crops only.
         row = self._n
-        _append_frame(f["raw/frames_avg"], row, np.asarray(frame_avg, dtype=np.float64))
         _append_frame(f["raw/crops"], row, np.asarray(crop, dtype=np.float64))
         _append_lowres_mask(f["raw/masks_lowres"], row, np.asarray(lowres_mask, dtype=np.uint8))
         _append_scalar(f["raw/mask_id"], str(mask_id))
@@ -92,6 +97,9 @@ class PSFDictionaryRawWriter:
         _append_scalar(f["raw/wavelength_nm"], float(wavelength_nm))
         _append_scalar(f["raw/wavelength_index"], int(wavelength_index))
         _append_scalar(f["raw/repeat_index"], int(repeat_index))
+        _append_scalar(f["raw/exposure_us"], float(exposure_us))
+        _append_scalar(f["raw/gain_db"], float(gain_db))
+        _append_scalar(f["raw/camera_profile_id"], str(camera_profile_id))
         _append_scalar(f["raw/timestamp_ns"], int(time.time_ns()))
         _append_scalar(f["raw/mask_metadata_json"], json_dumps(mask_metadata))
         self._n += 1

@@ -27,7 +27,7 @@ Current frozen Phase 3.0.5b default:
 - `global_safe_camera.gain_db = 0.0`
 - `550 nm` is the limiting wavelength
 
-See [phase3_current_results.md](/C:/Users/Dell/PycharmProjects/optic_system/docs/phase3_current_results.md).
+See `docs/phase3_current_results.md`.
 
 ## Data flow overview
 
@@ -235,8 +235,7 @@ Current frozen Phase 3.1 result:
 
 - `center ≈ (1065.2462, 1871.5352)` in LCD physical coordinates
 - `radius ≈ 52.7972 px`
-- this result comes from a cleaned `r scan`; the contaminated raw run was
-  preserved
+- this result comes from a cleaned `r scan`
 
 ## Camera-frame PSF ROI calibration
 
@@ -272,6 +271,12 @@ or workflow engine.
 4. Choose the configured fixed crop size, currently 256 x 256.
 5. Write `outputs/psf_roi/psf_roi.json`.
 
+The frozen baseline remains `roi_256`. Follow-up analysis may generate larger
+ROI candidates around the same PSF center for dOTF support/leakage inspection.
+This does not re-estimate the PSF center and does not automatically select a
+final modelling ROI.
+The current manual modelling choice after that comparison is `roi_512`.
+
 ### Output
 
 ```text
@@ -292,6 +297,7 @@ Current frozen Phase 3.2a ROI:
 
 - center `≈ (1148.996, 934.200)` in camera sensor coordinates
 - ROI `x=[1021,1277), y=[806,1062), 256 x 256`
+- `roi_energy_fraction ≈ 0.44883`
 
 Preview caveat:
 
@@ -414,6 +420,9 @@ outputs/dotf/
   <perturbation_id>/dotf_imag.png
   dotf_metrics.json
   dotf_report.md
+  dotf_roi_comparison_manifest.json
+  dotf_roi_comparison_report.md
+  <roi_key>/<perturbation_id>/...
 ```
 
 Current frozen Phase 3.3 result:
@@ -433,6 +442,13 @@ Current frozen Phase 3.3 result:
 
 This is the current audited basis for entering Phase 3.4. It is a diagnostic
 visualization result only, not a stitched pupil result.
+
+Phase 3.3 dOTF can be recomputed for multiple ROI candidates without repeating
+hardware capture, as long as full-frame raw frames are available.
+
+The purpose is to visually compare dOTF behavior under different PSF support
+windows. No automatic ROI selection is performed.
+The current manual outcome of that comparison is `roi_512` for Phase 3.4.
 
 ## PSF dictionary
 
@@ -488,13 +504,17 @@ Current Phase 3.4 state:
 - `data/raw/bishe_psf_dictionary.h5` currently records:
   - `completed = false`
   - `n_captures_written = 0`
-- current blocker:
-  - `'TLSService' object has no attribute 'set_target_wavelength_nm'`
+- the historical TLS API mismatch in the capture path has been repaired in code
+- no canonical hardware rerun has been performed yet
 
 Operational implication:
 
 - Phase 3.4 is not yet complete.
 - There is no usable measured PSF dictionary export at the moment.
+- Phase 3.4 uses the manually selected ROI `roi_512` after the Phase 3.3
+  multi-ROI dOTF comparison.
+- `roi_256` remains the frozen baseline, but it is not the current modelling
+  ROI.
 
 ## Backend boundary from Phase 3.5 onward
 

@@ -147,36 +147,257 @@ def _validate_camera_params(params: dict[str, Any], source_path: Path) -> None:
         raise ValueError(f"{source_path}: validity.exposure_safety_valid must be true")
     if validity.get("psf_exposure_safe") is not True:
         raise ValueError(f"{source_path}: validity.psf_exposure_safe must be true")
-    global_safe = params.get("global_safe_camera", {})
+    global_safe = _global_safe_profile(params)
     if global_safe.get("exposure_us") is None:
         raise ValueError(f"{source_path}: global_safe_camera.exposure_us is required")
     if global_safe.get("gain_db") is None:
         raise ValueError(f"{source_path}: global_safe_camera.gain_db is required")
     if params.get("frame_dtype_full_scale") is None:
         raise ValueError(f"{source_path}: frame_dtype_full_scale is required")
-    policy = params.get("psf_safety_policy", {})
-    if policy.get("rule") != "all_frames_all_pixels_strictly_below_full_scale":
-        raise ValueError(
-            f"{source_path}: psf_safety_policy.rule must be "
-            "'all_frames_all_pixels_strictly_below_full_scale'"
-        )
-    if policy.get("evaluated_on") != "raw_burst_frames":
-        raise ValueError(f"{source_path}: psf_safety_policy.evaluated_on must be raw_burst_frames")
-    if policy.get("evaluated_domain") != "valid_camera_pixel_domain":
-        raise ValueError(
-            f"{source_path}: psf_safety_policy.evaluated_domain must be valid_camera_pixel_domain"
-        )
-    if policy.get("allow_full_scale_pixel") is not False:
-        raise ValueError(f"{source_path}: psf_safety_policy.allow_full_scale_pixel must be false")
-    if policy.get("allow_non_finite_pixel") is not False:
-        raise ValueError(f"{source_path}: psf_safety_policy.allow_non_finite_pixel must be false")
-    domain = policy.get("valid_pixel_domain")
-    if not isinstance(domain, dict):
-        raise ValueError(f"{source_path}: psf_safety_policy.valid_pixel_domain is required")
+    schema_version = _camera_params_schema_version(params)
+    if schema_version >= 2:
+        policy = params.get("policy", {})
+        if policy.get("safety_rule") != "all_frames_all_pixels_strictly_below_full_scale_in_valid_domain":
+            raise ValueError(
+                f"{source_path}: policy.safety_rule must be "
+                "'all_frames_all_pixels_strictly_below_full_scale_in_valid_domain'"
+            )
+        if policy.get("wavelength_search_independent") is not True:
+            raise ValueError(f"{source_path}: policy.wavelength_search_independent must be true")
+        if policy.get("inter_wavelength_upper_bound_inheritance") is not False:
+            raise ValueError(
+                f"{source_path}: policy.inter_wavelength_upper_bound_inheritance must be false"
+            )
+        if policy.get("allow_full_scale_pixel") is not False:
+            raise ValueError(f"{source_path}: policy.allow_full_scale_pixel must be false")
+        domain = params.get("valid_pixel_domain")
+        if not isinstance(domain, dict):
+            raise ValueError(f"{source_path}: valid_pixel_domain is required")
+        catalog = params.get("camera_param_catalog")
+        if not isinstance(catalog, dict) or not catalog:
+            raise ValueError(f"{source_path}: camera_param_catalog is required for schema_version >= 2")
+    else:
+        policy = params.get("psf_safety_policy", {})
+        if policy.get("rule") != "all_frames_all_pixels_strictly_below_full_scale":
+            raise ValueError(
+                f"{source_path}: psf_safety_policy.rule must be "
+                "'all_frames_all_pixels_strictly_below_full_scale'"
+            )
+        if policy.get("evaluated_on") != "raw_burst_frames":
+            raise ValueError(f"{source_path}: psf_safety_policy.evaluated_on must be raw_burst_frames")
+        if policy.get("evaluated_domain") != "valid_camera_pixel_domain":
+            raise ValueError(
+                f"{source_path}: psf_safety_policy.evaluated_domain must be valid_camera_pixel_domain"
+            )
+        if policy.get("allow_full_scale_pixel") is not False:
+            raise ValueError(f"{source_path}: psf_safety_policy.allow_full_scale_pixel must be false")
+        if policy.get("allow_non_finite_pixel") is not False:
+            raise ValueError(f"{source_path}: psf_safety_policy.allow_non_finite_pixel must be false")
+        domain = policy.get("valid_pixel_domain")
+        if not isinstance(domain, dict):
+            raise ValueError(f"{source_path}: psf_safety_policy.valid_pixel_domain is required")
     if int(domain.get("valid_pixel_count", 0)) <= 0:
         raise ValueError(f"{source_path}: valid_pixel_domain.valid_pixel_count must be > 0")
     if int(domain.get("invalid_pixel_count", 0)) < 0:
         raise ValueError(f"{source_path}: valid_pixel_domain.invalid_pixel_count must be >= 0")
+
+
+def _camera_params_schema_version(params: dict[str, Any]) -> int:
+    value = params.get("schema_version", 1)
+    try:
+        return int(float(value))
+    except Exception:
+        return 1
+
+
+def _global_safe_profile(params: dict[str, Any]) -> dict[str, Any]:
+    derived = params.get("derived_profiles", {})
+    if isinstance(derived, dict) and isinstance(derived.get("global_safe_camera"), dict):
+        return derived["global_safe_camera"]
+    return params.get("global_safe_camera", {})
+
+
+def _format_wavelength_key(wavelength_nm: float) -> str:
+    return format(float(wavelength_nm), ".1f")
+
+
+def _lookup_wavelength_catalog_entry(camera_params: dict[str, Any], wavelength_nm: float) -> tuple[str, dict[str, Any]]:
+    catalog = camera_params.get("camera_param_catalog")
+    if not isinstance(catalog, dict) or not catalog:
+        raise ValueError("camera_param_catalog is required for wavelength_recommended policy")
+    target = _format_wavelength_key(wavelength_nm)
+    if target in catalog and isinstance(catalog[target], dict):
+        return target, catalog[target]
+    for key, value in catalog.items():
+        try:
+            if _format_wavelength_key(float(key)) == target and isinstance(value, dict):
+                return str(key), value
+        except Exception:
+            continue
+    raise ValueError(f"camera_param_catalog is missing wavelength {target}")
+
+
+def _legacy_valid_pixel_domain(params: dict[str, Any]) -> dict[str, Any]:
+    if _camera_params_schema_version(params) >= 2:
+        return dict(params.get("valid_pixel_domain") or {})
+    return dict(params.get("psf_safety_policy", {}).get("valid_pixel_domain") or {})
+
+
+def _legacy_psf_safety_policy(params: dict[str, Any]) -> dict[str, Any]:
+    if _camera_params_schema_version(params) >= 2:
+        return {
+            "rule": "all_frames_all_pixels_strictly_below_full_scale",
+            "evaluated_on": "raw_burst_frames",
+            "evaluated_domain": "valid_camera_pixel_domain",
+            "allow_full_scale_pixel": False,
+            "allow_non_finite_pixel": False,
+            "frame_dtype_full_scale": int(params["frame_dtype_full_scale"]),
+            "valid_pixel_domain": _legacy_valid_pixel_domain(params),
+        }
+    return dict(params.get("psf_safety_policy") or {})
+
+
+def _normalize_camera_params_for_provenance(params: dict[str, Any]) -> dict[str, Any]:
+    out = dict(params)
+    if "psf_safety_policy" not in out:
+        out["psf_safety_policy"] = _legacy_psf_safety_policy(params)
+    return out
+
+
+def resolve_phase3_camera_settings(
+    camera_params_json: dict[str, Any],
+    *,
+    wavelength_nm: float | None,
+    policy: str,
+    explicit_profile_id: str | None = None,
+    require_catalog: bool = False,
+) -> dict[str, Any]:
+    schema_version = _camera_params_schema_version(camera_params_json)
+    global_safe = _global_safe_profile(camera_params_json)
+    default_frames = int(global_safe.get("frames_per_capture", 5))
+    if policy == "global_safe_camera":
+        return {
+            "profile_id": "global_safe_camera",
+            "policy": policy,
+            "exposure_us": float(global_safe["exposure_us"]),
+            "gain_db": float(global_safe["gain_db"]),
+            "frames_per_capture": int(global_safe.get("frames_per_capture", default_frames)),
+            "catalog_wavelength_nm": None,
+        }
+    if policy == "wavelength_recommended":
+        if wavelength_nm is None:
+            raise ValueError("wavelength_nm is required for wavelength_recommended policy")
+        if schema_version < 2:
+            if require_catalog:
+                raise ValueError("camera_param_catalog is required for wavelength_recommended policy")
+            return {
+                "profile_id": "global_safe_camera",
+                "policy": "global_safe_camera",
+                "exposure_us": float(global_safe["exposure_us"]),
+                "gain_db": float(global_safe["gain_db"]),
+                "frames_per_capture": int(global_safe.get("frames_per_capture", default_frames)),
+                "catalog_wavelength_nm": None,
+            }
+        catalog_key, entry = _lookup_wavelength_catalog_entry(camera_params_json, wavelength_nm)
+        recommended = entry.get("recommended")
+        if not isinstance(recommended, dict):
+            raise ValueError(f"camera_param_catalog[{catalog_key!r}].recommended is required")
+        return {
+            "profile_id": str(recommended.get("profile_id") or f"wl{catalog_key}_recommended"),
+            "policy": policy,
+            "exposure_us": float(recommended["exposure_us"]),
+            "gain_db": float(recommended["gain_db"]),
+            "frames_per_capture": int(recommended.get("frames_per_capture", default_frames)),
+            "catalog_wavelength_nm": float(catalog_key),
+        }
+    if policy == "explicit_profile_id":
+        if not explicit_profile_id:
+            raise ValueError("explicit_profile_id policy requires explicit_profile_id")
+        if wavelength_nm is None:
+            raise ValueError("wavelength_nm is required for explicit_profile_id policy")
+        catalog_key, entry = _lookup_wavelength_catalog_entry(camera_params_json, wavelength_nm)
+        safe_profiles = entry.get("safe_profiles")
+        if not isinstance(safe_profiles, list):
+            raise ValueError(f"camera_param_catalog[{catalog_key!r}].safe_profiles must be a list")
+        for profile in safe_profiles:
+            if isinstance(profile, dict) and str(profile.get("profile_id")) == str(explicit_profile_id):
+                return {
+                    "profile_id": str(profile["profile_id"]),
+                    "policy": policy,
+                    "exposure_us": float(profile["exposure_us"]),
+                    "gain_db": float(profile["gain_db"]),
+                    "frames_per_capture": int(profile.get("frames_per_capture", default_frames)),
+                    "catalog_wavelength_nm": float(catalog_key),
+                }
+        raise ValueError(
+            f"camera_param_catalog[{catalog_key!r}] does not contain profile_id={explicit_profile_id!r}"
+        )
+    raise ValueError(f"unsupported camera profile policy: {policy}")
+
+
+def _resolve_legacy_camera_settings(plan: dict[str, Any], camera_params: dict[str, Any]) -> dict[str, Any]:
+    global_safe = _global_safe_profile(camera_params)
+    gain_key = plan.get("camera_gain_selection")
+    if gain_key:
+        per_gain = camera_params.get("per_gain_safe_params", {})
+        gain_str = str(gain_key)
+        match = None
+        for gk in per_gain:
+            if format(float(gk), ".1f") == format(float(gain_key), ".1f"):
+                match = gk
+                break
+        if match is None and gain_str in per_gain:
+            match = gain_str
+        if match is None:
+            raise ValueError(
+                f"camera_gain_selection={gain_str!r} not found in per_gain_safe_params. "
+                f"Available: {list(per_gain.keys())}"
+            )
+        gv = per_gain[match]
+        return {
+            "profile_id": "per_gain_safe_params:" + match,
+            "policy": "legacy_per_gain",
+            "exposure_us": float(gv["exposure_us"]),
+            "gain_db": float(gv["gain_db"]),
+            "frames_per_capture": int(gv.get("frames_per_capture", global_safe.get("frames_per_capture", 5))),
+            "camera_profile_requested": gain_str,
+            "camera_profile_used": "per_gain_safe_params:" + match,
+            "fallback_used": False,
+            "fallback_reason": None,
+        }
+    profile_name = plan.get("camera_profile")
+    profiles = camera_params.get("verified_camera_profiles", {})
+    selected = global_safe
+    used_profile = "global_safe_camera"
+    fallback_used = False
+    fallback_reason = None
+    if profile_name:
+        if isinstance(profiles, dict) and profile_name in profiles:
+            selected = profiles[profile_name]
+            used_profile = str(profile_name)
+        elif bool(plan.get("allow_global_safe_camera_fallback", False)):
+            fallback_used = True
+            fallback_reason = (
+                f"verified_camera_profiles.{profile_name} is unavailable; "
+                "using global_safe_camera because allow_global_safe_camera_fallback=true"
+            )
+            print(f"WARNING: {fallback_reason}", file=sys.stderr)
+        else:
+            raise ValueError(
+                f"camera_profile={profile_name!r} not found in verified_camera_profiles "
+                "and allow_global_safe_camera_fallback is false"
+            )
+    return {
+        "profile_id": used_profile,
+        "policy": "legacy_profile",
+        "exposure_us": float(selected["exposure_us"]),
+        "gain_db": float(selected["gain_db"]),
+        "frames_per_capture": int(selected.get("frames_per_capture", global_safe.get("frames_per_capture", 5))),
+        "camera_profile_requested": str(profile_name) if profile_name else plan.get("camera_gain_selection"),
+        "camera_profile_used": used_profile,
+        "fallback_used": bool(fallback_used),
+        "fallback_reason": fallback_reason,
+    }
 
 
 def load_pupil_geometry_plan(path: str | Path) -> dict[str, Any]:
@@ -203,70 +424,57 @@ def _validate_plan(plan: dict[str, Any]) -> None:
 def resolve_geometry_camera_settings(
     plan: dict[str, Any],
     camera_params: dict[str, Any],
+    *,
+    wavelength_nm: float | None = None,
+    task_name: str = "phase3",
 ) -> tuple[float, float, int, float, dict[str, Any]]:
     source = str(plan["camera_params_source"])
-    global_safe = camera_params["global_safe_camera"]
-    profile_name = None
-    used_profile = "global_safe_camera"
-    fallback_used = False
-    fallback_reason = None
+    explicit_profile_policy = plan.get("camera_profile_policy")
+    explicit_profile_id = plan.get("camera_profile_id")
+    if explicit_profile_policy:
+        selected = resolve_phase3_camera_settings(
+            camera_params,
+            wavelength_nm=wavelength_nm,
+            policy=str(explicit_profile_policy),
+            explicit_profile_id=str(explicit_profile_id) if explicit_profile_id is not None else None,
+            require_catalog=bool(
+                str(explicit_profile_policy) == "wavelength_recommended"
+                and task_name in {"dictionary", "target_capture"}
+            ),
+        )
+        provenance = {
+            "source": source,
+            "camera_profile_requested": str(explicit_profile_policy),
+            "camera_profile_used": str(selected["profile_id"]),
+            "camera_profile_policy": str(selected["policy"]),
+            "camera_profile_id": str(selected["profile_id"]),
+            "fallback_used": False,
+            "fallback_reason": None,
+            "camera_params": _normalize_camera_params_for_provenance(camera_params),
+            "catalog_wavelength_nm": selected.get("catalog_wavelength_nm"),
+        }
+        return (
+            float(selected["exposure_us"]),
+            float(selected["gain_db"]),
+            int(selected["frames_per_capture"]),
+            float(camera_params["frame_dtype_full_scale"]),
+            provenance,
+        )
 
-    gain_key = plan.get("camera_gain_selection")
-    if gain_key:
-        per_gain = camera_params.get("per_gain_safe_params", {})
-        gain_str = str(gain_key)
-        match = None
-        for gk in per_gain:
-            if format(float(gk), ".1f") == format(float(gain_key), ".1f"):
-                match = gk
-                break
-        if match is None and gain_str in per_gain:
-            match = gain_str
-        if match is not None:
-            gv = per_gain[match]
-            selected = {
-                "exposure_us": float(gv["exposure_us"]),
-                "gain_db": float(gv["gain_db"]),
-                "frames_per_capture": global_safe.get("frames_per_capture", 5),
-            }
-            used_profile = "per_gain_safe_params:" + match
-        else:
-            raise ValueError(
-                f"camera_gain_selection={gain_str!r} not found in per_gain_safe_params. "
-                f"Available: {list(per_gain.keys())}"
-            )
-    else:
-        profile_name = plan.get("camera_profile")
-        profiles = camera_params.get("verified_camera_profiles", {})
-        selected = global_safe
-
-        if profile_name:
-            if isinstance(profiles, dict) and profile_name in profiles:
-                selected = profiles[profile_name]
-                used_profile = str(profile_name)
-            elif bool(plan.get("allow_global_safe_camera_fallback", False)):
-                fallback_used = True
-                fallback_reason = (
-                    f"verified_camera_profiles.{profile_name} is unavailable; "
-                    "using global_safe_camera because allow_global_safe_camera_fallback=true"
-                )
-                print(f"WARNING: {fallback_reason}", file=sys.stderr)
-            else:
-                raise ValueError(
-                    f"camera_profile={profile_name!r} not found in verified_camera_profiles "
-                    "and allow_global_safe_camera_fallback is false"
-                )
-
-    frames_per_capture = selected.get("frames_per_capture", global_safe.get("frames_per_capture"))
+    selected = _resolve_legacy_camera_settings(plan, camera_params)
+    frames_per_capture = selected.get("frames_per_capture")
     if frames_per_capture is None:
         raise ValueError("frames_per_capture is required in selected camera profile or global_safe_camera")
     provenance = {
         "source": source,
-        "camera_profile_requested": str(profile_name) if profile_name else plan.get("camera_gain_selection"),
-        "camera_profile_used": used_profile,
-        "fallback_used": bool(fallback_used),
-        "fallback_reason": fallback_reason,
-        "camera_params": camera_params,
+        "camera_profile_requested": selected.get("camera_profile_requested"),
+        "camera_profile_used": selected.get("camera_profile_used", selected["profile_id"]),
+        "camera_profile_policy": selected.get("policy"),
+        "camera_profile_id": selected["profile_id"],
+        "fallback_used": bool(selected.get("fallback_used", False)),
+        "fallback_reason": selected.get("fallback_reason"),
+        "camera_params": _normalize_camera_params_for_provenance(camera_params),
+        "catalog_wavelength_nm": None,
     }
     return (
         float(selected["exposure_us"]),
