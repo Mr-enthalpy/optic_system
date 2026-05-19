@@ -499,13 +499,18 @@ outputs/psf_dictionary/
 
 Current Phase 3.4 state:
 
-- one hardware run was attempted under the current `global_safe_camera`
+- one historical hardware run was attempted before the current schema v2
+  per-wavelength camera catalog policy
 - capture failed before useful acquisition
 - `data/raw/bishe_psf_dictionary.h5` currently records:
   - `completed = false`
   - `n_captures_written = 0`
 - the historical TLS API mismatch in the capture path has been repaired in code
-- no canonical hardware rerun has been performed yet
+- the previous / ongoing rerun attempt is superseded by the camera catalog
+  policy change
+- Phase 3.4 must be rerun after the current `camera_params_psf_safe.json`
+  schema v2 catalog is produced and adopted
+- no current Phase 3.4 raw file is valid for LCD_forward export
 
 Operational implication:
 
@@ -515,6 +520,8 @@ Operational implication:
   multi-ROI dOTF comparison.
 - `roi_256` remains the frozen baseline, but it is not the current modelling
   ROI.
+- Phase 3.4 now captures the selected ROI crop only. Full-frame preservation
+  for ROI diagnostics belongs to Phase 3.2a / 3.3.
 
 ## Backend boundary from Phase 3.5 onward
 

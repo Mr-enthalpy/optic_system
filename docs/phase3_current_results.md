@@ -207,10 +207,11 @@ Current raw target:
 
 Current status:
 
-- Phase 3.4 hardware capture is underway, but no transfer-ready analyzed output
-  is available yet.
-- The previous blocker was a historical TLS API mismatch.
-- That capture-path bug has been repaired.
+- The previous or partially prepared Phase 3.4 run is superseded by the
+  Phase 3.0.5 camera catalog policy change.
+- Phase 3.4 must be rerun after the current `camera_params_psf_safe.json`
+  schema v2 per-wavelength catalog is produced and adopted.
+- No current Phase 3.4 raw file is valid for LCD_forward export.
 
 Operational conclusion:
 
@@ -220,6 +221,10 @@ Operational conclusion:
   Phase 3.3 multi-ROI dOTF comparison.
 - `roi_256` remains the frozen Phase 3.2a baseline, but it is not the current
   modelling ROI.
+- Phase 3.4 dictionary capture is no longer a full-frame diagnostic task.
+  It stores the selected PSF ROI crop only.
+- Full-frame preservation for ROI diagnostics and dOTF support inspection
+  belongs to Phase 3.2a / 3.3, not to Phase 3.4.
 - External handoff packages must leave Phase 3.4 data empty until the current
   hardware run finishes and is analyzed.
 

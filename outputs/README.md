@@ -174,10 +174,18 @@ provenance rule below.
 - **Historical failed run:** `data/raw/bishe_psf_dictionary.h5` exists, but
   `completed = false` and `n_captures_written = 0`
 - **Current code status:** the historical TLS API mismatch in the capture path
-  has been repaired, but no canonical hardware rerun has been performed yet
+  has been repaired, but the previous / ongoing rerun attempt is superseded by
+  the Phase 3.0.5 schema v2 camera catalog update
+- **Current rerun rule:** Phase 3.4 must be rerun after the current
+  `camera_params_psf_safe.json` schema v2 per-wavelength catalog is produced
+  and adopted. No current Phase 3.4 raw file is valid for LCD_forward export.
 - **ROI rule:** Phase 3.4 must use a manually selected ROI after reviewing the
-  Phase 3.3 multi-ROI dOTF comparison. Until then, `roi_256` remains the
-  frozen baseline, not necessarily the final modelling ROI.
+  Phase 3.3 multi-ROI dOTF comparison. The current selected modelling ROI is
+  `roi_512`. `roi_256` remains the frozen baseline, not the current Phase 3.4
+  crop target.
+- **Storage rule:** Phase 3.4 raw dictionary capture stores PSF ROI crops only,
+  not full-frame raw averages. Full-frame preservation for ROI diagnostics and
+  dOTF support inspection belongs to Phase 3.2a / 3.3.
 - **Boundary:** Data-first acquisition and export only. No forward-model
   training is performed here.
 - **Wavelength rule:** Phase 3.6 target capture must not request wavelengths
@@ -199,6 +207,9 @@ provenance rule below.
 - **Status:** scripts implemented; hardware data pending
 - **Boundary:** No reconstruction is performed in `optic_system`. This
   directory contains only derived export data for `LCD_forward`.
+- **Raw storage note:** Phase 3.6 target capture may still preserve full-frame
+  averaged observations together with ROI crops. That is distinct from Phase
+  3.4 dictionary capture, which now stores the selected ROI crop only.
 
 ### Phase 3.5 / 3.7 note
 

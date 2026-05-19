@@ -554,7 +554,7 @@ Phase 3.3 does not attempt:
 
 ### Phase 3.4 - Measured PSF dictionary and LCD_forward export
 
-**Status: historical failed run preserved; capture path repaired; canonical hardware rerun pending**
+**Status: historical failed run preserved; capture path repaired; previous rerun superseded by schema v2 camera catalog update; hardware rerun pending after catalog update**
 
 Purpose:
 - build a measured mask-to-PSF dictionary as the foundation for forward
@@ -622,6 +622,9 @@ Manual ROI selection rule:
   Phase 3.3 multi-ROI dOTF comparison.
 - `roi_256` remains the frozen baseline, but it is not the current modelling
   ROI.
+- Phase 3.4 dictionary capture stores the selected ROI crop only. Full-frame
+  preservation for ROI diagnostics and dOTF support inspection belongs to
+  Phase 3.2a / 3.3.
 
 Exit criteria:
 1. Measured PSF dictionary acquired for every planned wavelength with complete provenance.
