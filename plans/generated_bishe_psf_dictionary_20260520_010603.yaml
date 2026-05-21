@@ -1,0 +1,66 @@
+﻿plan_id: bishe_psf_dictionary_rerun_20260520_010603
+phase: "3.4"
+
+camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
+camera_profile_policy: wavelength_recommended
+
+pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
+psf_roi_source: outputs/psf_roi/psf_roi.json
+psf_roi_key: roi_512
+
+wavelengths:
+  - wavelength_nm: 450.0
+    grating: 1
+  - wavelength_nm: 550.0
+    grating: 1
+  - wavelength_nm: 650.0
+    grating: 1
+
+tls:
+  settle_ms: 500
+
+lcd:
+  display_index: 1
+  subpixel_axis: 1
+  settle_ms: 200
+
+capture:
+  repeats_per_mask: 5
+  frames_per_capture: 10
+  random_seed: 20260518
+
+masks:
+  set: psf_dictionary_representative
+  lowres_shape: [64, 64]
+  include:
+    - all_open_window
+    - all_closed_window
+    - vertical_stripes_lowfreq
+    - horizontal_stripes_lowfreq
+    - checkerboard_lowfreq
+    - central_block
+    - edge_block_left
+    - edge_block_right
+    - edge_block_top
+    - edge_block_bottom
+  random:
+    lowfreq_count: 64
+    midfreq_count: 64
+    task_related_count: 32
+
+export:
+  lcd_forward:
+    enabled: true
+    output_dir: outputs/psf_dictionary_20260520_010603/export_lcd_forward
+    split:
+      train: 0.8
+      val: 0.1
+      test: 0.1
+
+output:
+  raw_h5: data/raw/bishe_psf_dictionary_20260520_010603.h5
+  output_dir: outputs/psf_dictionary_20260520_010603
+
+lock_file: outputs/run_status/capture_hardware.lock
+
+

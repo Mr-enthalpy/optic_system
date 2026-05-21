@@ -1,0 +1,19 @@
+﻿{
+  "release_id": "optic_system_phase3_release_20260520",
+  "source_repo": "https://github.com/Mr-enthalpy/optic_system",
+  "source_branch": "phase3-2-psf-roi-repeatability",
+  "source_commit": "25bdb493285c4d6043229affeacec2e432bba4d1",
+  "created_from_local_path": "C:/Users/Dell/PycharmProjects/optic_system",
+  "artifact_root": "D:/datasets/optic_system/phase3_release_20260520",
+  "artifact_root_semantics": "local canonical location hint; consumers may relocate the payload and verify by MANIFEST.json/SHA256SUMS.txt",
+  "date": "2026-05-20",
+  "views": {
+    "common": "shared docs, provenance, raw HDF5 sources, ROI context",
+    "lcd_forward": "Phase 3.4 measured PSF dictionary data interface",
+    "thesis": "Phase 3.0.5b to 3.3 evidence, figures, metrics, and reports"
+  },
+  "boundaries": {
+    "lcd_forward_excludes": "Phase 3.0.5b to 3.3 thesis narrative",
+    "thesis_excludes": "Phase 3.4 train/val/test export HDF5"
+  }
+}

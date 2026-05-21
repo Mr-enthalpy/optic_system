@@ -1,11 +1,11 @@
-plan_id: bishe_psf_repeatability
+﻿plan_id: bishe_psf_repeatability_rerun_20260519_222907
 phase: "3.2b"
 
 camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
 camera_profile_policy: wavelength_recommended
 
 pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
-psf_roi_source: outputs/psf_roi/psf_roi.json
+psf_roi_source: outputs/psf_roi_20260519_222907/psf_roi.json
 
 wavelengths:
   - wavelength_nm: 450.0
@@ -40,7 +40,7 @@ masks:
     - random_lowfreq_2
 
 output:
-  raw_h5: data/raw/bishe_psf_repeatability.h5
-  output_dir: outputs/psf_repeatability
+  raw_h5: data/raw/bishe_psf_repeatability_20260519_222907.h5
+  output_dir: outputs/psf_repeatability_20260519_222907
 
 lock_file: outputs/run_status/capture_hardware.lock

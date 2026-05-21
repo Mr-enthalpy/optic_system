@@ -616,6 +616,20 @@ def _camera_gain_candidates(plan: dict[str, Any]) -> list[float]:
     return gains
 
 
+def _apply_verification_exposure_backoff(
+    bounds: dict[str, float],
+    *,
+    exposure_min: float,
+    backoff_us: float,
+) -> dict[str, float]:
+    if backoff_us <= 0:
+        return {str(key): float(value) for key, value in bounds.items()}
+    adjusted: dict[str, float] = {}
+    for key, value in bounds.items():
+        adjusted[str(key)] = max(float(exposure_min), float(value) - float(backoff_us))
+    return adjusted
+
+
 def run_psf_safe_exposure(
     plan: dict[str, Any],
     camera_service,
@@ -648,6 +662,9 @@ def run_psf_safe_exposure(
     camera_param_settle_ms = float(search_cfg.get("camera_param_settle_ms", 0.0))
     discard_frames_after_param_change = int(
         search_cfg.get("discard_frames_after_camera_param_change", 0)
+    )
+    verification_exposure_backoff_us = float(
+        search_cfg.get("verification_exposure_backoff_us", 0.0)
     )
 
     output_raw = plan["output"]["raw_h5"]
@@ -1100,10 +1117,15 @@ def run_psf_safe_exposure(
             if not all_safe:
                 return _GainResult(gain_db=at_gain, psf_safe=False)
 
-            global_exposure = min(bounds.values()) if bounds else 0.0
+            verification_bounds = _apply_verification_exposure_backoff(
+                bounds,
+                exposure_min=exposure_min,
+                backoff_us=verification_exposure_backoff_us,
+            )
+            global_exposure = min(verification_bounds.values()) if verification_bounds else 0.0
 
             rows = _final_verification_per_wavelength(
-                bounds,
+                verification_bounds,
                 at_gain=at_gain,
                 phase_label="final",
             )
@@ -1427,6 +1449,9 @@ def _build_result(
         "per_wavelength_metrics": wl_metrics,
         "search_diagnostics": {
             "binary_search_eps_us": float(plan["camera_search"].get("binary_search_eps_us", 50.0)),
+            "verification_exposure_backoff_us": float(
+                plan["camera_search"].get("verification_exposure_backoff_us", 0.0)
+            ),
             "per_wavelength_safe_upper_bounds": bounds,
             "valid_pixel_domain_type": valid_domain["type"],
         },

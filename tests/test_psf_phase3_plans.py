@@ -16,6 +16,8 @@ def test_phase32_plans_load_and_validate():
     assert roi_plan["lcd"]["settle_ms"] >= 100
     assert roi_plan["psf_roi"]["candidate_crop_sizes"] == [[256, 256], [512, 512], [768, 768], [1024, 1024]]
     assert repeat_plan["lcd"]["settle_ms"] >= 100
+    assert repeat_plan["camera_profile_policy"] == "wavelength_recommended"
+    assert [entry["wavelength_nm"] for entry in repeat_plan["wavelengths"]] == [450.0, 550.0, 650.0]
 
 
 def test_hardware_validation_rejects_unsafe_lcd_settle():

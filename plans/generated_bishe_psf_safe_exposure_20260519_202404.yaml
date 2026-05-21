@@ -1,0 +1,63 @@
+plan_id: bishe_psf_safe_exposure_20260519_202404
+
+wavelengths:
+  - wavelength_nm: 450.0
+    grating: 1
+    settle_ms: 1000
+  - wavelength_nm: 550.0
+    grating: 1
+    settle_ms: 1000
+  - wavelength_nm: 650.0
+    grating: 1
+    settle_ms: 1000
+
+lcd:
+  mode: all_open
+  mask_path: null
+  subpixel_axis: 1
+  settle_ms: 200
+
+camera:
+  full_scale: 255
+
+camera_search:
+  wavelength_independent: true
+  inherit_upper_bound_across_wavelengths: false
+  gains_db: [0.0]
+  target_policy: near_full_scale_safe
+  safety_rule: all_frames_all_pixels_strictly_below_full_scale
+  exposure_us_start: 50000
+  exposure_us_min: 100
+  binary_search_eps_us: 50.0
+  exposure_us_step_factor: 0.5
+  gain_db_min: 0.0
+  gain_db_max: 0.0
+  gain_db_step_db: 10.0
+  frames_per_setting: 5
+  camera_param_settle_ms: 300
+  discard_frames_after_camera_param_change: 100
+  verification_exposure_backoff_us: 100.0
+
+psf_safety:
+  rule: all_frames_all_pixels_strictly_below_full_scale
+
+valid_pixel_domain:
+  type: exclude_top_rows
+  top_rows: 1
+  source: manual_hardware_diagnostic
+  source_artifact: outputs/diagnostics/shutter_gain_peak_probe/valid_pixel_probe_20260515_170640.json
+  reason: unstable top-row full-scale artifacts observed on camera 15471217
+
+diagnostics:
+  percentiles: [99.0, 99.9]
+
+signal:
+  percentile: 99.0
+  min_signal_fraction_threshold: 0.10
+  min_dynamic_range_fraction: 0.08
+
+lock_file: outputs/run_status/capture_hardware.lock
+
+output:
+  raw_h5: data/raw/bishe_psf_safe_exposure_20260519_202404.h5
+  camera_params_json: outputs/exposure_calibration/camera_params_psf_safe_20260519_202404.json

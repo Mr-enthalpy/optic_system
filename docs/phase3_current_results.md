@@ -15,20 +15,24 @@ Canonical output:
 
 Current default camera parameters:
 
-- `global_safe_camera.exposure_us = 736.541748046875`
+- `global_safe_camera.exposure_us = 487.3046875`
 - `global_safe_camera.gain_db = 0.0`
 - `frame_dtype_full_scale = 255`
 - valid-pixel domain: `exclude_top_rows(top_rows=1)`
 
 Current per-wavelength burst-peak margins:
 
-- `450 nm`: `peak_pixel_burst = 172`, margin `83`
-- `550 nm`: `peak_pixel_burst = 243`, margin `12`
-- `650 nm`: `peak_pixel_burst = 79`, margin `176`
+- `450 nm`: `peak_pixel_burst = 231`, margin `24`
+- `550 nm`: `peak_pixel_burst = 213`, margin `42`
+- `650 nm`: `peak_pixel_burst = 237`, margin `18`
 
 Operational conclusion:
 
-- All downstream Phase 3 tasks should default to `global_safe_camera`.
+- `camera_params_psf_safe.json` is a per-wavelength safe camera catalog.
+- `global_safe_camera` is a derived shared baseline only.
+- Later Phase 3 tasks may still use that shared baseline when a phase is
+  intentionally wavelength-independent, but Phase 3.3 / 3.4 / 3.6 should use
+  `camera_profile_policy: wavelength_recommended`.
 - The previous `10 dB` per-gain selection is not the default baseline anymore.
 - `550 nm` is still the limiting wavelength.
 
@@ -53,7 +57,9 @@ Current effective pupil window in LCD physical coordinates:
 Important result history:
 
 - The current Phase 3.1 result comes from a rerun under the new
-  `0 dB / 736.54 us` safe camera parameters.
+  schema v2 safe camera catalog.
+- The current derived shared baseline is `0 dB / 487.30 us`, but later
+  multi-wavelength phases may subscribe to per-wavelength recommended profiles.
 - The final `r scan` required documented cleaning before the result was frozen.
 - The cleaned result is the active baseline.
 
@@ -120,11 +126,23 @@ Operational conclusion:
 
 Canonical output:
 
-- `data/raw/bishe_psf_repeatability.h5`
-- `outputs/psf_repeatability/repeatability_metrics.json`
-- `outputs/psf_repeatability/diversity_metrics.json`
-- `outputs/psf_repeatability/repeatability_report.md`
-- `outputs/psf_repeatability/mask_mean_psfs.png`
+- canonical raw:
+  - `data/raw/bishe_psf_repeatability_20260519_222907.h5`
+- canonical analysis:
+  - `outputs/psf_repeatability/repeatability_metrics.json`
+  - `outputs/psf_repeatability/diversity_metrics.json`
+  - `outputs/psf_repeatability/repeatability_metrics_normalized.json`
+  - `outputs/psf_repeatability/diversity_metrics_normalized.json`
+  - `outputs/psf_repeatability/spectral_diversity_metrics_normalized.json`
+  - `outputs/psf_repeatability/repeatability_report.md`
+  - `outputs/psf_repeatability/mask_mean_psfs.png`
+
+Canonical-path note:
+
+- `outputs/psf_repeatability/` has been promoted to the latest audited
+  rerun analysis.
+- The canonical analysis still points back to the audited raw source
+  `data/raw/bishe_psf_repeatability_20260519_222907.h5`.
 
 Mask set reacquired:
 
@@ -137,12 +155,22 @@ Mask set reacquired:
 - `random_lowfreq_1`
 - `random_lowfreq_2`
 
-Current quantitative conclusion:
+Current quantitative conclusion from raw averaged crops:
 
-- `mean_intra_mask_mse = 0.033240701887342676`
-- `mean_inter_mask_mse = 16.028353418023247`
-- `inter_mask_distance_over_intra_noise = 482.19058286872365`
+- `mean_intra_mask_mse = 0.015126694714581536`
+- `mean_inter_mask_mse = 4.393628748339698`
+- `inter_mask_distance_over_intra_noise = 290.4553064130007`
 - `mask_induced_differences_larger_than_repeat_noise = true`
+
+Current stricter quantitative conclusion from background-subtracted + unit-energy normalized crops:
+
+- `mean_intra_mask_mse = 2.5377195578181706e-11`
+- `mean_inter_mask_mse = 7.559587679437541e-09`
+- `inter_mask_distance_over_intra_noise = 297.88901047588456`
+- `mask_induced_differences_larger_than_repeat_noise = true`
+- `mean_cross_wavelength_same_mask_mse = 3.306822975612114e-08`
+- `cross_wavelength_same_mask_over_intra_noise = 1303.0687198766705`
+- `wavelength_induced_differences_larger_than_repeat_noise = true`
 
 Observed repeatability quality:
 
@@ -156,34 +184,64 @@ Operational conclusion:
 - The current data supports:
   - same-mask PSFs are repeatable
   - mask-induced PSF differences are much larger than repeatability noise
+  - same-mask cross-wavelength PSF shape differences remain much larger than
+    repeatability noise after background subtraction and unit-energy normalization
+- Interpretation boundary:
+  - raw metrics still mix shape differences with residual photometric scaling
+  - normalized metrics are the stricter basis for cross-wavelength shape claims
 - This is an experimental prerequisite result only. It must not be described
   as forward-model success.
 
 ## Phase 3.3
 
-Canonical output:
+Current audited run:
 
-- `data/raw/bishe_dotf_diagnostic.h5`
-- `outputs/dotf/dotf_metrics.json`
-- `outputs/dotf/dotf_report.md`
-- `outputs/dotf/dotf_roi_comparison_manifest.json`
-- `outputs/dotf/dotf_roi_comparison_report.md`
+- raw:
+  - `data/raw/bishe_dotf_diagnostic_20260520_004205.h5`
+- analysis:
+  - `outputs/dotf_20260520_004205/dotf_metrics.json`
+  - `outputs/dotf_20260520_004205/dotf_report.md`
+  - `outputs/dotf_20260520_004205/dotf_roi_comparison_manifest.json`
+  - `outputs/dotf_20260520_004205/dotf_roi_comparison_report.md`
 
-Current quantitative conclusion for the audited baseline ROI `roi_256`:
+Current quantitative conclusion:
 
 - `dotf_computed = true`
 - `pupil_stitching_performed = false`
-- `dotf_peak_abs(edge_block_left) = 0.0003390569974598773`
-- `dotf_peak_abs(edge_block_right) = 0.00044685164266314943`
-- `dotf_peak_abs(edge_block_top) = 0.00021784801577389982`
-- `dotf_peak_abs(edge_block_bottom) = 0.0003818186234985599`
+- baseline ROI for compatibility outputs: `roi_256`
+- analyzed wavelengths: `450 / 550 / 650 nm`
 
-Perturbation outputs present:
+Representative `dotf_peak_abs` values from the current audited run:
 
-- `outputs/dotf/roi_256/`
-- `outputs/dotf/roi_512/`
-- `outputs/dotf/roi_768/`
-- `outputs/dotf/roi_1024/`
+- `450 nm`
+  - left `= 0.0001381822738005245`
+  - right `= 0.00010904350225226366`
+  - top `= 0.0001494530008194772`
+  - bottom `= 8.744030696634999e-05`
+- `550 nm`
+  - left `= 0.00022161369097285598`
+  - right `= 0.00024960049813936477`
+  - top `= 0.00014791418702452707`
+  - bottom `= 0.0002556389159228659`
+- `650 nm`
+  - left `= 0.00018102115335255704`
+  - right `= 0.00013182050162237468`
+  - top `= 0.00011399750908913154`
+  - bottom `= 0.00013354328734823217`
+
+Multi-ROI perturbation outputs are present under:
+
+- `outputs/dotf_20260520_004205/wl_450p0/<roi_key>/<perturbation_id>/`
+- `outputs/dotf_20260520_004205/wl_550p0/<roi_key>/<perturbation_id>/`
+- `outputs/dotf_20260520_004205/wl_650p0/<roi_key>/<perturbation_id>/`
+
+Historical note:
+
+- `data/raw/bishe_dotf_diagnostic_20260519_234914.h5` was a
+  failed/contaminated run because it contained only `perturbed` captures and no
+  valid reference pair.
+- It was deleted from the workspace after the current audited 3.3 run and
+  release package were verified. It is not part of the current baseline.
 
 Operational conclusion:
 
@@ -201,22 +259,43 @@ Operational conclusion:
 
 ## Phase 3.4
 
-Current raw target:
+Current audited run:
 
-- `data/raw/bishe_psf_dictionary.h5`
+- raw:
+  - `data/raw/bishe_psf_dictionary_20260520_010603.h5`
+- analysis:
+  - `outputs/psf_dictionary_20260520_010603/psf_dictionary_summary.json`
+  - `outputs/psf_dictionary_20260520_010603/psf_dictionary_manifest.json`
+  - `outputs/psf_dictionary_20260520_010603/psf_dictionary_report.md`
+- export:
+  - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/train.h5`
+  - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/val.h5`
+  - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/test.h5`
 
-Current status:
+Current audited capture summary:
 
-- The previous or partially prepared Phase 3.4 run is superseded by the
-  Phase 3.0.5 camera catalog policy change.
-- Phase 3.4 must be rerun after the current `camera_params_psf_safe.json`
-  schema v2 per-wavelength catalog is produced and adopted.
-- No current Phase 3.4 raw file is valid for LCD_forward export.
+- `psf_dictionary_acquired = true`
+- `psf_roi_key_used = roi_512`
+- `wavelengths_nm = [450.0, 550.0, 650.0]`
+- `n_masks = 170`
+- `repeats_per_mask = 5`
+- `export_lcd_forward.enabled = true`
+
+Historical note:
+
+- `data/raw/bishe_psf_dictionary_aborted_before_phase305_rerun_20260519_064654.h5`
+  was a historical failed run and is not the current baseline.
+- It was deleted from the workspace after the current audited 3.4 run and
+  `LCD_forward` release package were verified.
+- The current audited 3.4 output has not yet been promoted to the canonical
+  directory name `outputs/psf_dictionary/`. Until that promotion happens,
+  downstream plans must point explicitly to
+  `outputs/psf_dictionary_20260520_010603/export_lcd_forward/`.
 
 Operational conclusion:
 
-- Phase 3.4 is not complete.
-- There is no usable measured PSF dictionary output yet.
+- Phase 3.4 is complete for the current baseline.
+- There is now a usable measured PSF dictionary export for `LCD_forward`.
 - Phase 3.4 uses the manually selected ROI `roi_512` after reviewing the
   Phase 3.3 multi-ROI dOTF comparison.
 - `roi_256` remains the frozen Phase 3.2a baseline, but it is not the current
@@ -225,21 +304,29 @@ Operational conclusion:
   It stores the selected PSF ROI crop only.
 - Full-frame preservation for ROI diagnostics and dOTF support inspection
   belongs to Phase 3.2a / 3.3, not to Phase 3.4.
-- External handoff packages must leave Phase 3.4 data empty until the current
-  hardware run finishes and is analyzed.
+- The `LCD_forward` export is a data handoff only. Forward validation,
+  reconstruction, and figure generation remain outside `optic_system`.
 
 ## External handoff
 
-The current external handoff should be assembled as a local export package,
-for example under:
+External handoff is now one canonical release with two consumer views:
 
-- `handoff/phase3_external_release_20260519/`
+- artifact root:
+  - `D:/datasets/optic_system/phase3_release_20260520/`
+- Git-tracked descriptor:
+  - `handoff/optic_system_phase3_release_20260520/`
 
-That package is intended for the thesis project and for `LCD_forward`.
+The release contains:
 
-It contains current mainline data plus the ROI decision context.
-It does not carry backup / contaminated history as part of the mainline
-handoff narrative.
+- `common/`: shared docs, provenance, raw HDF5 sources, plans, ROI context
+- `lcd_forward/`: Phase 3.4 measured PSF dictionary data contract and HDF5
+  export
+- `thesis/`: Phase 3.0.5b to 3.3 figures, metrics, reports, and evidence
+  summary
+
+This keeps `LCD_forward` and thesis consumers on the same camera parameters,
+ROI choice, wavelength list, and source raw files while still presenting
+different views for different tasks.
 
 ## Active downstream defaults
 
@@ -252,6 +339,8 @@ defaults are:
   - `outputs/pupil_geometry/effective_pupil_window.json`
 - PSF ROI:
   - `outputs/psf_roi/psf_roi.json`
+- current measured PSF dictionary export for downstream modelling:
+  - `outputs/psf_dictionary_20260520_010603/export_lcd_forward/`
 
-If later reruns replace any of these three files, this document must be
+If later reruns replace any of these baseline artifacts, this document must be
 updated in the same change.

@@ -64,13 +64,31 @@ def run_capture_dotf(
             "Rename the existing file or update output.raw_h5 in the plan."
         )
     camera_params, _ = load_camera_params(plan["camera_params_source"])
-    wavelength_nm = float(plan["wavelength"]["wavelength_nm"])
-    exposure_us, gain_db, _profile_frames, full_scale, camera_profile = resolve_geometry_camera_settings(
-        plan,
-        camera_params,
-        wavelength_nm=wavelength_nm,
-        task_name="dotf",
-    )
+    wavelength_entries = _dotf_wavelength_entries(plan)
+    wavelength_runs = []
+    for wavelength_index, wl_cfg in enumerate(wavelength_entries):
+        wavelength_nm = float(wl_cfg["wavelength_nm"])
+        exposure_us, gain_db, _profile_frames, full_scale, camera_profile = resolve_geometry_camera_settings(
+            plan,
+            camera_params,
+            wavelength_nm=wavelength_nm,
+            task_name="dotf",
+        )
+        wavelength_runs.append(
+            {
+                "wavelength_index": int(wavelength_index),
+                "wavelength_nm": float(wavelength_nm),
+                "grating": wl_cfg.get("grating"),
+                "settle_ms": wl_cfg.get("settle_ms", 0),
+                "exposure_us": float(exposure_us),
+                "gain_db": float(gain_db),
+                "full_scale": float(full_scale),
+                "camera_profile": camera_profile,
+            }
+        )
+    full_scale = float(wavelength_runs[0]["full_scale"])
+    if any(abs(float(item["full_scale"]) - full_scale) > 1e-9 for item in wavelength_runs[1:]):
+        raise ValueError("all Phase 3.3 wavelength profiles must share the same frame_dtype_full_scale")
     pupil_window = load_pupil_window(_resolve_repo_path(plan["pupil_window_source"]))
     psf_roi = load_psf_roi(_resolve_repo_path(plan["psf_roi_source"]))
     lock = HardwareLock(_resolve_repo_path(plan.get("lock_file", "outputs/run_status/capture_hardware.lock")))
@@ -98,7 +116,6 @@ def run_capture_dotf(
             frame_stream = FrameStreamClient(recv_timeout_ms=5000)
             capture_helper = FrameCaptureHelper(frame_stream)
             capture_adapter = CameraCaptureAdapter(capture_helper, camera_service)
-            capture_adapter.apply_camera_params(exposure_us=exposure_us, gain_db=gain_db)
             camera_service.start_stream()
 
         physical_shape, subpixel_axis = _resolve_lcd_geometry(plan, lcd_meta, lcd_subpixel_axis=lcd_subpixel_axis)
@@ -129,13 +146,31 @@ def run_capture_dotf(
             )
             perturbations.append((perturbation_meta["perturbation_id"], perturbation_mask, perturbation_meta))
 
-        tls_meta = _configure_tls(plan, dry_run=dry_run, tls_service=tls_service)
         camera_meta = {
-            "exposure_us": float(exposure_us),
-            "gain_db": float(gain_db),
             "frame_dtype_full_scale": float(full_scale),
-            "camera_profile_requested": camera_profile["camera_profile_requested"],
-            "camera_profile_used": camera_profile["camera_profile_used"],
+            "camera_profile_requested": str(plan.get("camera_profile_policy") or plan.get("camera_gain_selection") or "global_safe_camera"),
+            "camera_profile_used": "per_capture",
+            "multi_wavelength": bool(len(wavelength_runs) > 1),
+            "wavelength_count": int(len(wavelength_runs)),
+            "per_wavelength_profiles": [
+                {
+                    "wavelength_nm": item["wavelength_nm"],
+                    "wavelength_index": item["wavelength_index"],
+                    "grating": item["grating"],
+                    "exposure_us": item["exposure_us"],
+                    "gain_db": item["gain_db"],
+                    "camera_profile_used": item["camera_profile"]["camera_profile_used"],
+                    "camera_profile_requested": item["camera_profile"]["camera_profile_requested"],
+                    "catalog_wavelength_nm": item["camera_profile"].get("catalog_wavelength_nm"),
+                }
+                for item in wavelength_runs
+            ],
+        }
+        tls_meta = {
+            "connected": bool(tls_service is not None),
+            "multi_wavelength": bool(len(wavelength_runs) > 1),
+            "wavelength_sequence": [float(item["wavelength_nm"]) for item in wavelength_runs],
+            "grating_sequence": [item["grating"] for item in wavelength_runs],
         }
         writer = DotfRawWriter(output_raw, plan_id=plan["plan_id"]).open()
         writer.write_json_sections(
@@ -151,7 +186,7 @@ def run_capture_dotf(
         repeats = int(plan["capture"]["repeats"])
         frames_per_capture = int(plan["capture"]["frames_per_capture"])
         settle_s = float(plan["lcd"].get("settle_ms", 200)) / 1000.0
-        n_captures = repeats * (1 + len(perturbations))
+        n_captures = repeats * (1 + len(perturbations)) * len(wavelength_runs)
         capture_index = 0
         run_status.update(
             plan_id=plan["plan_id"],
@@ -160,35 +195,45 @@ def run_capture_dotf(
             current_stage="starting",
             n_captures=n_captures,
             repeat_index=0,
-            current_wavelength_nm=tls_meta.get("current_wavelength_nm"),
-            camera_exposure_us=float(exposure_us),
-            camera_gain_db=float(gain_db),
+            current_wavelength_nm=float(wavelength_runs[0]["wavelength_nm"]),
+            target_wavelength_nm=float(wavelength_runs[0]["wavelength_nm"]),
+            camera_exposure_us=float(wavelength_runs[0]["exposure_us"]),
+            camera_gain_db=float(wavelength_runs[0]["gain_db"]),
             camera_frame_dtype_full_scale=int(full_scale),
-            camera_profile_used=camera_profile["camera_profile_used"],
+            camera_profile_used=wavelength_runs[0]["camera_profile"]["camera_profile_used"],
             lcd_display_index=int(lcd_meta.get("display_index", -1)),
             lcd_physical_shape=list(physical_shape),
             lcd_subpixel_axis=int(subpixel_axis),
             lcd_settle_ms=float(plan["lcd"].get("settle_ms", 200)),
         )
 
-        for repeat_index in range(repeats):
-            capture_index = _capture_one(
-                plan=plan,
+        for run in wavelength_runs:
+            wavelength_nm = float(run["wavelength_nm"])
+            exposure_us = float(run["exposure_us"])
+            gain_db = float(run["gain_db"])
+            camera_profile = dict(run["camera_profile"])
+            if not dry_run:
+                capture_adapter.apply_camera_params(exposure_us=exposure_us, gain_db=gain_db)
+            tls_status = _configure_tls_for_wavelength(
+                {
+                    "wavelength_nm": wavelength_nm,
+                    "grating": run.get("grating"),
+                    "settle_ms": run.get("settle_ms", 0),
+                },
                 dry_run=dry_run,
-                capture_adapter=capture_adapter,
-                lcd_service=lcd_service,
-                frames_per_capture=frames_per_capture,
-                settle_s=settle_s,
-                reference_mask=reference_mask,
-                reference_meta=reference_meta,
-                repeat_index=repeat_index,
-                capture_index=capture_index,
-                writer=writer,
-                psf_roi=psf_roi,
-                run_status=run_status,
-                status_preview_every=status_preview_every,
+                tls_service=tls_service,
             )
-            for perturbation_id, perturbation_mask, perturbation_meta in perturbations:
+            run_status.update(
+                current_stage="wavelength_setup",
+                current_wavelength_nm=float(tls_status.get("current_wavelength_nm", wavelength_nm) or wavelength_nm),
+                target_wavelength_nm=float(wavelength_nm),
+                tls_grating=run.get("grating"),
+                tls_moving=bool(tls_status.get("moving", False)),
+                camera_exposure_us=exposure_us,
+                camera_gain_db=gain_db,
+                camera_profile_used=camera_profile["camera_profile_used"],
+            )
+            for repeat_index in range(repeats):
                 capture_index = _capture_one(
                     plan=plan,
                     dry_run=dry_run,
@@ -196,16 +241,43 @@ def run_capture_dotf(
                     lcd_service=lcd_service,
                     frames_per_capture=frames_per_capture,
                     settle_s=settle_s,
-                    reference_mask=perturbation_mask,
-                    reference_meta=perturbation_meta,
+                    reference_mask=reference_mask,
+                    reference_meta=reference_meta,
                     repeat_index=repeat_index,
                     capture_index=capture_index,
                     writer=writer,
                     psf_roi=psf_roi,
                     run_status=run_status,
                     status_preview_every=status_preview_every,
-                    perturbation_id=perturbation_id,
+                    wavelength_nm=wavelength_nm,
+                    wavelength_index=int(run["wavelength_index"]),
+                    exposure_us=exposure_us,
+                    gain_db=gain_db,
+                    camera_profile_used=str(camera_profile["camera_profile_used"]),
                 )
+                for perturbation_id, perturbation_mask, perturbation_meta in perturbations:
+                    capture_index = _capture_one(
+                        plan=plan,
+                        dry_run=dry_run,
+                        capture_adapter=capture_adapter,
+                        lcd_service=lcd_service,
+                        frames_per_capture=frames_per_capture,
+                        settle_s=settle_s,
+                        reference_mask=perturbation_mask,
+                        reference_meta=perturbation_meta,
+                        repeat_index=repeat_index,
+                        capture_index=capture_index,
+                        writer=writer,
+                        psf_roi=psf_roi,
+                        run_status=run_status,
+                        status_preview_every=status_preview_every,
+                        perturbation_id=perturbation_id,
+                        wavelength_nm=wavelength_nm,
+                        wavelength_index=int(run["wavelength_index"]),
+                        exposure_us=exposure_us,
+                        gain_db=gain_db,
+                        camera_profile_used=str(camera_profile["camera_profile_used"]),
+                    )
         writer.finalize(completed=True)
         run_status.update(current_stage="completed", completed=True, capture_index=capture_index)
         return output_raw
@@ -236,6 +308,11 @@ def _capture_one(
     run_status: OptionalRunStatus,
     status_preview_every: int,
     perturbation_id: str | None = None,
+    wavelength_nm: float,
+    wavelength_index: int,
+    exposure_us: float,
+    gain_db: float,
+    camera_profile_used: str,
 ) -> int:
     capture_role = str(reference_meta["capture_role"])
     current_perturbation_id = perturbation_id or str(reference_meta["perturbation_id"])
@@ -246,6 +323,11 @@ def _capture_one(
         current_mask_id=reference_meta["mask_id"],
         capture_role=capture_role,
         perturbation_id=current_perturbation_id,
+        current_wavelength_nm=float(wavelength_nm),
+        target_wavelength_nm=float(wavelength_nm),
+        camera_exposure_us=float(exposure_us),
+        camera_gain_db=float(gain_db),
+        camera_profile_used=str(camera_profile_used),
     )
     run_status.write_mask_preview(reference_mask)
     if dry_run:
@@ -253,6 +335,7 @@ def _capture_one(
             capture_role=capture_role,
             perturbation_id=current_perturbation_id,
             repeat_index=repeat_index,
+            wavelength_nm=wavelength_nm,
         )
     else:
         lcd_service.show_mono_mask(reference_mask, mask_id=reference_meta["mask_id"], mode="phase3_3_dotf")
@@ -267,6 +350,11 @@ def _capture_one(
         repeat_index=repeat_index,
         capture_role=capture_role,
         perturbation_id=current_perturbation_id,
+        wavelength_nm=float(wavelength_nm),
+        wavelength_index=int(wavelength_index),
+        exposure_us=float(exposure_us),
+        gain_db=float(gain_db),
+        camera_profile_used=str(camera_profile_used),
         mask_metadata=reference_meta,
     )
     if capture_index % max(1, int(status_preview_every)) == 0:
@@ -285,16 +373,18 @@ def _assert_pupil_shape_matches_lcd(pupil_window: dict[str, Any], physical_shape
         )
 
 
-def _synthetic_dotf_frame(*, capture_role: str, perturbation_id: str, repeat_index: int) -> np.ndarray:
+def _synthetic_dotf_frame(*, capture_role: str, perturbation_id: str, repeat_index: int, wavelength_nm: float) -> np.ndarray:
     h, w = 256, 320
     yy, xx = np.mgrid[:h, :w]
-    seed = 5000 + 31 * int(repeat_index) + sum(ord(c) for c in perturbation_id)
+    seed = 5000 + 31 * int(repeat_index) + sum(ord(c) for c in perturbation_id) + int(round(float(wavelength_nm)))
     rng = np.random.default_rng(seed)
-    cx = 160.0 + rng.normal(0.0, 0.12)
-    cy = 128.0 + rng.normal(0.0, 0.12)
+    wl_offset = (float(wavelength_nm) - 550.0) / 100.0
+    cx = 160.0 + 0.6 * wl_offset + rng.normal(0.0, 0.12)
+    cy = 128.0 - 0.4 * wl_offset + rng.normal(0.0, 0.12)
     base = 10.0 + 0.02 * xx + 0.015 * yy
-    core = 220.0 * np.exp(-(((xx - cx) / 10.5) ** 2 + ((yy - cy) / 9.0) ** 2))
-    halo = 30.0 * np.exp(-(((xx - cx) / 26.0) ** 2 + ((yy - cy) / 24.0) ** 2))
+    wl_gain = 1.0 + 0.08 * wl_offset
+    core = (220.0 * wl_gain) * np.exp(-(((xx - cx) / 10.5) ** 2 + ((yy - cy) / 9.0) ** 2))
+    halo = (30.0 * (1.0 - 0.03 * wl_offset)) * np.exp(-(((xx - cx) / 26.0) ** 2 + ((yy - cy) / 24.0) ** 2))
     if capture_role == "reference":
         perturb = 0.0
     else:
@@ -307,6 +397,50 @@ def _synthetic_dotf_frame(*, capture_role: str, perturbation_id: str, repeat_ind
         perturb = -12.0 * np.exp(-(((xx - (cx + dx)) / 6.0) ** 2 + ((yy - (cy + dy)) / 6.5) ** 2))
     noise = rng.normal(0.0, 0.7, size=(h, w))
     return (base + core + halo + perturb + noise).astype(np.float64)
+
+
+def _dotf_wavelength_entries(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    wavelengths = plan.get("wavelengths")
+    if isinstance(wavelengths, list) and wavelengths:
+        return [dict(item) for item in wavelengths]
+    wavelength = plan.get("wavelength")
+    if isinstance(wavelength, dict) and wavelength:
+        return [dict(wavelength)]
+    raise ValueError("Phase 3.3 plan requires wavelength or wavelengths")
+
+
+def _configure_tls_for_wavelength(
+    wl_cfg: dict[str, Any],
+    *,
+    dry_run: bool,
+    tls_service: Any,
+) -> dict[str, Any]:
+    wavelength_nm = wl_cfg.get("wavelength_nm")
+    grating = wl_cfg.get("grating")
+    meta = {
+        "connected": False,
+        "current_wavelength_nm": wavelength_nm,
+        "target_wavelength_nm": wavelength_nm,
+        "grating": grating,
+        "moving": False,
+    }
+    if dry_run or tls_service is None or wavelength_nm is None:
+        return meta
+    if grating is not None:
+        tls_service.set_grating(int(grating))
+    tls_service.set_wavelength_nm(float(wavelength_nm))
+    tls_service.move(timeout_s=60.0)
+    tls_service.wait_until_idle(timeout_s=60.0)
+    if wl_cfg.get("settle_ms", 0) > 0:
+        time.sleep(float(wl_cfg.get("settle_ms", 0)) / 1000.0)
+    status = tls_service.get_status()
+    return {
+        "connected": status.connected,
+        "current_wavelength_nm": status.current_wavelength_nm,
+        "target_wavelength_nm": status.target_wavelength_nm,
+        "grating": status.grating,
+        "moving": status.moving,
+    }
 
 
 def main() -> None:

@@ -1,0 +1,40 @@
+﻿plan_id: bishe_psf_roi_rerun_20260519_222907
+phase: "3.2a"
+
+camera_params_source: outputs/exposure_calibration/camera_params_psf_safe.json
+camera_profile_policy: global_safe_camera
+
+pupil_window_source: outputs/pupil_geometry/effective_pupil_window.json
+
+wavelength:
+  wavelength_nm: 550.0
+  grating: 1
+  settle_ms: 500
+
+lcd:
+  display_index: 1
+  subpixel_axis: 1
+  settle_ms: 200
+
+capture:
+  repeats: 5
+  frames_per_capture: 10
+
+psf_roi:
+  method: peak_then_center_of_mass
+  crop_size: [256, 256]
+  candidate_crop_sizes:
+    - [256, 256]
+    - [512, 512]
+    - [768, 768]
+    - [1024, 1024]
+  current_baseline_roi_key: roi_256
+  default_roi_key: roi_256
+  center_window_radius: 32
+  energy_fraction_check: 0.999
+
+output:
+  raw_h5: data/raw/bishe_psf_roi_20260519_222907.h5
+  output_dir: outputs/psf_roi_20260519_222907
+
+lock_file: outputs/run_status/capture_hardware.lock
