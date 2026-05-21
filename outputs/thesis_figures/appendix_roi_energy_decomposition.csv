@@ -1,0 +1,41 @@
+section,item,value,unit,note
+support_domain,r<200_total_signal,100694.1,counts,background-subtracted total in r<200
+support_domain,r<300_total_signal,109017.8,counts,background-subtracted total in r<300
+support_domain,r<500_total_signal,125420.1,counts,background-subtracted total in r<500
+support_domain,full_frame_total_signal,212212.0,counts,"full-frame denominator, dominated by noise-floor integration"
+support_domain,roi_256_enclosed_r<200,94.51,%,roi_256 enclosed energy fraction within r < 200 support domain
+support_domain,roi_256_enclosed_r<300,87.30,%,roi_256 enclosed energy fraction within r < 300 support domain
+support_domain,roi_256_enclosed_r<500,75.88,%,roi_256 enclosed energy fraction within r < 500 support domain
+support_domain,roi_256_enclosed_full,44.85,%,roi_256 enclosed energy fraction within full support domain
+support_domain,roi_512_enclosed_r<200,105.41,%,roi_512 enclosed energy fraction within r < 200 support domain
+support_domain,roi_512_enclosed_r<300,97.37,%,roi_512 enclosed energy fraction within r < 300 support domain
+support_domain,roi_512_enclosed_r<500,84.63,%,roi_512 enclosed energy fraction within r < 500 support domain
+support_domain,roi_512_enclosed_full,50.02,%,roi_512 enclosed energy fraction within full support domain
+support_domain,roi_768_enclosed_r<200,119.98,%,roi_768 enclosed energy fraction within r < 200 support domain
+support_domain,roi_768_enclosed_r<300,110.82,%,roi_768 enclosed energy fraction within r < 300 support domain
+support_domain,roi_768_enclosed_r<500,96.33,%,roi_768 enclosed energy fraction within r < 500 support domain
+support_domain,roi_768_enclosed_full,56.93,%,roi_768 enclosed energy fraction within full support domain
+support_domain,roi_1024_enclosed_r<200,129.71,%,roi_1024 enclosed energy fraction within r < 200 support domain
+support_domain,roi_1024_enclosed_r<300,119.81,%,roi_1024 enclosed energy fraction within r < 300 support domain
+support_domain,roi_1024_enclosed_r<500,104.14,%,roi_1024 enclosed energy fraction within r < 500 support domain
+support_domain,roi_1024_enclosed_full,61.55,%,roi_1024 enclosed energy fraction within full support domain
+far_field,threshold_0.0_pixels,4885380,px,pixels at r>=200 with corr>=0.0
+far_field,threshold_0.0_energy,111517.9,counts,energy at r>=200 with corr>=0.0
+far_field,threshold_0.0_pct_total,52.55,%,% of full-frame total at r>=200 with corr>=0.0
+far_field,threshold_0.1_pixels,31178,px,pixels at r>=200 with corr>=0.1
+far_field,threshold_0.1_energy,16164.8,counts,energy at r>=200 with corr>=0.1
+far_field,threshold_0.1_pct_total,7.62,%,% of full-frame total at r>=200 with corr>=0.1
+far_field,threshold_0.5_pixels,11439,px,pixels at r>=200 with corr>=0.5
+far_field,threshold_0.5_energy,12151.2,counts,energy at r>=200 with corr>=0.5
+far_field,threshold_0.5_pct_total,5.73,%,% of full-frame total at r>=200 with corr>=0.5
+far_field,threshold_1.0_pixels,4400,px,pixels at r>=200 with corr>=1.0
+far_field,threshold_1.0_energy,6840.5,counts,energy at r>=200 with corr>=1.0
+far_field,threshold_1.0_pct_total,3.22,%,% of full-frame total at r>=200 with corr>=1.0
+far_field,threshold_5.0_pixels,74,px,pixels at r>=200 with corr>=5.0
+far_field,threshold_5.0_energy,443.2,counts,energy at r>=200 with corr>=5.0
+far_field,threshold_5.0_pct_total,0.21,%,% of full-frame total at r>=200 with corr>=5.0
+far_field,threshold_10.0_pixels,1,px,pixels at r>=200 with corr>=10.0
+far_field,threshold_10.0_energy,12.1,counts,energy at r>=200 with corr>=10.0
+far_field,threshold_10.0_pct_total,0.01,%,% of full-frame total at r>=200 with corr>=10.0
+metadata,noise_floor_artifact_pp,46.82,pp,apparent leakage from noise-floor integration (corr<0.5)
+metadata,genuine_diffraction_pp,5.73,pp,genuine far-field diffraction peak contribution (corr>=0.5)

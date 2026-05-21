@@ -122,6 +122,31 @@ Operational conclusion:
 - This selection keeps `roi_256` as the frozen Phase 3.2a baseline while
   moving Phase 3.4 to a more moderate support window.
 
+Energy decomposition diagnostic:
+
+The apparent 55% leakage for roi_256 under the full-frame denominator is
+dominated by a noise-floor integration artifact:
+
+  Full-frame total (background-subtracted):       212,212 counts
+  Far field r >= 200 px:                          111,518 counts (52.55%)
+    Genuine diffraction peaks (corr >= 0.5):       12,151 counts ( 5.73%)
+    Noise-floor integration artifact (corr < 0.5): 99,368 counts (46.82%)
+
+Dark frame (Phase 3.1): mean 24.90, std 0.20.
+Scene background (5th percentile): 24.98.
+Dark frame is consistent with scene floor (offset 0.08 counts).
+
+Within physically motivated support domains:
+  roi_256 enclosed r<200:  94.5%
+  roi_256 enclosed r<300:  87.3%
+  roi_512 enclosed r<300:  97.4%
+
+Both ROIs achieve >90% enclosed energy within compact support regions.
+The full-frame denominator value is preserved as the audited Phase 3.2a
+baseline; the noise-floor decomposition is a supplementary diagnostic.
+See GitHub issue #58, scripts/_diffraction_wing_analysis.py, and
+scripts/export_thesis_calibration_figures.py.
+
 ## Phase 3.2b
 
 Canonical output:

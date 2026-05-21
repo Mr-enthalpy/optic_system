@@ -1,0 +1,18 @@
+item,value,unit,source_artifact,note
+lcd_center_x,1065.2462,px,effective_pupil_window.json,LCD physical coordinate X
+lcd_center_y,1871.5352,px,effective_pupil_window.json,LCD physical coordinate Y
+lcd_effective_radius,52.7972,px,effective_pupil_window.json,effective circular pupil radius
+lcd_fit_r2,0.999179,,effective_pupil_window.json,ellipse/radius fit R²
+psf_center_x,1149.1284,px,psf_roi.json,camera sensor coordinate X
+psf_center_y,934.5088,px,psf_roi.json,camera sensor coordinate Y
+selected_roi,roi_512,,psf_roi.json,final modelling ROI key
+roi_256_energy_coverage,0.4485,,computed from bishe_psf_roi.h5 frames_avg,enclosed energy fraction in roi_256
+roi_512_energy_coverage,0.5002,,computed from bishe_psf_roi.h5 frames_avg,enclosed energy fraction in roi_512
+roi_768_energy_coverage,0.5693,,computed from bishe_psf_roi.h5 frames_avg,enclosed energy fraction in roi_768
+roi_1024_energy_coverage,0.6155,,computed from bishe_psf_roi.h5 frames_avg,enclosed energy fraction in roi_1024
+exposure_450nm,779.6875,us,camera_params_psf_safe.json,PSF-safe exposure at 450 nm
+gain_450nm,0.0000,dB,camera_params_psf_safe.json,PSF-safe gain at 450 nm
+exposure_550nm,487.3047,us,camera_params_psf_safe.json,PSF-safe exposure at 550 nm
+gain_550nm,0.0000,dB,camera_params_psf_safe.json,PSF-safe gain at 550 nm
+exposure_650nm,2241.6016,us,camera_params_psf_safe.json,PSF-safe exposure at 650 nm
+gain_650nm,0.0000,dB,camera_params_psf_safe.json,PSF-safe gain at 650 nm

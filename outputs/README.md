@@ -249,6 +249,25 @@ provenance rule below.
   `LCD_forward`.
 - Phase 3.7 thesis figure aggregation and report freeze are skipped in
   `optic_system` and belong to `LCD_forward` or a thesis-writing workspace.
+  optic_system does export thesis-APPENDIX calibration diagnostic figures
+  (U1: LCD effective pupil, U2: PSF ROI comparison, U2b: energy decomposition)
+  from Phase 3 handoff artifacts; see `outputs/thesis_figures/`.
+
+### `outputs/thesis_figures/`
+
+- **Phase:** UPSTREAM U1/U2/U2b - Thesis appendix calibration figures
+- **Depends on:** Phase 3 handoff release (`D:/datasets/optic_system/phase3_release_20260520`)
+- **Script:** `scripts/export_thesis_calibration_figures.py`
+- **Hardware required:** no
+- **Produces:**
+  - `appendix_lcd_effective_pupil_annotated.pdf/png` — U1: LCD encoding region with boundary overlay
+  - `appendix_psf_roi_comparison.pdf/png` — U2: PSF ROI candidate overlay, linear [bg,peak] display + log inset
+  - `appendix_roi_energy_decomposition.pdf/png` — U2b: support-domain enclosed energy and far-field threshold decomposition
+  - `appendix_calibration_summary.csv` — LCD/PSF/exposure calibration summary table
+  - `appendix_roi_energy_decomposition.csv` — per-ROI energy coverage, support-domain and far-field sections
+  - `thesis_optic_system_figures_manifest.json` — output manifest with provenance
+  - `README.md` — description, conclusions, regeneration instructions
+- **Status:** complete (thesis-ready appendix figures)
 
 ### `outputs/bishe_figures/`
 

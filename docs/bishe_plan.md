@@ -728,9 +728,15 @@ Exit criteria on the `optic_system` side:
 
 **Status: intentionally skipped in `optic_system`**
 
-Thesis figure aggregation, report freeze, defense-slide preparation, and
-final narrative assembly belong to `LCD_forward` outputs or a separate
-thesis-writing workspace.
+Thesis appendix calibration figures (U1: LCD effective pupil, U2: PSF ROI
+comparison, U2b: ROI energy decomposition) are exported by `optic_system`
+from Phase 3 handoff artifacts. See `scripts/export_thesis_calibration_figures.py`
+and `outputs/thesis_figures/`. These are calibration-support figures for the
+thesis appendix, not main scientific results.
+
+Thesis figure aggregation for Chapters 2-3, main-results figures, report
+freeze, defense-slide preparation, and final narrative assembly belong to
+`LCD_forward` or a separate thesis-writing workspace.
 
 ---
 

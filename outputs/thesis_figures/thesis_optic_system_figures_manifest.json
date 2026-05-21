@@ -1,0 +1,60 @@
+{
+  "task": "thesis_optic_system_figures",
+  "created_at": "2026-05-21T22:41:23.961629+00:00",
+  "phase3_release": "D:\\datasets\\optic_system\\phase3_release_20260520",
+  "hardware_required": false,
+  "figures": {
+    "lcd_effective_pupil": {
+      "output_pdf": "C:\\Users\\teacher H\\PycharmProjects\\optic_system\\outputs\\thesis_figures\\appendix_lcd_effective_pupil_annotated.pdf",
+      "center_xy": [
+        1065.2462265532397,
+        1871.5352061814938
+      ],
+      "effective_radius_px": 52.79722598558055,
+      "fit_r2": 0.999178591231608,
+      "lcd_coordinate_system": "physical_mono"
+    },
+    "psf_roi_comparison": {
+      "output_pdf": "C:\\Users\\teacher H\\PycharmProjects\\optic_system\\outputs\\thesis_figures\\appendix_psf_roi_comparison.pdf",
+      "psf_center_xy": [
+        1149.1284484551213,
+        934.5088420118792
+      ],
+      "selected_roi": 512,
+      "roi_candidates": [
+        256,
+        512,
+        768,
+        1024
+      ],
+      "known_energy_coverage": {
+        "roi_256": 0.4484608364785405,
+        "roi_512": 0.500186087479874,
+        "roi_768": 0.5693133687714804,
+        "roi_1024": 0.6154841747418487
+      },
+      "camera_coordinate_system": "sensor_pixels",
+      "roi_energy_decomposition": {
+        "output_pdf": "C:\\Users\\teacher H\\PycharmProjects\\optic_system\\outputs\\thesis_figures\\appendix_roi_energy_decomposition.pdf",
+        "output_csv": "C:\\Users\\teacher H\\PycharmProjects\\optic_system\\outputs\\thesis_figures\\appendix_roi_energy_decomposition.csv",
+        "full_frame_denominator": 212212.01999999819,
+        "noise_floor_artifact_pp": 46.82426565658189,
+        "genuine_diffraction_pp": 5.7259810259570125,
+        "support_domains": [
+          "r<200",
+          "r<300",
+          "r<500",
+          "full"
+        ],
+        "data_provenance": {
+          "psf_source": "bishe_psf_roi.h5/raw/frames_avg",
+          "dark_frame": "bishe_pupil_geometry.h5/references/dark_frame_avg",
+          "background_policy": "5th percentile valid pixel domain",
+          "diagnostic_script": "scripts/_diffraction_wing_analysis.py"
+        }
+      }
+    }
+  },
+  "calibration_summary_csv": "C:\\Users\\teacher H\\PycharmProjects\\optic_system\\outputs\\thesis_figures\\appendix_calibration_summary.csv",
+  "energy_decomposition_csv": "C:\\Users\\teacher H\\PycharmProjects\\optic_system\\outputs\\thesis_figures\\appendix_roi_energy_decomposition.csv"
+}
