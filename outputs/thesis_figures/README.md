@@ -34,6 +34,14 @@ Hardware required: no
   - Panel (a): full 2048×2448 camera frame with ROI boxes, center marker, p99 annotation
   - Panel (b): 64×64 zoom on brightest far-field (r>200 px) diffraction peak
 
+### Fig 3 – Same-Mask Cross-Wavelength PSF Scale
+
+- `fig3_wavelength_psf_scale.pdf` / `.png`
+  - Panel (a): all_open_window PSF at 450/550/650 nm, side-by-side, same log scale (magma colormap)
+  - Panel (b): cumulative enclosed energy fraction vs enclosing square half-size, three wavelengths overlaid
+  - Annotations: r_50% markers for each wavelength (square half-size capturing 50% of total signal)
+  - Data: bishe_psf_repeatability_20260519_222907.h5 / raw/crops (256×256, 10-repeat average)
+
 ### Summary tables
 
 - `appendix_calibration_summary.csv` – LCD pupil coordinates, PSF ROI coordinates, per-ROI energy coverage, per-wavelength exposure and gain

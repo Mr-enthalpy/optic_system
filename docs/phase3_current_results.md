@@ -214,6 +214,10 @@ Operational conclusion:
   - mask-induced PSF differences are much larger than repeatability noise
   - same-mask cross-wavelength PSF shape differences remain much larger than
     repeatability noise after background subtraction and unit-energy normalization
+- Fig 3 (fig3_wavelength_psf_scale.pdf) visualizes the same-mask
+  cross-wavelength PSF scale dependence via side-by-side log-scale
+  comparison and cumulative enclosed energy vs square window
+  half-size with r₅₀% vertical markers.
 - Interpretation boundary:
   - raw metrics still mix shape differences with residual photometric scaling
   - normalized metrics are the stricter basis for cross-wavelength shape claims

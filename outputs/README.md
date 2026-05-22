@@ -264,6 +264,7 @@ provenance rule below.
   - `appendix_psf_roi_comparison.pdf/png` — U2: PSF ROI candidate overlay, linear [bg,peak] display + log inset
   - `appendix_roi_energy_decomposition.pdf/png` — U2b: support-domain enclosed energy and far-field threshold decomposition
   - `appendix_psf_tail_enhanced.pdf/png` — U2c: full-frame PSF tail-enhanced view (p=0.99 percentile, magma colormap, 64x64 diffraction peak zoom)
+  - `fig3_wavelength_psf_scale.pdf/png` — Fig 3: same-mask cross-wavelength PSF scale comparison (all_open_window at 450/550/650 nm)
   - `appendix_calibration_summary.csv` — LCD/PSF/exposure calibration summary table
   - `appendix_roi_energy_decomposition.csv` — per-ROI energy coverage, support-domain and far-field sections
   - `thesis_optic_system_figures_manifest.json` — output manifest with provenance

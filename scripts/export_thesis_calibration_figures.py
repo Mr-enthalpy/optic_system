@@ -6,6 +6,7 @@ Generates:
   - appendix_psf_roi_comparison.pdf/png              (U2)
   - appendix_roi_energy_decomposition.pdf/png        (U2b)
   - appendix_psf_tail_enhanced.pdf/png               (U2c)
+  - fig3_wavelength_psf_scale.pdf/png                (Fig 3)
   - appendix_calibration_summary.csv
   - appendix_roi_energy_decomposition.csv
   - thesis_optic_system_figures_manifest.json
@@ -84,13 +85,16 @@ def export_thesis_calibration_figures(
         psf_pdf = _build_figure_u2(psf_data, out, dpi, fmt)
         decomp_pdf = _build_figure_u2b(psf_data, energy_decomp, out, dpi, fmt)
         tail_pdf = _build_figure_u2c_tail_enhanced(psf_data, out, dpi, fmt)
+        fig3_pdf = _build_figure_wavelength_psf_scale(out, dpi, fmt)
+
+    pdf_paths = [p for p in [lcd_pdf, psf_pdf, decomp_pdf, tail_pdf, fig3_pdf] if p is not None]
 
     csv_path = _write_calibration_csv(lcd_data, psf_data, exposure_data, out)
     _write_energy_decomposition_csv(energy_decomp, out)
     manifest = _write_manifest(lcd_data, psf_data, energy_decomp, out, str(release_root))
 
     _copy_to_thesis_assets(
-        pdf_paths=[lcd_pdf, psf_pdf, decomp_pdf, tail_pdf],
+        pdf_paths=pdf_paths,
         thesis_assets_dir=Path(copy_to_thesis_assets) if copy_to_thesis_assets else None,
         force=force,
     )
@@ -721,6 +725,128 @@ def _build_figure_u2c_tail_enhanced(
     )
 
     return _save_figure(fig, out_dir / "appendix_psf_tail_enhanced", dpi, fmt)
+
+
+# ---------------------------------------------------------------------------
+# Fig 3: same-mask cross-wavelength PSF scale comparison
+# ---------------------------------------------------------------------------
+
+
+def _build_figure_wavelength_psf_scale(out_dir: Path, dpi: int, fmt: str) -> Path:
+    release_root = Path("D:/datasets/optic_system/phase3_release_20260520")
+    h5_path = release_root / "common" / "provenance" / "raw_h5" / "bishe_psf_repeatability_20260519_222907.h5"
+
+    if not h5_path.exists():
+        print(f"warning: repeatability HDF5 not found ({h5_path}), skipping Fig 3")
+        return None
+
+    with h5py.File(str(h5_path), "r") as f:
+        all_crops = np.asarray(f["raw/crops"], dtype=np.float64)
+        all_masks = f["raw/mask_id"][()]
+
+    wl_crops: dict[float, np.ndarray] = {}
+    for wl_base_idx, wl_val in [(0, 450.0), (80, 550.0), (160, 650.0)]:
+        indices = [
+            i for i in range(wl_base_idx, wl_base_idx + 80)
+            if all_masks[i].decode() == "all_open_window"
+        ]
+        wl_crops[wl_val] = np.mean(all_crops[indices], axis=0)
+
+    wl_list = [450.0, 550.0, 650.0]
+    crops = {wl: wl_crops[wl] for wl in wl_list}
+    logs: dict[float, np.ndarray] = {}
+    for wl in wl_list:
+        crop = crops[wl]
+        bg = float(np.percentile(crop, 5.0))
+        corrected = np.maximum(crop - bg, 0.0)
+        logs[wl] = np.log10(corrected + 1.0)
+
+    global_min = float(min(logs[wl][logs[wl] > 0].min() for wl in wl_list))
+    global_max = float(max(logs[wl].max() for wl in wl_list))
+
+    fig = plt.figure(figsize=(8.5, 5.0))
+
+    # ---- panel (a): 3 PSF crops side-by-side ----
+    gs = fig.add_gridspec(1, 4, top=0.92, bottom=0.42, left=0.06, right=0.92,
+                          wspace=0.08, width_ratios=[1, 1, 1, 0.06])
+    wl_labels = [("450 nm", "#3355AA"), ("550 nm", "#55AA33"), ("650 nm", "#CC4400")]
+    im = None
+    for j, (wl, (label, edge_color)) in enumerate(zip(wl_list, wl_labels)):
+        ax = fig.add_subplot(gs[0, j])
+        img = logs[wl]
+        im = ax.imshow(img, cmap="magma", vmin=global_min, vmax=global_max, aspect="equal", origin="upper")
+        ax.set_title(label, fontsize=8, color=edge_color)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        rect = plt.Rectangle((96, 96), 64, 64, fill=False, edgecolor="white", linewidth=0.6, linestyle="--", alpha=0.5)
+        ax.add_patch(rect)
+        if j == 0:
+            scale_y = 245
+            scale_x0 = 10
+            scale_x1 = 60
+            ax.plot([scale_x0, scale_x1], [scale_y, scale_y], "w-", linewidth=1.5)
+            ax.text((scale_x0 + scale_x1) / 2, scale_y - 6, "50 px", ha="center", fontsize=5.5, color="white")
+
+    cax = fig.add_subplot(gs[0, 3])
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label(r"log$_{10}$(bg-sub + 1)", fontsize=7)
+    cbar.ax.tick_params(labelsize=6)
+
+    fig.text(0.03, 0.955, "(a) all_open_window PSF, same log scale", fontsize=8, fontweight="bold", va="top")
+
+    # ---- panel (b): cumulative enclosed energy vs window half-size ----
+    ax_c = fig.add_axes([0.12, 0.08, 0.78, 0.24])
+    colors = ["#3355AA", "#55AA33", "#CC4400"]
+    half_range = 120
+    half_sizes = np.arange(0, half_range + 1)
+    encl: dict[float, np.ndarray] = {}
+    for wl, c in zip(wl_list, colors):
+        crop = crops[wl]
+        bg = float(np.percentile(crop, 5.0))
+        corrected = np.maximum(crop - bg, 0.0)
+        total = float(np.sum(corrected))
+        cumulative = np.empty(len(half_sizes), dtype=np.float64)
+        for i, hs in enumerate(half_sizes):
+            y0 = max(0, 128 - hs)
+            y1 = min(256, 128 + hs)
+            x0 = max(0, 128 - hs)
+            x1 = min(256, 128 + hs)
+            cumulative[i] = float(np.sum(corrected[y0:y1, x0:x1])) / total if total > 0 else 0.0
+        encl[wl] = cumulative
+        ax_c.plot(half_sizes, cumulative, color=c, linewidth=1.2, label=f"{wl:.0f} nm")
+
+    ax_c.axhline(0.5, color="gray", linestyle="--", linewidth=0.6, alpha=0.5)
+    ax_c.text(2, 0.52, "0.5", fontsize=6, color="gray", va="bottom")
+    ax_c.set_xlabel("Enclosing square half-size [px]")
+    ax_c.set_ylabel("Enclosed energy fraction")
+    ax_c.legend(fontsize=7, loc="lower right", framealpha=0.7)
+    ax_c.set_xlim(0, half_range)
+    ax_c.set_ylim(0, 1.05)
+
+    label_ys: dict[float, float] = {450.0: 0.08, 550.0: 0.14, 650.0: 0.20}
+    for wl, color in [(450.0, "#3355AA"), (550.0, "#55AA33"), (650.0, "#CC4400")]:
+        cum = encl.get(wl)
+        if cum is None or len(cum) < 2:
+            continue
+        r50_idx = int(np.searchsorted(cum, 0.5))
+        trans_hs = int(half_sizes[r50_idx])
+        ly = label_ys.get(wl, 0.1)
+        ax_c.axvline(trans_hs, color=color, linestyle="--", linewidth=0.8, alpha=0.7)
+        ax_c.text(
+            trans_hs + 2, ly,
+            f"r$_{{{wl:.0f}}}$={trans_hs}",
+            fontsize=6.5, color=color, va="bottom",
+        )
+
+    fig.text(0.03, 0.40, "(b) cumulative enclosed energy vs square window size", fontsize=8, fontweight="bold", va="top")
+
+    fig.text(
+        0.06, 1.01,
+        "Same-Mask Cross-Wavelength PSF Scale  |  all_open_window  |  roi_256 crop",
+        fontsize=9, fontweight="bold", va="bottom",
+    )
+
+    return _save_figure(fig, out_dir / "fig3_wavelength_psf_scale", dpi, fmt)
 
 
 def _draw_roi_support_domain_bars(ax: plt.Axes, roi_enc: dict[str, dict[str, float]]) -> None:

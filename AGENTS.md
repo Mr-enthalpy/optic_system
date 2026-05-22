@@ -489,7 +489,7 @@ Completed:
 - Phase 3.2a/3.2b canonical hardware capture and analysis
 - Phase 3.3 dOTF diagnostic visualization
 - Phase 3.4 measured PSF dictionary and LCD_forward export
-- UPSTREAM U1/U2/U2b/U2c thesis appendix calibration figures exported from Phase 3 handoff (see outputs/thesis_figures/)
+- UPSTREAM U1/U2/U2b/U2c/Fig3 thesis appendix calibration figures exported from Phase 3 handoff (see outputs/thesis_figures/)
 
 Next (thesis branch):
 
@@ -508,6 +508,6 @@ Do not implement Phase 3.5 or Phase 3.7 in `optic_system`.
 For Phase 3.6, implement hardware-side target capture and export only.
 Forward validation, reconstruction, and main-text thesis figure generation belong to
 `LCD_forward` or the thesis-writing workspace.
-optic_system exports thesis-APPENDIX calibration diagnostic figures (U1, U2, U2b, U2c)
+optic_system exports thesis-APPENDIX calibration diagnostic figures (U1, U2, U2b, U2c, Fig 3)
 from existing Phase 3 handoff artifacts only. These are calibration-support figures,
 not main scientific result figures.

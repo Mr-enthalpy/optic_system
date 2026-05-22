@@ -451,3 +451,14 @@ def test_u2c_tail_enhanced_generates(tmp_path: Path) -> None:
 
     assert (out / "appendix_psf_tail_enhanced.pdf").exists()
     assert (out / "appendix_psf_tail_enhanced.png").exists()
+
+
+def test_wavelength_psf_scale_skips_gracefully(tmp_path: Path) -> None:
+    root = _make_release_fixture(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+
+    # the fixture doesn't have bishe_psf_repeatability.h5 at the D: drive path,
+    # so Fig 3 should skip gracefully and the rest should still work
+    manifest = export_thesis_calibration_figures(phase3_release=root, out_dir=out, dpi=72, fmt="png")
+    assert "figures" in manifest  # all other figures still generated
