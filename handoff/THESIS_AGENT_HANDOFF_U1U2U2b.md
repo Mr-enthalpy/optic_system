@@ -16,6 +16,7 @@ MANIFEST.json, SHA256SUMS.txt, and RELEASE.json have been updated.
 | `appendix_lcd_effective_pupil_annotated.pdf/.png` | U1 — LCD encoding region with boundary overlay, center, radius, scale | A.1 |
 | `appendix_psf_roi_comparison.pdf/.png` | U2 — PSF ROI candidate overlay, linear [bg,peak] display + log inset | A.2 |
 | `appendix_roi_energy_decomposition.pdf/.png` | U2b — support-domain enclosed energy vs ROI size; far-field threshold decomposition (noise-floor vs diffraction peaks) | A.2 |
+| `appendix_psf_tail_enhanced.pdf/.png` | U2c — full-frame PSF tail-enhanced view (p=0.99 percentile, magma colormap, 64x64 diffraction peak zoom) | A.2 |
 | `appendix_calibration_summary.csv` | LCD pupil params, PSF centre, per-ROI energy coverage, per-wavelength exposure/gain | appendix table |
 | `appendix_roi_energy_decomposition.csv` | support-domain enclosed fractions, far-field energy by threshold, metadata | appendix table |
 | `thesis_optic_system_figures_manifest.json` | output manifest with coordinates, provenance, data source refs | reference |

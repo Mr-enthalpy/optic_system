@@ -146,6 +146,9 @@ The full-frame denominator value is preserved as the audited Phase 3.2a
 baseline; the noise-floor decomposition is a supplementary diagnostic.
 See GitHub issue #58, scripts/_diffraction_wing_analysis.py, and
 scripts/export_thesis_calibration_figures.py.
+Appendix figure U2c (appendix_psf_tail_enhanced.pdf) provides a full-frame
+tail-enhanced visualization with p=0.99 percentile normalization and
+magma colormap for diagnosing far-field diffraction peak distribution.
 
 ## Phase 3.2b
 

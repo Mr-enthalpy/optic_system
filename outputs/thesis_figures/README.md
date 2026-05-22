@@ -25,7 +25,14 @@ Hardware required: no
 - `appendix_roi_energy_decomposition.pdf` / `.png`
   - Panel (a): ROI enclosed energy vs support domain (r<200, r<300, r<500, full frame) group bar chart
   - Panel (b): far-field cumulative energy by threshold (corr >= 0, 0.1, 0.5, 1.0, 5.0, 10.0)
-  - Annotation box with caveats about noise-floor integration and diffraction thresholds
+
+### U2c – PSF Tail-Enhanced View
+
+- `appendix_psf_tail_enhanced.pdf` / `.png`
+  - Full-frame PSF with p=0.99 percentile normalization (main lobe saturated to reveal far-field structure)
+  - magma colormap for low-count distinguishability
+  - Panel (a): full 2048×2448 camera frame with ROI boxes, center marker, p99 annotation
+  - Panel (b): 64×64 zoom on brightest far-field (r>200 px) diffraction peak
 
 ### Summary tables
 

@@ -440,3 +440,14 @@ def test_manifest_includes_decomposition_fields(tmp_path: Path) -> None:
     assert "genuine_diffraction_pp" in rde
     assert "data_provenance" in rde
     assert rde["data_provenance"]["psf_source"] == "bishe_psf_roi.h5/raw/frames_avg"
+
+
+def test_u2c_tail_enhanced_generates(tmp_path: Path) -> None:
+    root = _make_release_fixture(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+
+    export_thesis_calibration_figures(phase3_release=root, out_dir=out, dpi=72, fmt="both")
+
+    assert (out / "appendix_psf_tail_enhanced.pdf").exists()
+    assert (out / "appendix_psf_tail_enhanced.png").exists()

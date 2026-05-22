@@ -5,6 +5,7 @@ Generates:
   - appendix_lcd_effective_pupil_annotated.pdf/png   (U1)
   - appendix_psf_roi_comparison.pdf/png              (U2)
   - appendix_roi_energy_decomposition.pdf/png        (U2b)
+  - appendix_psf_tail_enhanced.pdf/png               (U2c)
   - appendix_calibration_summary.csv
   - appendix_roi_energy_decomposition.csv
   - thesis_optic_system_figures_manifest.json
@@ -82,13 +83,14 @@ def export_thesis_calibration_figures(
         lcd_pdf = _build_figure_u1(lcd_data, out, dpi, fmt)
         psf_pdf = _build_figure_u2(psf_data, out, dpi, fmt)
         decomp_pdf = _build_figure_u2b(psf_data, energy_decomp, out, dpi, fmt)
+        tail_pdf = _build_figure_u2c_tail_enhanced(psf_data, out, dpi, fmt)
 
     csv_path = _write_calibration_csv(lcd_data, psf_data, exposure_data, out)
     _write_energy_decomposition_csv(energy_decomp, out)
     manifest = _write_manifest(lcd_data, psf_data, energy_decomp, out, str(release_root))
 
     _copy_to_thesis_assets(
-        pdf_paths=[lcd_pdf, psf_pdf, decomp_pdf],
+        pdf_paths=[lcd_pdf, psf_pdf, decomp_pdf, tail_pdf],
         thesis_assets_dir=Path(copy_to_thesis_assets) if copy_to_thesis_assets else None,
         force=force,
     )
@@ -345,12 +347,12 @@ def _build_figure_u1(data: dict[str, Any], out_dir: Path, dpi: int, fmt: str) ->
     fig = plt.figure(figsize=(8.0, 5.0))
 
     # ---- panel (a): LCD physical coordinate map with circle overlay ----
-    ax_map = fig.add_axes([0.06, 0.12, 0.50, 0.80])
+    ax_map = fig.add_axes([0.06, 0.12, 0.48, 0.80])
     _draw_lcd_pupil_map(ax_map, data)
 
     # ---- panel (b): bar profile sub-panels ----
-    ax_bar_x = fig.add_axes([0.60, 0.58, 0.36, 0.33])
-    ax_bar_y = fig.add_axes([0.60, 0.12, 0.36, 0.33])
+    ax_bar_x = fig.add_axes([0.63, 0.58, 0.33, 0.33])
+    ax_bar_y = fig.add_axes([0.63, 0.12, 0.33, 0.33])
 
     _draw_bar_profile(ax_bar_x, data, axis="x")
     _draw_bar_profile(ax_bar_y, data, axis="y")
@@ -365,9 +367,9 @@ def _build_figure_u1(data: dict[str, Any], out_dir: Path, dpi: int, fmt: str) ->
         fontsize=9, fontweight="bold", va="bottom",
     )
     fig.text(
-        0.06, 0.985,
+        0.06, 0.97,
         "LCD physical coordinates",
-        fontsize=7.5, va="top", color="gray",
+        fontsize=7.5, va="top",
     )
 
     return _save_figure(fig, out_dir / "appendix_lcd_effective_pupil_annotated", dpi, fmt)
@@ -492,8 +494,6 @@ def _build_figure_u2(data: dict[str, Any], out_dir: Path, dpi: int, fmt: str) ->
     inset = ax_frame.inset_axes([0.60, 0.60, 0.37, 0.37])
     _draw_log_inset(inset, data, bg=bg)
 
-    fig.text(0.04, 0.97, "(a)", fontsize=9, fontweight="bold", va="top")
-
     fig.suptitle(
         f"PSF ROI Candidate Overlay  |  {wl:.0f} nm  |  camera sensor coordinates",
         fontsize=9,
@@ -592,17 +592,135 @@ def _build_figure_u2b(psf_data: dict, energy_decomp: dict, out_dir: Path, dpi: i
     ax_thresh = fig.add_axes([0.57, 0.15, 0.38, 0.78])
     _draw_far_field_threshold_plot(ax_thresh, far_thresh)
 
-    fig.text(0.04, 0.97, "(a)", fontsize=9, fontweight="bold", va="top")
-    fig.text(0.54, 0.97, "(b)", fontsize=9, fontweight="bold", va="top")
+    fig.text(0.04, 0.96, "(a)", fontsize=9, fontweight="bold", va="top")
+    fig.text(0.54, 0.96, "(b)", fontsize=9, fontweight="bold", va="top")
 
     fig.suptitle(
         "PSF ROI Energy Decomposition  |  noise-floor vs diffraction wing separation",
         fontsize=9,
         fontweight="bold",
-        y=0.99,
+        y=1.005,
+        va="bottom",
     )
 
     return _save_figure(fig, out_dir / "appendix_roi_energy_decomposition", dpi, fmt)
+
+
+# ---------------------------------------------------------------------------
+# U2c: full-frame PSF tail-enhanced view (p=0.99 percentile normalization)
+# ---------------------------------------------------------------------------
+
+
+def _build_figure_u2c_tail_enhanced(
+    psf_data: dict[str, Any],
+    out_dir: Path,
+    dpi: int,
+    fmt: str,
+) -> Path:
+    mean_frame = np.asarray(psf_data["mean_frame"], dtype=np.float64)
+    center = psf_data["center"]
+    bg = psf_data["background"]
+    fh, fw = psf_data["frame_shape"]
+    wl = psf_data["wavelength_nm"]
+    selected_roi = psf_data["selected_roi"]
+    candidates = psf_data["candidate_rois"]
+
+    corrected = np.maximum(mean_frame - bg, 0.0)
+    nonzero = corrected[corrected > 0]
+    p99 = float(np.percentile(nonzero, 99.0)) if nonzero.size else 1.0
+
+    cy, cx = center[1], center[0]
+    yg, xg = np.ogrid[: fh, : fw]
+    r = np.sqrt((xg - cx) ** 2 + (yg - cy) ** 2)
+    far_mask = (r >= 200) & (mean_frame > bg)
+    if far_mask.any():
+        far_flat_idx = int(np.argmax(corrected[far_mask]))
+        far_indices = np.argwhere(far_mask)
+        spot_y, spot_x = far_indices[far_flat_idx]
+        spot_r = float(r[spot_y, spot_x])
+    else:
+        spot_y, spot_x = 0, 0
+        spot_r = 0.0
+
+    fig = plt.figure(figsize=(8.0, 6.0))
+
+    ax_main = fig.add_axes([0.06, 0.10, 0.72, 0.85])
+    im = ax_main.imshow(corrected, cmap="magma", vmin=0, vmax=p99, aspect="equal", origin="upper")
+
+    all_rois = [("roi_256", candidates.get("roi_256")), ("roi_512", selected_roi),
+                ("roi_768", candidates.get("roi_768")), ("roi_1024", candidates.get("roi_1024"))]
+    for rk, rr in all_rois:
+        if rr is None:
+            continue
+        x0, y0 = int(rr["x_min"]), int(rr["y_min"])
+        w, h = int(rr["width"]), int(rr["height"])
+        if rk == "roi_512":
+            rect = plt.Rectangle((x0, y0), w, h, fill=False, edgecolor="#FFDD22", linewidth=1.2, linestyle="-", zorder=5)
+        else:
+            rect = plt.Rectangle((x0, y0), w, h, fill=False, edgecolor="white", linewidth=0.6, linestyle="--", alpha=0.4, zorder=4)
+        ax_main.add_patch(rect)
+
+    ax_main.plot(cx, cy, "r+", markersize=8, markeredgewidth=1.5, zorder=7)
+
+    hs = 32
+    if spot_y > 0:
+        zoom_rect = plt.Rectangle(
+            (spot_x - hs, spot_y - hs), 2 * hs, 2 * hs,
+            fill=False, edgecolor="#FFDD22", linewidth=1.0, linestyle="--", zorder=6, alpha=0.8,
+        )
+        ax_main.add_patch(zoom_rect)
+
+    ax_main.text(
+        0.02, 0.98, "saturated main lobe\n(p=0.99 clip)",
+        transform=ax_main.transAxes, fontsize=7, va="top", color="yellow",
+    )
+    ax_main.text(
+        0.98, 0.02,
+        f"p99 threshold = {p99:.1f} counts above bg\n"
+        f"roi_512 box = {selected_roi.get('width', '?')}x{selected_roi.get('height', '?')} px",
+        transform=ax_main.transAxes, fontsize=6, va="bottom", ha="right",
+        color="white", bbox=dict(facecolor="black", alpha=0.5),
+    )
+
+    ax_main.set_xlim(0, fw)
+    ax_main.set_ylim(fh, 0)
+    ax_main.set_xlabel("Camera X [px]")
+    ax_main.set_ylabel("Camera Y [px]")
+
+    cax = fig.add_axes([0.80, 0.15, 0.02, 0.75])
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label("clipped at p=0.99", fontsize=7)
+    cbar.ax.tick_params(labelsize=6)
+
+    if spot_y > 0:
+        inset = ax_main.inset_axes([0.55, 0.55, 0.42, 0.42])
+        y0_ins = max(0, spot_y - hs)
+        y1_ins = min(fh, spot_y + hs)
+        x0_ins = max(0, spot_x - hs)
+        x1_ins = min(fw, spot_x + hs)
+        roi_ins = corrected[y0_ins:y1_ins, x0_ins:x1_ins]
+        inset.imshow(roi_ins, cmap="magma", vmin=0, vmax=p99, aspect="equal", origin="upper")
+        inset.set_xticks([])
+        inset.set_yticks([])
+        inset.text(
+            0.02, 0.98,
+            f"diffraction peak (r={spot_r:.0f} px, zoom 64x64)",
+            transform=inset.transAxes, fontsize=5.5, va="top", color="yellow",
+        )
+
+    fig.text(0.03, 0.97, "(a)", fontsize=9, fontweight="bold", va="top")
+    if spot_y > 0:
+        fig.text(0.53, 0.97, "(b)", fontsize=9, fontweight="bold", va="top")
+
+    fig.suptitle(
+        f"Full-Frame PSF Tail-Enhanced View (p=0.99)  |  {wl:.0f} nm",
+        fontsize=9,
+        fontweight="bold",
+        y=1.005,
+        va="bottom",
+    )
+
+    return _save_figure(fig, out_dir / "appendix_psf_tail_enhanced", dpi, fmt)
 
 
 def _draw_roi_support_domain_bars(ax: plt.Axes, roi_enc: dict[str, dict[str, float]]) -> None:

@@ -729,7 +729,9 @@ Exit criteria on the `optic_system` side:
 **Status: intentionally skipped in `optic_system`**
 
 Thesis appendix calibration figures (U1: LCD effective pupil, U2: PSF ROI
-comparison, U2b: ROI energy decomposition) are exported by `optic_system`
+comparison, U2b: ROI energy decomposition, U2c: full-frame PSF
+tail-enhanced view with p=0.99 percentile normalization) are exported by
+`optic_system`
 from Phase 3 handoff artifacts. See `scripts/export_thesis_calibration_figures.py`
 and `outputs/thesis_figures/`. These are calibration-support figures for the
 thesis appendix, not main scientific results.
