@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import Any
 
 import h5py
+import matplotlib
 import numpy as np
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 
 def _repo_root() -> Path:
@@ -177,7 +181,7 @@ def _build_analysis_payload(
         per_wavelength_metrics[wavelength_nm] = metrics
         wl_dir = out_dir / _wavelength_dir_name(wavelength_nm)
         wl_dir.mkdir(parents=True, exist_ok=True)
-        _write_wavelength_outputs(wl_dir, metrics, wl_crops, wl_mask_ids)
+        _write_wavelength_outputs(wl_dir, metrics, wl_crops, wl_mask_ids, wavelength_nm=wavelength_nm)
         per_wavelength_repeatability[_wavelength_key(wavelength_nm)] = {
             "wavelength_nm": float(wavelength_nm),
             "mask_ids": metrics["mask_ids"],
@@ -265,6 +269,7 @@ def _build_analysis_payload(
         np.save(out_dir / "psfs_std.npy", _std_by_mask(crops, mask_ids, first_metrics["mask_ids"]))
         _write_contact_sheet(out_dir / "mask_mean_psfs.png", first_metrics["mask_mean_psfs"])
     else:
+        _write_multi_wavelength_mean_psf_figure(out_dir, per_wavelength_metrics)
         _write_multi_wavelength_manifest(out_dir / "multi_wavelength_manifest.json", per_wavelength_repeatability, diversity)
 
     if emit_primary_outputs:
@@ -343,13 +348,20 @@ def _write_wavelength_outputs(
     metrics: dict[str, Any],
     crops: np.ndarray,
     mask_ids: list[str],
+    *,
+    wavelength_nm: float | None = None,
 ) -> None:
     np.save(out_dir / "pairwise_distance_matrix.npy", metrics["pairwise_distance_matrix"])
     np.save(out_dir / "ssim_matrix.npy", metrics["ssim_matrix"])
     np.save(out_dir / "psnr_matrix.npy", metrics["psnr_matrix"])
     np.save(out_dir / "psfs_mean.npy", metrics["mask_mean_psfs"])
     np.save(out_dir / "psfs_std.npy", _std_by_mask(crops, mask_ids, metrics["mask_ids"]))
-    _write_contact_sheet(out_dir / "mask_mean_psfs.png", metrics["mask_mean_psfs"])
+    _write_contact_sheet(
+        out_dir / "mask_mean_psfs.png",
+        metrics["mask_mean_psfs"],
+        mask_ids=metrics["mask_ids"],
+        wavelength_nm=wavelength_nm,
+    )
     wl_repeatability = {
         "mask_ids": metrics["mask_ids"],
         "intra_mask": metrics["intra"],
@@ -479,15 +491,129 @@ def _std_by_mask(crops: np.ndarray, mask_ids: list[str], unique_ids: list[str]) 
     return np.stack([np.std(crops[ids == mid], axis=0) for mid in unique_ids], axis=0)
 
 
-def _write_contact_sheet(path: Path, means: np.ndarray) -> None:
+def _write_contact_sheet(
+    path: Path,
+    means: np.ndarray,
+    *,
+    mask_ids: list[str] | None = None,
+    wavelength_nm: float | None = None,
+) -> None:
     n, h, w = means.shape
     cols = min(4, n)
     rows = int(np.ceil(n / cols))
-    sheet = np.zeros((rows * h, cols * w), dtype=np.float64)
-    for i in range(n):
+    fig, axes = plt.subplots(rows, cols, figsize=(2.25 * cols, 2.18 * rows), squeeze=False)
+    labels = mask_ids or [f"mask_{i}" for i in range(n)]
+    for i, ax in enumerate(axes.ravel()):
+        ax.set_xticks([])
+        ax.set_yticks([])
+        if i >= n:
+            ax.set_axis_off()
+            continue
         r, c = divmod(i, cols)
-        sheet[r * h : (r + 1) * h, c * w : (c + 1) * w] = means[i]
-    write_preview_png(path, sheet)
+        axes[r, c].imshow(_psf_log_preview(means[i]), cmap="magma", vmin=0.0, vmax=1.0)
+        axes[r, c].set_title(_short_mask_label(labels[i]), fontsize=8.5)
+    if wavelength_nm is None:
+        title = "Mean PSF morphology by mask"
+    else:
+        title = f"Mean PSF morphology by mask at {float(wavelength_nm):.0f} nm"
+    fig.suptitle(title, fontsize=11, fontweight="bold")
+    fig.tight_layout(pad=0.9)
+    _save_matplotlib_figure(fig, path)
+
+
+def _write_multi_wavelength_mean_psf_figure(out_dir: Path, per_wavelength_metrics: dict[float, dict[str, Any]]) -> None:
+    if not per_wavelength_metrics:
+        return
+    wavelengths = [float(wl) for wl in sorted(per_wavelength_metrics)]
+    mask_ids = list(per_wavelength_metrics[wavelengths[0]]["mask_ids"])
+    n_rows = len(wavelengths)
+    n_cols = len(mask_ids)
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(1.55 * n_cols, 1.75 * n_rows),
+        squeeze=False,
+    )
+    for row_idx, wavelength_nm in enumerate(wavelengths):
+        metrics = per_wavelength_metrics[wavelength_nm]
+        wl_mask_ids = list(metrics["mask_ids"])
+        means = np.asarray(metrics["mask_mean_psfs"], dtype=np.float64)
+        for col_idx, mask_id in enumerate(mask_ids):
+            ax = axes[row_idx, col_idx]
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if mask_id not in wl_mask_ids:
+                ax.set_axis_off()
+                continue
+            mean_idx = wl_mask_ids.index(mask_id)
+            ax.imshow(_psf_log_preview(means[mean_idx]), cmap="magma", vmin=0.0, vmax=1.0)
+            if row_idx == 0:
+                ax.set_title(_short_mask_label(mask_id), fontsize=7.5)
+            if col_idx == 0:
+                ax.set_ylabel(f"{wavelength_nm:.0f} nm", fontsize=9, rotation=0, ha="right", va="center", labelpad=26)
+    fig.suptitle("Mean PSF morphology across masks and wavelengths", fontsize=12, fontweight="bold")
+    fig.text(
+        0.5,
+        0.02,
+        "Columns: mask patterns. Rows: wavelengths. Each tile is the repeat-averaged PSF crop shown with log intensity.",
+        ha="center",
+        va="bottom",
+        fontsize=8.5,
+    )
+    fig.tight_layout(rect=(0.0, 0.045, 1.0, 0.94), pad=0.55)
+    _save_matplotlib_figure(fig, out_dir / "multi_wavelength_mask_mean_psfs.png")
+
+
+def _psf_log_preview(image: np.ndarray) -> np.ndarray:
+    arr = np.asarray(image, dtype=np.float64)
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return np.zeros(arr.shape, dtype=np.float64)
+    baseline = float(np.percentile(finite, 1.0))
+    corrected = np.maximum(arr - baseline, 0.0)
+    scale = float(np.percentile(corrected[np.isfinite(corrected)], 99.8))
+    if scale <= 0.0:
+        return np.zeros(arr.shape, dtype=np.float64)
+    normalized = np.clip(corrected / scale, 0.0, 1.0)
+    return np.log1p(20.0 * normalized) / math.log1p(20.0)
+
+
+def _short_mask_label(mask_id: str) -> str:
+    replacements = {
+        "all_open_window": "open",
+        "vertical_stripes_lowfreq": "vertical\nstripes",
+        "horizontal_stripes_lowfreq": "horizontal\nstripes",
+        "checkerboard_lowfreq": "checkerboard",
+        "central_block": "central\nblock",
+        "edge_block": "edge\nblock",
+        "random_lowfreq_1": "random\nlowfreq 1",
+        "random_lowfreq_2": "random\nlowfreq 2",
+    }
+    if mask_id in replacements:
+        return replacements[mask_id]
+    text = str(mask_id).replace("_", " ")
+    if len(text) <= 18:
+        return text
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        proposed = f"{current} {word}".strip()
+        if len(proposed) > 14 and current:
+            lines.append(current)
+            current = word
+        else:
+            current = proposed
+    if current:
+        lines.append(current)
+    return "\n".join(lines[:2])
+
+
+def _save_matplotlib_figure(fig: plt.Figure, png_path: Path) -> None:
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(png_path, dpi=200, bbox_inches="tight")
+    fig.savefig(png_path.with_suffix(".pdf"), bbox_inches="tight")
+    plt.close(fig)
 
 
 def _write_multi_wavelength_manifest(path: Path, per_wavelength: dict[str, Any], diversity: dict[str, Any]) -> None:
@@ -495,6 +621,13 @@ def _write_multi_wavelength_manifest(path: Path, per_wavelength: dict[str, Any],
         "phase": "3.2b",
         "task": "multi_wavelength_psf_repeatability_manifest",
         "wavelengths": per_wavelength,
+        "figures": {
+            "multi_wavelength_mask_mean_psfs": "multi_wavelength_mask_mean_psfs.png",
+            "per_wavelength_mask_mean_psfs": {
+                key: f"{_wavelength_dir_name(float(value['wavelength_nm']))}/mask_mean_psfs.png"
+                for key, value in per_wavelength.items()
+            },
+        },
         "cross_wavelength_same_mask": diversity.get("cross_wavelength_same_mask"),
     }
     path.write_text(json_dumps(payload), encoding="utf-8")

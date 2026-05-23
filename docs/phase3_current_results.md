@@ -163,7 +163,10 @@ Canonical output:
   - `outputs/psf_repeatability/diversity_metrics_normalized.json`
   - `outputs/psf_repeatability/spectral_diversity_metrics_normalized.json`
   - `outputs/psf_repeatability/repeatability_report.md`
-  - `outputs/psf_repeatability/mask_mean_psfs.png`
+  - `outputs/psf_repeatability/multi_wavelength_mask_mean_psfs.png`
+  - `outputs/psf_repeatability/wl_450p0/mask_mean_psfs.png`
+  - `outputs/psf_repeatability/wl_550p0/mask_mean_psfs.png`
+  - `outputs/psf_repeatability/wl_650p0/mask_mean_psfs.png`
 
 Canonical-path note:
 
@@ -224,6 +227,13 @@ Operational conclusion:
 - This is an experimental prerequisite result only. It must not be described
   as forward-model success.
 
+Recommended thesis caption for the Phase 3.2b mean-PSF montage:
+"不同掩膜和不同波长下的平均 PSF 形态差异". The combined montage
+`multi_wavelength_mask_mean_psfs` has mask patterns as columns and
+wavelengths as rows; each tile is the repeat-averaged PSF crop shown with
+log intensity. The per-wavelength `wl_*/mask_mean_psfs` figures show the
+same eight masks for one wavelength at a time.
+
 ## Phase 3.3
 
 Current audited run:
@@ -266,6 +276,18 @@ Multi-ROI perturbation outputs are present under:
 - `outputs/dotf_20260520_004205/wl_450p0/<roi_key>/<perturbation_id>/`
 - `outputs/dotf_20260520_004205/wl_550p0/<roi_key>/<perturbation_id>/`
 - `outputs/dotf_20260520_004205/wl_650p0/<roi_key>/<perturbation_id>/`
+
+Thesis-facing visibility-enhanced dOTF outputs:
+
+- `dotf_log_abs_annotated.png`: log-amplitude panel with a white dashed
+  effective pupil-domain / pupil-like copy boundary.
+- `dotf_phase_annotated.png`: phase panel with a white arrow indicating the
+  stripe direction.
+- `dotf_structure_annotated.png`: side-by-side log-amplitude and phase panels.
+
+Recommended thesis Fig. 3-5 caption note:
+
+- 白色虚线/箭头标出本文关注的结构化响应区域。
 
 Historical note:
 
@@ -338,6 +360,55 @@ Operational conclusion:
   belongs to Phase 3.2a / 3.3, not to Phase 3.4.
 - The `LCD_forward` export is a data handoff only. Forward validation,
   reconstruction, and figure generation remain outside `optic_system`.
+
+## Phase 3.4 closed-LCD residual release
+
+Current independent data release:
+
+- `D:/datasets/optic_system/optic_system_phase3_closed_lcd_residual_release_20260523/`
+- core HDF5:
+  - `closed_lcd_roi512_avg10_residuals.h5`
+- statistics:
+  - `closed_lcd_roi512_avg10_stats.csv`
+
+Boundary:
+
+- Release type: `closed-LCD averaged-frame residual release`.
+- Source: `all_closed_window` entries from the Phase 3.4 measured PSF
+  dictionary raw HDF5.
+- Shape: `closed_lcd/crops_avg10 = [3, 5, 512, 512]`.
+- Wavelengths: `[450.0, 550.0, 650.0]`.
+- Exposure (us): `[779.6875, 487.3046875, 2241.6015625]`.
+- Gain (dB): `[0.0, 0.0, 0.0]`.
+- Repeats: `5`.
+- Averaging: `10 frames per capture`.
+- Intended use: averaged-frame additive residual injection for
+  measured-PSF-driven simulation in `LCD_forward`.
+
+Forbidden interpretation:
+
+- It is not a real sensor noise release.
+- It is not a sensor-only dark release.
+- It is not a read-noise, shot-noise, PRNU, or full radiometric calibration
+  release.
+- It does not replace real target capture.
+
+Current measured summary from the release inspect script:
+
+- `450 nm`: mean_count `24.998287`, residual_std `0.016032`
+- `550 nm`: mean_count `24.998260`, residual_std `0.015910`
+- `650 nm`: mean_count `24.998308`, residual_std `0.015883`
+
+Validation command:
+
+```powershell
+python scripts/validate_closed_lcd_residual_release.py --release-dir D:\datasets\optic_system\optic_system_phase3_closed_lcd_residual_release_20260523
+```
+
+Validation result:
+
+- `ok = true`
+- `errors = []`
 
 ## External handoff
 

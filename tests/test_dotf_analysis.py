@@ -131,6 +131,9 @@ def test_analyze_dotf_outputs_files(tmp_path: Path) -> None:
     assert (roi_512_dir / "dotf_complex.npy").exists()
     assert (edge_dir / "dotf_abs.png").exists() or (edge_dir / "dotf_abs.npy").exists()
     assert (edge_dir / "dotf_phase.png").exists() or (edge_dir / "dotf_phase.npy").exists()
+    assert (edge_dir / "dotf_log_abs_annotated.png").exists()
+    assert (edge_dir / "dotf_phase_annotated.png").exists()
+    assert (edge_dir / "dotf_structure_annotated.png").exists()
     assert (edge_dir / "dotf_real.png").exists() or (edge_dir / "dotf_real.npy").exists()
     assert (edge_dir / "dotf_imag.png").exists() or (edge_dir / "dotf_imag.npy").exists()
     metrics = json.loads((out_dir / "dotf_metrics.json").read_text(encoding="utf-8"))
@@ -148,6 +151,8 @@ def test_analyze_dotf_outputs_files(tmp_path: Path) -> None:
     assert per_roi_metrics["validity"]["roi_selection_performed"] is False
     assert "edge_energy" in per_roi_metrics
     assert "pupil_stitching_performed=false" in report
+    assert "dotf_structure_annotated.png" in report
+    assert per_roi_metrics["figure_annotations"]["dotf_structure_annotated"] == "dotf_structure_annotated.png"
 
 
 def test_analyze_dotf_multi_wavelength_outputs_files(tmp_path: Path) -> None:
@@ -223,6 +228,7 @@ def test_analyze_dotf_multi_wavelength_outputs_files(tmp_path: Path) -> None:
     assert result["task"] == "dotf_multi_wavelength_diagnostic_visualization"
     assert result["wavelengths_nm"] == [450.0, 650.0]
     assert (out_dir / "wl_450p0" / "roi_256" / "edge_block_right" / "dotf_complex.npy").exists()
+    assert (out_dir / "wl_450p0" / "roi_256" / "edge_block_right" / "dotf_structure_annotated.png").exists()
     assert (out_dir / "wl_650p0" / "roi_512" / "edge_block_right" / "dotf_complex.npy").exists()
     metrics = json.loads((out_dir / "dotf_metrics.json").read_text(encoding="utf-8"))
     manifest = json.loads((out_dir / "dotf_roi_comparison_manifest.json").read_text(encoding="utf-8"))

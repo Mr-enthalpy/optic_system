@@ -173,6 +173,10 @@ def test_analyze_psf_repeatability_multi_wavelength_outputs_files(tmp_path: Path
     assert spectral["summary"]["wavelength_induced_differences_larger_than_repeat_noise"] is True
     assert (tmp_path / "out_multi" / "wl_450p0" / "repeatability_metrics.json").exists()
     assert (tmp_path / "out_multi" / "wl_650p0" / "diversity_metrics.json").exists()
+    assert (tmp_path / "out_multi" / "multi_wavelength_mask_mean_psfs.png").exists()
+    assert (tmp_path / "out_multi" / "multi_wavelength_mask_mean_psfs.pdf").exists()
+    assert (tmp_path / "out_multi" / "wl_450p0" / "mask_mean_psfs.png").exists()
+    assert (tmp_path / "out_multi" / "wl_450p0" / "mask_mean_psfs.pdf").exists()
     assert (tmp_path / "out_multi" / "normalized_unit_energy" / "wl_450p0" / "repeatability_metrics.json").exists()
     assert (tmp_path / "out_multi" / "spectral_diversity_metrics_normalized.json").exists()
 

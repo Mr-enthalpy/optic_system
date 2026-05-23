@@ -40,8 +40,8 @@ def analyze_dotf(raw_h5: str | Path, output_dir: str | Path) -> dict[str, Any]:
     out_dir = _resolve_repo_path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     with h5py.File(str(raw_path), "r") as f:
-        frames = f["raw/frames_avg"][()] if "frames_avg" in f["raw"] else None
-        stored_crops = f["raw/crops"][()] if "crops" in f["raw"] else None
+        frames_dataset = "raw/frames_avg" if "frames_avg" in f["raw"] else None
+        stored_crops_dataset = "raw/crops" if "crops" in f["raw"] else None
         wavelength_nm_ds = np.asarray(f["raw/wavelength_nm"][()], dtype=np.float64) if "raw/wavelength_nm" in f["raw"] else None
         plan = _require_json_dataset(f, "capture/plan_json")
         pupil_window = _require_json_dataset(f, "provenance/pupil_window_source_json")
@@ -78,7 +78,7 @@ def analyze_dotf(raw_h5: str | Path, output_dir: str | Path) -> dict[str, Any]:
 
     requested_roi_keys = _resolve_requested_roi_keys(plan, psf_roi)
     baseline_roi_key = _resolve_baseline_roi_key(psf_roi, requested_roi_keys)
-    full_frame_available = frames is not None
+    full_frame_available = frames_dataset is not None
     manifest_wavelengths: dict[str, Any] = {}
     per_wavelength_summary: dict[str, Any] = {}
     legacy_baseline_summary: dict[str, Any] | None = None
@@ -110,8 +110,10 @@ def analyze_dotf(raw_h5: str | Path, output_dir: str | Path) -> dict[str, Any]:
                 }
                 continue
             crops, crop_source = _roi_crops(
-                frames=frames[wl_indices] if frames is not None else None,
-                stored_crops=stored_crops[wl_indices] if stored_crops is not None else None,
+                raw_h5=raw_path,
+                frame_dataset=frames_dataset,
+                crop_dataset=stored_crops_dataset,
+                row_indices=wl_indices,
                 roi_record=roi_record,
                 roi_key=roi_key,
                 baseline_roi_key=baseline_roi_key,
@@ -342,11 +344,21 @@ def _analyze_single_roi(
 
         local_dir = output_dir / perturbation_id
         local_dir.mkdir(parents=True, exist_ok=True)
-        _write_perturbation_outputs(local_dir, result=result, psf_diff=psf_diff)
+        annotation_outputs = _write_perturbation_outputs(
+            local_dir,
+            result=result,
+            psf_diff=psf_diff,
+            perturbation_id=perturbation_id,
+        )
         if legacy_output_dir is not None:
             legacy_dir = legacy_output_dir / perturbation_id
             legacy_dir.mkdir(parents=True, exist_ok=True)
-            _write_perturbation_outputs(legacy_dir, result=result, psf_diff=psf_diff)
+            _write_perturbation_outputs(
+                legacy_dir,
+                result=result,
+                psf_diff=psf_diff,
+                perturbation_id=perturbation_id,
+            )
 
         ref_count = int(reference_idx.size)
         pert_count = int(pert_idx.size)
@@ -368,6 +380,7 @@ def _analyze_single_roi(
             "dotf_peak_abs": float(np.max(np.abs(dotf))),
             "alignment_shift": result["alignment_shift"],
             "edge_energy": edge_energy,
+            "figure_annotations": annotation_outputs,
             "validity": {
                 "dotf_computed": True,
                 "pupil_stitching_performed": False,
@@ -391,13 +404,20 @@ def _analyze_single_roi(
             "dotf_peak_abs": perturbation_metric["dotf_peak_abs"],
             "alignment_shift": result["alignment_shift"],
             "edge_energy": edge_energy,
+            "figure_annotations": annotation_outputs,
             "output_dir": _repo_relative(local_dir),
         }
 
     return {"roi": roi_record, "perturbations": perturbation_metrics}
 
 
-def _write_perturbation_outputs(path: Path, *, result: dict[str, Any], psf_diff: np.ndarray) -> None:
+def _write_perturbation_outputs(
+    path: Path,
+    *,
+    result: dict[str, Any],
+    psf_diff: np.ndarray,
+    perturbation_id: str,
+) -> dict[str, str]:
     np.save(path / "psf_perturbed.npy", result["psf_perturbed"])
     np.save(path / "otf_reference.npy", result["otf_reference"])
     np.save(path / "otf_perturbed.npy", result["otf_perturbed"])
@@ -410,6 +430,110 @@ def _write_perturbation_outputs(path: Path, *, result: dict[str, Any], psf_diff:
     save_phase_preview(path / "dotf_phase.png", result["dotf"])
     save_grayscale_preview(path / "dotf_real.png", np.real(result["dotf"]), mode="signed")
     save_grayscale_preview(path / "dotf_imag.png", np.imag(result["dotf"]), mode="signed")
+    return _write_visibility_enhanced_dotf_outputs(path, perturbation_id=perturbation_id)
+
+
+def _write_visibility_enhanced_dotf_outputs(path: Path, *, perturbation_id: str) -> dict[str, str]:
+    """Add visual callouts for thesis-facing dOTF diagnostics."""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return {}
+
+    log_abs_path = path / "dotf_log_abs.png"
+    phase_path = path / "dotf_phase.png"
+    if not log_abs_path.exists() or not phase_path.exists():
+        return {}
+
+    log_abs = Image.open(log_abs_path).convert("RGB")
+    phase = Image.open(phase_path).convert("RGB")
+    log_abs_annotated = log_abs.copy()
+    phase_annotated = phase.copy()
+
+    _draw_dashed_pupil_boundary(log_abs_annotated, ImageDraw.Draw(log_abs_annotated))
+    _draw_phase_stripe_arrow(phase_annotated, ImageDraw.Draw(phase_annotated), perturbation_id=perturbation_id)
+
+    log_abs_annotated_path = path / "dotf_log_abs_annotated.png"
+    phase_annotated_path = path / "dotf_phase_annotated.png"
+    structure_path = path / "dotf_structure_annotated.png"
+    log_abs_annotated.save(log_abs_annotated_path)
+    phase_annotated.save(phase_annotated_path)
+
+    w, h = log_abs_annotated.size
+    paired = Image.new("RGB", (w * 2, h), (0, 0, 0))
+    paired.paste(log_abs_annotated, (0, 0))
+    paired.paste(phase_annotated.resize((w, h)), (w, 0))
+    paired.save(structure_path)
+    return {
+        "dotf_log_abs_annotated": str(log_abs_annotated_path.name),
+        "dotf_phase_annotated": str(phase_annotated_path.name),
+        "dotf_structure_annotated": str(structure_path.name),
+        "annotation_note": "White dashed boundary and arrow mark the structured dOTF response region.",
+    }
+
+
+def _draw_dashed_pupil_boundary(image: Any, draw: Any) -> None:
+    w, h = image.size
+    cx = w / 2.0
+    cy = h / 2.0
+    radius = max(8.0, min(w, h) * 0.22)
+    line_width = max(2, int(round(min(w, h) / 128)))
+    steps = 144
+    dash = 5
+    for start in range(0, steps, dash * 2):
+        for color, width in [((0, 0, 0), line_width + 2), ((255, 255, 255), line_width)]:
+            points = []
+            for idx in range(start, min(start + dash, steps) + 1):
+                theta = 2.0 * np.pi * idx / steps
+                points.append((cx + radius * np.cos(theta), cy + radius * np.sin(theta)))
+            if len(points) >= 2:
+                draw.line(points, fill=color, width=width)
+
+
+def _draw_phase_stripe_arrow(image: Any, draw: Any, *, perturbation_id: str) -> None:
+    w, h = image.size
+    line_width = max(3, int(round(min(w, h) / 96)))
+    side = str(perturbation_id).removeprefix("edge_block_")
+    if side in {"top", "bottom"}:
+        start = (w * 0.58, h * 0.32)
+        end = (w * 0.58, h * 0.68)
+    else:
+        start = (w * 0.32, h * 0.58)
+        end = (w * 0.68, h * 0.58)
+    _draw_arrow_with_outline(draw, start=start, end=end, line_width=line_width)
+
+
+def _draw_arrow_with_outline(draw: Any, *, start: tuple[float, float], end: tuple[float, float], line_width: int) -> None:
+    shadow_offset = max(1.0, line_width * 0.45)
+    shadow_start = (start[0] + shadow_offset, start[1] + shadow_offset)
+    shadow_end = (end[0] + shadow_offset, end[1] + shadow_offset)
+    draw.line([shadow_start, shadow_end], fill=(0, 0, 0), width=line_width)
+    _draw_arrow_head(draw, start=shadow_start, end=shadow_end, fill=(0, 0, 0), size=max(line_width * 3.0, 12.0))
+    draw.line([start, end], fill=(255, 255, 255), width=line_width)
+    _draw_arrow_head(draw, start=start, end=end, fill=(255, 255, 255), size=max(line_width * 3.0, 12.0))
+
+
+def _draw_arrow_head(draw: Any, *, start: tuple[float, float], end: tuple[float, float], fill: tuple[int, int, int], size: float) -> None:
+    sx, sy = start
+    ex, ey = end
+    dx = ex - sx
+    dy = ey - sy
+    norm = float(np.hypot(dx, dy))
+    if norm <= 0.0:
+        return
+    ux = dx / norm
+    uy = dy / norm
+    px = -uy
+    py = ux
+    base_x = ex - ux * size
+    base_y = ey - uy * size
+    half = size * 0.45
+    points = [
+        (ex, ey),
+        (base_x + px * half, base_y + py * half),
+        (base_x - px * half, base_y - py * half),
+    ]
+    draw.polygon(points, fill=fill)
 
 
 def _edge_energy_metrics(
@@ -457,20 +581,39 @@ def _fraction_in_mask(image: np.ndarray, mask: np.ndarray) -> float:
 
 def _roi_crops(
     *,
-    frames: np.ndarray | None,
-    stored_crops: np.ndarray | None,
+    raw_h5: Path,
+    frame_dataset: str | None,
+    crop_dataset: str | None,
+    row_indices: np.ndarray,
     roi_record: dict[str, Any],
     roi_key: str,
     baseline_roi_key: str,
 ) -> tuple[np.ndarray | None, str]:
-    if frames is not None:
-        return np.stack([crop_frame(frame, roi_record) for frame in np.asarray(frames)], axis=0), "recomputed_from_full_frame"
-    if stored_crops is not None and roi_key == baseline_roi_key:
-        crop_shape = tuple(int(v) for v in np.asarray(stored_crops).shape[1:])
-        roi_shape = (int(roi_record["height"]), int(roi_record["width"]))
-        if crop_shape == roi_shape:
-            return np.asarray(stored_crops), "stored_baseline_crop"
+    if frame_dataset is not None:
+        with h5py.File(str(raw_h5), "r") as f:
+            frames = f[frame_dataset]
+            return (
+                np.stack([_read_frame_roi_crop(frames, int(idx), roi_record) for idx in np.asarray(row_indices)], axis=0),
+                "recomputed_from_full_frame",
+            )
+    if crop_dataset is not None and roi_key == baseline_roi_key:
+        with h5py.File(str(raw_h5), "r") as f:
+            stored_crops = f[crop_dataset]
+            crop_shape = tuple(int(v) for v in stored_crops.shape[1:])
+            roi_shape = (int(roi_record["height"]), int(roi_record["width"]))
+            if crop_shape == roi_shape:
+                return np.stack([np.asarray(stored_crops[int(idx)], dtype=np.float64) for idx in np.asarray(row_indices)], axis=0), "stored_baseline_crop"
     return None, "unavailable"
+
+
+def _read_frame_roi_crop(frames: h5py.Dataset, row: int, roi_record: dict[str, Any]) -> np.ndarray:
+    y_min = int(roi_record["y_min"])
+    y_max = int(roi_record["y_max"])
+    x_min = int(roi_record["x_min"])
+    x_max = int(roi_record["x_max"])
+    if y_min < 0 or x_min < 0 or y_max > int(frames.shape[1]) or x_max > int(frames.shape[2]):
+        return crop_frame(np.asarray(frames[row], dtype=np.float64), roi_record)
+    return np.asarray(frames[row, y_min:y_max, x_min:x_max], dtype=np.float64)
 
 
 def _resolve_requested_roi_keys(plan: dict[str, Any], psf_roi: dict[str, Any]) -> list[str]:
@@ -566,6 +709,8 @@ def _write_report(
             "",
             "This Phase 3.3 run compares dOTF diagnostics across multiple wavelengths.",
             "Per-wavelength outputs live under `outputs/dotf/wl_*`.",
+            "Thesis-facing dOTF panels should use `dotf_structure_annotated.png` or the `*_annotated.png` variants.",
+            "Caption note: white dashed boundary and arrow mark the structured response region discussed in the text.",
             "",
             f"- Effective pupil physical shape: {pupil_window.get('physical_shape')}",
             f"- Baseline PSF ROI: {psf_roi.get('roi')}",
@@ -597,6 +742,8 @@ def _write_report(
             "dOTF is used here as a diagnostic visualization of structured pupil-domain response.",
             "The result is not stitched into a full complex pupil.",
             "The result is not a final pupil reconstruction.",
+            "Thesis-facing dOTF panels should use `dotf_structure_annotated.png` or the `*_annotated.png` variants.",
+            "Caption note: white dashed boundary and arrow mark the structured response region discussed in the text.",
             "",
             f"- Effective pupil physical shape: {pupil_window.get('physical_shape')}",
             f"- Baseline PSF ROI: {psf_roi.get('roi')}",
