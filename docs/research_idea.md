@@ -70,8 +70,15 @@ non-idealities can be measured, modeled, and optimized.
 ## Repository boundary
 
 `optic_system` supports this route by controlling hardware, preserving raw
-captures, storing measured full-frame PSF dictionaries, recording metadata and
-profile artifacts, and exporting diagnostics.
+captures, storing full-frame PSF scout surveys, deriving peak layout profiles,
+building peak-patch measured PSF dictionaries, recording metadata and profile
+artifacts, and exporting diagnostics.
+
+The current peak layout derivation is a replaceable first-pass implementation.
+It provides an auditable threshold-and-component baseline for estimating peak
+patch geometry, not the final peak tracking or diffraction-order modelling
+method. Its detection policy is explicitly marked as a high-energy layout
+baseline because it may miss low-energy but stable far-field diffraction peaks.
 
 `optic_system` must not train peak-cluster forward models, differentiable
 forward surrogates, reconstruction networks, or mask-optimization loops. Those
