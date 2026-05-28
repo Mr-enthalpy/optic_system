@@ -327,7 +327,7 @@ Non-goals:
 /capture/processing_flags_json scalar str
 ```
 
-### Phase 3  --  Raw capture to LCD_forward conversion
+### Phase 3  --  Profile-driven experimental capture and LCD_forward conversion
 
 **Planned.**
 
@@ -337,15 +337,37 @@ Phase 3.0--3.7 workflow.
 
 Goal:
 
-Convert raw experimental captures into `LCD_forward` training data.
+Build a profile-driven capture architecture and convert preserved raw captures
+into `LCD_forward` training data.
 
-Expected outputs:
+Phase 3 is split by dependency type:
 
 ```text
-raw capture HDF5
-  -> converted forward training HDF5
-  -> train.h5 / val.h5 / test.h5
+Phase 3A: profile-driven experimental calibration
+  PupilProfile
+  CameraProfile
+
+Phase 3B: profile-dependent PSF capture task families
+  PSF dictionary capture
+  dOTF diagnostics
+  mask-family PSF capture
+
+Phase 3C: raw-to-LCD_forward conversion
+  ROI extraction
+  PSF stack construction
+  metadata transfer
 ```
+
+Important profile rules:
+
+* broadband pupil scan uses broadband passthrough illumination, with TLS /
+  monochromator setpoint `0` recorded as device pass-through state, not as a
+  physical wavelength;
+* PSF-producing tasks depend on per-band camera parameters measured under
+  selected-pupil-open LCD state;
+* full-LCD-open exposure profiles must not be used as the default prerequisite
+  for PSF capture;
+* profile IDs must be recorded in raw capture metadata.
 
 The conversion layer should handle:
 
@@ -356,9 +378,12 @@ The conversion layer should handle:
 * wavelength metadata
 * camera metadata
 * TLS metadata
+* profile metadata transfer
 * train / val / test split
 
 The raw capture format should preserve enough metadata to allow future reprocessing.
+The thesis branch is treated as an audited source of useful experimental
+lessons, not as a mainline workflow to be merged wholesale.
 
 ### Phase 4  --  Family-aware GenerMask calibration and closed-loop experiments
 
@@ -634,5 +659,6 @@ The repository currently has:
 The repository still needs:
 
 * continuation of Phase 2C consolidation work
-* raw capture to LCD_forward conversion (Phase 3, after Phase 2C stabilization)
+* profile-driven experimental capture and LCD_forward conversion (Phase 3, after Phase 2C stabilization)
+* explicit profile dependencies for calibration and PSF capture (Phase 3A/3B)
 * family-aware GenerMask calibration (Phase 4)

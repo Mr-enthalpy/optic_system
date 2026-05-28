@@ -69,6 +69,27 @@ The CLI entry point is `scripts/capture_forward_dataset.py`.
 
 These have been implemented cleanly using `control -> devices` boundaries (via the narrow `CaptureDeviceBundle` protocol) and supersede the legacy stubs currently in this directory.
 
+## Planned future tasks (Phase 3A/3B/3C)
+
+Phase 3 absorbs reusable bachelor-thesis experimental outputs into mainline
+abstractions. It is branch-result abstraction, not branch-workflow promotion.
+The stable Phase 2 task files remain in their current locations unless a
+separate compatibility-preserving move is explicitly planned.
+
+| File / package | Status | Purpose |
+|---|---|---|
+| `tasks/profiles/pupil_profile.py` | **planned** | Effective LCD pupil profile artifact |
+| `tasks/profiles/camera_profile.py` | **planned** | Camera safety profile artifact |
+| `tasks/profiles/calibrate_broadband_camera_profile.py` | **planned** | Broadband pass-through exposure calibration |
+| `tasks/profiles/scan_pupil_broadband.py` | **planned** | Broadband mixed-light pupil scan |
+| `tasks/profiles/calibrate_per_band_pupil_open_camera_profile.py` | **planned** | Per-band exposure calibration under selected-pupil-open LCD state |
+| `tasks/psf/capture_psf_dictionary.py` | **planned** | Profile-dependent PSF dictionary capture |
+| `tasks/psf/capture_dotf_dataset.py` | **planned** | Profile-dependent dOTF diagnostic capture |
+| `tasks/psf/capture_mask_family_psf.py` | **planned** | Profile-dependent mask-family PSF capture |
+| `tasks/diagnostics/compute_h_matrix_diagnostic.py` | **planned** | H-matrix diagnostic export for measured PSF dictionaries |
+| `tasks/conversion/extract_psf_roi.py` | **planned** | Explicit PSF ROI extraction from preserved raw HDF5 |
+| `tasks/conversion/convert_raw_to_lcd_forward.py` | **planned** | Raw-to-LCD_forward conversion with profile metadata transfer |
+
 ## Policy
 
 - Old tasks may be referenced for design patterns but must not be assumed correct.
