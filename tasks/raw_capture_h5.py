@@ -136,6 +136,21 @@ class RawCaptureWriter:
         cap_grp.create_dataset("plan_json", data=_json_str(self._plan.to_dict()))
         cap_grp.create_dataset("plan_id", data=self._plan.plan_id)
 
+        profile_grp = f.require_group("profiles")
+        profile_requires = self._plan.requires
+        profile_grp.create_dataset(
+            "requirements_json",
+            data=_json_str(profile_requires),
+        )
+        profile_grp.create_dataset(
+            "pupil_profile_id",
+            data=str(profile_requires.get("pupil_profile_id") or ""),
+        )
+        profile_grp.create_dataset(
+            "camera_profile_id",
+            data=str(profile_requires.get("camera_profile_id") or ""),
+        )
+
         pf = {
             "scientific_calibration_valid": False,
             "optical_alignment_validated": False,

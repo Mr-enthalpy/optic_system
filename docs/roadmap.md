@@ -8,7 +8,7 @@ are complete.  Phase 2C (GUI / diagnostics / architecture consolidation) is in p
 The repository has exited Phase 0 (documentation and boundary reset) and Phase 1
 (TLS SDK integration closure).  Camera, LCD, and TLS paths are stable.  The mainline
 is consolidating entry points and diagnostics before resuming long-term Phase 3
-(raw capture to LCD_forward conversion).
+(profile-driven experimental capture and LCD_forward conversion).
 
 ---
 
@@ -190,37 +190,396 @@ Non-goals:
 
 ---
 
-## Phase 3  --  Raw capture to `LCD_forward` conversion
+## Phase 3  --  Profile-driven experimental capture and `LCD_forward` conversion
 
 ### Goal
 
-Convert raw experimental captures into training-ready HDF5 for `LCD_forward`.
+Build a profile-driven capture architecture that keeps experimental
+dependencies explicit from hardware calibration through raw HDF5 preservation
+and later `LCD_forward` conversion.
 
 This is the long-term mainline Phase 3. It is distinct from the
 bachelor-thesis experimental branch, which has its own thesis-specific
 Phase 3.0--3.7 workflow.
 
-### Allowed work
+Phase 3 absorbs useful bachelor-thesis branch results by rewriting them into
+durable mainline abstractions:
+
+- `PupilProfile`
+- `CameraProfile`
+- profile-aware capture plans
+- PSF dictionary capture requirements
+- dOTF diagnostic boundaries
+- H-matrix diagnostic export contracts
+- raw-capture metadata links to profile artifacts
+
+This is branch-result abstraction, not branch-workflow promotion. The mainline
+must not directly merge thesis phase numbers, thesis defaults, or
+thesis-specific shortcuts.
+
+### Mainline interpretation
+
+The bachelor-thesis branch demonstrated that measured mono-LCD PSF
+dictionaries, dOTF diagnostics, and frequency-domain H-matrix analysis are
+useful for evaluating the system. Its phase numbers, default masks, exposure
+assumptions, and thesis-specific workflow must not become mainline architecture.
+
+Mainline Phase 3 re-expresses thesis outputs as profile-driven reusable tasks
+and keeps `optic_system` within its hardware-control boundary: camera / LCD /
+TLS control, raw HDF5 capture, metadata preservation, diagnostics, and explicit
+export toward `LCD_forward`. It does not train forward surrogates or
+reconstruction models.
+
+### Stage organization
+
+Phase 3 is organized by dependency type, not thesis phase number.
+Phase 3A and Phase 3B are inserted profile phases between Phase 2 capture
+infrastructure and the original raw-to-`LCD_forward` conversion work. Phase 3C
+is the original conversion layer, now consuming profile-aware raw captures and
+diagnostics.
+
+#### Phase 3A  --  Profile-driven experimental calibration
+
+Define and generate profile artifacts that describe the optical setup and
+safe camera settings.
+
+Required tasks:
+
+- `calibrate_broadband_passthrough_camera_profile`
+- `scan_pupil_broadband`
+- `calibrate_per_band_pupil_open_camera_profile`
+
+#### Phase 3B  --  Profile-dependent PSF capture task families
+
+Capture PSF-producing datasets only when explicit profile dependencies are
+declared.
+
+Required task families:
+
+- PSF dictionary capture
+- dOTF diagnostic capture
+- mask-family PSF capture
+
+#### Phase 3C  --  Raw-to-`LCD_forward` conversion
+
+Convert preserved raw HDF5 into downstream-compatible files explicitly and
+reproducibly.
+
+Expected conversion work:
 
 - Conversion scripts that read raw capture HDF5
 - Mask downsampling or encoding into `[N, T, 1, Hm, Wm]`
 - PSF ROI extraction
+- PSF stack construction
 - Frame averaging
 - Dark / flat correction if available
 - Wavelength metadata preservation
 - Camera / TLS metadata preservation
+- Profile metadata transfer
 - Train / val / test split generation
 - Output files: `train.h5`, `val.h5`, `test.h5`
 
+### Required profile artifacts
+
+#### `PupilProfile`
+
+A `PupilProfile` describes the effective LCD physical region that participates
+in the current optical system.
+
+It should record at least:
+
+- `pupil_profile_id`
+- LCD physical coordinate convention
+- LCD display index
+- `subpixel_axis`
+- estimated pupil center in LCD physical coordinates
+- estimated pupil radius / aperture window
+- camera-side PSF center if available
+- recommended ROI candidates
+- fit quality / confidence metrics
+- source raw capture file
+- creation timestamp and software version
+
+#### `CameraProfile`
+
+A `CameraProfile` describes safe camera exposure parameters under a specific
+illumination and LCD state.
+
+It should record at least:
+
+- `camera_profile_id`
+- illumination mode
+- TLS / monochromator setpoint semantics
+- LCD state used during calibration
+- dependency on `PupilProfile`, if any
+- exposure time
+- gain
+- peak pixel value
+- saturation margin
+- frames per capture
+- valid downstream task families
+
+Two camera-profile families are required:
+
+1. `broadband_passthrough`
+
+   This profile is used for broadband pupil scanning.
+
+   The TLS / monochromator may use device setpoint `0` to represent
+   pass-through mode, but this must not be treated as a physical wavelength.
+
+   Metadata must distinguish:
+
+   ```yaml
+   illumination:
+     mode: broadband_passthrough
+     tls_setpoint_nm: 0
+     effective_wavelength_nm: null
+   ```
+
+   This profile is valid for broadband pupil scan tasks, not for PSF dictionary
+   capture.
+
+2. `per_band_pupil_open`
+
+   This profile is used for PSF, dOTF, and mask-family capture tasks.
+
+   It must depend on a `PupilProfile`.
+
+   The LCD state must be `selected_pupil_open`, not full-panel all-open. This
+   avoids overly conservative per-band exposure settings caused by full-LCD-open
+   calibration.
+
+### Required profile-producing tasks
+
+#### `calibrate_broadband_passthrough_camera_profile`
+
+This task finds safe camera settings for broadband mixed-light pupil scanning.
+
+```yaml
+illumination:
+  mode: broadband_passthrough
+  tls_setpoint_nm: 0
+  effective_wavelength_nm: null
+  source: xenon
+lcd_state:
+  mode: safe_probe_mask
+output:
+  camera_profile_id: broadband_passthrough_safe_v*
+  valid_for:
+    - pupil_scan_broadband
+```
+
+Setpoint `0` is a TLS / monochromator device pass-through sentinel. It must
+not be stored in scientific `wavelengths_nm` fields.
+
+#### `scan_pupil_broadband`
+
+This task scans the LCD physical surface under broadband pass-through
+illumination and produces a `PupilProfile`.
+
+```yaml
+requires:
+  camera_profile_id: broadband_passthrough_safe_v*
+illumination:
+  mode: broadband_passthrough
+output:
+  pupil_profile_id: pupil_profile_v*
+```
+
+#### `calibrate_per_band_pupil_open_camera_profile`
+
+This task finds per-band safe camera settings under the selected effective
+pupil state.
+
+```yaml
+requires:
+  pupil_profile_id: pupil_profile_v*
+illumination:
+  mode: monochromatic
+  wavelengths_nm: [450, 550, 650]
+lcd_state:
+  mode: selected_pupil_open
+  outside_pupil: closed_or_neutral
+output:
+  camera_profile_id: per_band_pupil_open_v*
+  valid_for:
+    - psf_dictionary_capture
+    - dotf_capture
+    - mask_family_psf_capture
+```
+
+### Task dependency rules
+
+All PSF-producing tasks must declare explicit dependencies:
+
+```yaml
+requires:
+  pupil_profile_id: ...
+  camera_profile_id: ...
+```
+
+PSF-producing tasks must not silently use:
+
+- the most recent camera settings
+- full-LCD-open exposure settings
+- broadband-passthrough exposure settings
+- thesis-branch phase-specific defaults
+
+Tasks that violate this rule are not mainline-compatible.
+
+### Artifact manifests
+
+Each profile-producing task should emit a JSON or YAML manifest. Raw capture
+HDF5 files should record profile IDs and enough profile metadata references to
+support future reprocessing.
+
+Example camera-profile manifest:
+
+```yaml
+artifact_type: camera_profile
+camera_profile_id: per_band_pupil_open_2026xxxx
+depends_on:
+  pupil_profile_id: pupil_profile_2026xxxx
+illumination:
+  mode: monochromatic
+  wavelengths_nm: [450, 550, 650]
+lcd_state:
+  mode: selected_pupil_open
+  pupil_profile_id: pupil_profile_2026xxxx
+camera:
+  gain_db: 0.0
+  per_wavelength:
+    "450":
+      exposure_us: 780.0
+      peak_pixel: 230
+      saturation_margin: 25
+    "550":
+      exposure_us: 490.0
+      peak_pixel: 214
+      saturation_margin: 41
+    "650":
+      exposure_us: 2240.0
+      peak_pixel: 236
+      saturation_margin: 19
+valid_for:
+  - psf_capture
+  - dotf_capture
+```
+
+Example PSF task plan dependency:
+
+```yaml
+task_type: psf_dictionary_capture
+requires:
+  pupil_profile_id: pupil_profile_2026xxxx
+  camera_profile_id: per_band_pupil_open_2026xxxx
+illumination:
+  mode: monochromatic
+  wavelengths_nm: [450, 550, 650]
+output:
+  raw_capture_h5: data/raw/...
+```
+
+### Required task families
+
+Phase 3 may introduce or refactor the following mainline task families:
+
+```text
+tasks/profiles/
+  camera_profile.py
+  pupil_profile.py
+  calibrate_broadband_camera_profile.py
+  scan_pupil_broadband.py
+  calibrate_per_band_pupil_open_camera_profile.py
+
+tasks/psf/
+  capture_psf_dictionary.py
+  capture_dotf_dataset.py
+  capture_mask_family_psf.py
+
+tasks/diagnostics/
+  inspect_psf_dictionary.py
+  compute_dotf_diagnostic.py
+  compute_h_matrix_diagnostic.py
+
+tasks/conversion/
+  extract_psf_roi.py
+  convert_raw_to_lcd_forward.py
+```
+
+Existing Phase 2 capture infrastructure must remain intact.
+
+### Plan organization
+
+New plans should be organized by dependency family rather than by thesis phase
+number:
+
+```text
+plans/profiles/
+  broadband_passthrough_camera_safety.yaml
+  pupil_scan_broadband.yaml
+  per_band_pupil_open_camera_safety.yaml
+
+plans/psf/
+  psf_dictionary_single_lambda.yaml
+  psf_dictionary_multilambda.yaml
+  dotf_edge_perturb.yaml
+  mask_family_psf_capture.yaml
+
+plans/diagnostics/
+  psf_dictionary_report.yaml
+  dotf_report.yaml
+  h_matrix_report.yaml
+
+plans/smoke/
+  hardware_smoke_no_tls.yaml
+  hardware_smoke_with_tls.yaml
+```
+
+The old thesis phase labels, such as `3.0.5` or `3.1`, may be mentioned in
+migration notes but must not become mainline task names.
+
+### Allowed work
+
+- Add profile artifact dataclasses and manifest serialization
+- Add broadband-passthrough camera safety calibration
+- Add broadband pupil scan
+- Add per-band pupil-open camera safety calibration
+- Make PSF-producing tasks depend explicitly on `PupilProfile` and `CameraProfile`
+- Add metadata fields linking raw captures to profile IDs
+- Add diagnostic scripts for PSF dictionaries, dOTF, and H-matrix analysis
+- Add documentation describing how thesis-branch artifacts map into mainline abstractions
+- Add no-hardware tests for profile loading, validation, and dependency checks
+- Add explicit raw-to-`LCD_forward` conversion that preserves profile metadata
+
 ### Non-goals
 
-- No training of forward surrogates
-- No training of reconstruction models
-- No model evaluation
-- No on-the-fly conversion during acquisition (raw capture must be preserved first)
+- Do not merge the thesis branch wholesale
+- Do not preserve thesis-specific phase numbering as architecture
+- Do not treat TLS setpoint `0` as a physical wavelength
+- Do not use full-LCD-open exposure profiles for PSF-producing tasks
+- Do not train forward surrogates inside `optic_system`
+- Do not implement reconstruction inside `optic_system`
+- Do not start GenerMask optimization inside this phase
+- Do not collapse profile metadata into ad-hoc filename conventions
+- Do not bypass raw capture HDF5 preservation
+- Do not directly output `LCD_forward` training data while bypassing raw capture metadata
+- Do not evaluate reconstruction quality inside `optic_system`
 
 ### Completion criteria
 
+- `PupilProfile` and `CameraProfile` artifacts are defined and documented
+- Broadband-passthrough camera safety calibration exists
+- Broadband pupil scan depends on the broadband-passthrough profile
+- Per-band pupil-open camera calibration depends on a `PupilProfile`
+- PSF-producing tasks refuse to run without explicit `pupil_profile_id` and `camera_profile_id`
+- Raw capture HDF5 metadata records profile IDs and illumination mode
+- TLS setpoint `0` is recorded only as broadband pass-through device state and never as a scientific wavelength
+- Thesis-branch useful outputs are represented as mainline artifacts or diagnostics
+- Default tests remain hardware-free
+- Hardware execution remains opt-in
+- Phase 4 can consume profile-aware mask-family calibration data without depending on thesis-specific workflow
 - Raw capture HDF5 files can be converted to `LCD_forward` training-ready HDF5
 - Conversion preserves all relevant metadata
 - Output conforms to `LCD_forward` expected tensor shapes and conventions
