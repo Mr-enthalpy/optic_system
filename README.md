@@ -40,6 +40,10 @@ The active responsibilities are:
 
 The repository should stay focused on hardware control and data acquisition.
 Training, reconstruction, and differentiable mask optimization belong to `LCD_forward`.
+The long-term scientific route is summarized in
+[`docs/research_idea.md`](docs/research_idea.md); in this repository, that route
+stops at measured artifacts, profile-aware raw captures, metadata, and
+diagnostics.
 
 ## System components
 
