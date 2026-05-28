@@ -57,6 +57,27 @@ class TestRawCaptureWriter:
             plan_json = _h5_str(f["capture/plan_json"])
             assert "test_plan_01" in plan_json
 
+    def test_profile_requirements_stored(self, tmp_h5_path: Path) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "profiled_capture",
+            "requires": {
+                "pupil_profile_id": "pupil_profile_v1",
+                "camera_profile_id": "per_band_pupil_open_v1",
+            },
+            "wavelengths": [{"wavelength_nm": 550}],
+            "masks": [{"mask_id": "m1"}],
+        })
+
+        writer = RawCaptureWriter(tmp_h5_path, plan)
+        with writer:
+            pass
+
+        with h5py.File(tmp_h5_path, "r") as f:
+            assert _h5_str(f["profiles/pupil_profile_id"]) == "pupil_profile_v1"
+            assert _h5_str(f["profiles/camera_profile_id"]) == "per_band_pupil_open_v1"
+            requirements = _h5_str(f["profiles/requirements_json"])
+            assert "per_band_pupil_open_v1" in requirements
+
     def test_processing_flags_written(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
     ) -> None:

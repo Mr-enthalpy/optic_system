@@ -116,6 +116,7 @@ class TLSWavelengthEntry:
 @dataclass
 class CapturePlan:
     plan_id: str
+    requires: dict[str, Any] = field(default_factory=dict)
     wavelengths: list[TLSWavelengthEntry] = field(default_factory=list)
     masks: list[LCDMaskEntry] = field(default_factory=list)
     camera: CameraCaptureConfig = field(default_factory=CameraCaptureConfig)
@@ -128,6 +129,7 @@ class CapturePlan:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CapturePlan:
         plan_id = _require_str(d, "plan_id")
+        requires = _optional_dict(d.get("requires")) or {}
         wavelengths = [
             TLSWavelengthEntry.from_dict(w)
             for w in _require_list(d, "wavelengths")
@@ -144,6 +146,7 @@ class CapturePlan:
 
         plan = cls(
             plan_id=plan_id,
+            requires=requires,
             wavelengths=wavelengths,
             masks=masks,
             camera=camera,
@@ -159,6 +162,7 @@ class CapturePlan:
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "plan_id": self.plan_id,
+            "requires": self.requires,
             "wavelengths": [w.to_dict() for w in self.wavelengths],
             "masks": [m.to_dict() for m in self.masks],
             "camera": self.camera.to_dict(),

@@ -205,6 +205,20 @@ class TestCapturePlan:
         })
         assert plan.extra == {"custom_field": "hello"}
 
+    def test_preserves_profile_requirements(self) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "requires_test",
+            "requires": {
+                "pupil_profile_id": "pupil_profile_v1",
+                "camera_profile_id": "per_band_pupil_open_v1",
+            },
+            "wavelengths": [{"wavelength_nm": 500}],
+            "masks": [{"mask_id": "m1"}],
+        })
+
+        assert plan.requires["pupil_profile_id"] == "pupil_profile_v1"
+        assert plan.to_dict()["requires"]["camera_profile_id"] == "per_band_pupil_open_v1"
+
     def test_n_captures_product(self) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "prod",

@@ -317,6 +317,9 @@ Non-goals:
 /lcd/mapping_policy_json     scalar str  (axis-aware: subpixel_axis, physical_mono)
 /lcd/metadata_json           scalar str  (display_index, reported_shape,
                                           logical_shape, subpixel_axis, physical_shape)
+/profiles/requirements_json  scalar str  (plan requires block)
+/profiles/pupil_profile_id   scalar str
+/profiles/camera_profile_id  scalar str
 /capture/capture_index       [N_capture] int64
 /capture/wavelength_index    [N_capture] int64
 /capture/mask_index          [N_capture] int64
@@ -357,6 +360,11 @@ Phase 3C: raw-to-LCD_forward conversion
   PSF stack construction
   metadata transfer
 ```
+
+Phase 3A and Phase 3B are inserted profile phases between Phase 2 capture
+infrastructure and the original raw-to-LCD_forward conversion work. Phase 3C is
+the original conversion layer, now consuming profile-aware raw captures and
+diagnostics.
 
 Important profile rules:
 

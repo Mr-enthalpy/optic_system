@@ -233,6 +233,10 @@ reconstruction models.
 ### Stage organization
 
 Phase 3 is organized by dependency type, not thesis phase number.
+Phase 3A and Phase 3B are inserted profile phases between Phase 2 capture
+infrastructure and the original raw-to-`LCD_forward` conversion work. Phase 3C
+is the original conversion layer, now consuming profile-aware raw captures and
+diagnostics.
 
 #### Phase 3A  --  Profile-driven experimental calibration
 

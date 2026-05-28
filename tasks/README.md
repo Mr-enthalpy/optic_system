@@ -78,11 +78,12 @@ separate compatibility-preserving move is explicitly planned.
 
 | File / package | Status | Purpose |
 |---|---|---|
-| `tasks/profiles/pupil_profile.py` | **planned** | Effective LCD pupil profile artifact |
-| `tasks/profiles/camera_profile.py` | **planned** | Camera safety profile artifact |
+| `tasks/profiles/pupil_profile.py` | **active** | Effective LCD pupil profile artifact |
+| `tasks/profiles/camera_profile.py` | **active** | Camera safety profile artifact |
 | `tasks/profiles/calibrate_broadband_camera_profile.py` | **planned** | Broadband pass-through exposure calibration |
 | `tasks/profiles/scan_pupil_broadband.py` | **planned** | Broadband mixed-light pupil scan |
 | `tasks/profiles/calibrate_per_band_pupil_open_camera_profile.py` | **planned** | Per-band exposure calibration under selected-pupil-open LCD state |
+| `tasks/psf/profile_requirements.py` | **active** | Explicit profile dependency validation for broadband pupil scan and PSF-producing tasks |
 | `tasks/psf/capture_psf_dictionary.py` | **planned** | Profile-dependent PSF dictionary capture |
 | `tasks/psf/capture_dotf_dataset.py` | **planned** | Profile-dependent dOTF diagnostic capture |
 | `tasks/psf/capture_mask_family_psf.py` | **planned** | Profile-dependent mask-family PSF capture |
