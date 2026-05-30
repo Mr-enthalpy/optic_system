@@ -84,11 +84,15 @@ separate compatibility-preserving move is explicitly planned.
 | `tasks/profiles/scan_pupil_broadband.py` | **planned** | Broadband mixed-light pupil scan |
 | `tasks/profiles/calibrate_per_band_pupil_open_camera_profile.py` | **planned** | Per-band exposure calibration under selected-pupil-open LCD state |
 | `tasks/psf/profile_requirements.py` | **active** | Explicit profile dependency validation for broadband pupil scan and PSF-producing tasks |
+| `tasks/psf/build_full_frame_psf_survey.py` | **active** | Small full-frame scout artifact for peak layout discovery |
+| `tasks/psf/derive_peak_layout_profile.py` | **active** | Peak layout profile derivation from scout survey data |
+| `tasks/psf/build_peak_patch_psf_dictionary.py` | **active** | Profile-dependent peak-patch PSF dictionary builder |
+| `tasks/psf/export_peak_patch_dictionary_to_lcd_forward.py` | **active** | Peak-patch dictionary export with LCD_forward-readable metadata |
+| `tasks/psf/compact_dense_export.py` | **active** | Diagnostic dense canvas rendering from peak patches and recorded coordinates |
 | `tasks/psf/capture_psf_dictionary.py` | **planned** | Profile-dependent PSF dictionary capture |
 | `tasks/psf/capture_dotf_dataset.py` | **planned** | Profile-dependent dOTF diagnostic capture |
 | `tasks/psf/capture_mask_family_psf.py` | **planned** | Profile-dependent mask-family PSF capture |
 | `tasks/diagnostics/compute_h_matrix_diagnostic.py` | **planned** | H-matrix diagnostic export for measured PSF dictionaries |
-| `tasks/conversion/extract_psf_roi.py` | **planned** | Explicit PSF ROI extraction from preserved raw HDF5 |
 | `tasks/conversion/convert_raw_to_lcd_forward.py` | **planned** | Raw-to-LCD_forward conversion with profile metadata transfer |
 
 ## Policy

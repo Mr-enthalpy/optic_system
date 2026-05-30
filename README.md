@@ -40,6 +40,10 @@ The active responsibilities are:
 
 The repository should stay focused on hardware control and data acquisition.
 Training, reconstruction, and differentiable mask optimization belong to `LCD_forward`.
+The long-term scientific route is summarized in
+[`docs/research_idea.md`](docs/research_idea.md); in this repository, that route
+stops at measured artifacts, profile-aware raw captures, metadata, and
+diagnostics.
 
 ## System components
 
@@ -351,12 +355,14 @@ Phase 3A: profile-driven experimental calibration
   CameraProfile
 
 Phase 3B: profile-dependent PSF capture task families
-  PSF dictionary capture
+  full-frame scout capture
+  peak layout profile
+  peak-patch PSF dictionary
   dOTF diagnostics
   mask-family PSF capture
 
 Phase 3C: raw-to-LCD_forward conversion
-  ROI extraction
+  peak-patch dictionary export
   PSF stack construction
   metadata transfer
 ```
@@ -364,7 +370,9 @@ Phase 3C: raw-to-LCD_forward conversion
 Phase 3A and Phase 3B are inserted profile phases between Phase 2 capture
 infrastructure and the original raw-to-LCD_forward conversion work. Phase 3C is
 the original conversion layer, now consuming profile-aware raw captures and
-diagnostics.
+diagnostics. Phase 3A/3B do not execute `LCD_forward` conversion; they prepare
+profile-aware raw captures, full-frame scout data, peak layout profiles, and
+diagnostic artifacts for later conversion.
 
 Important profile rules:
 
@@ -380,7 +388,8 @@ Important profile rules:
 The conversion layer should handle:
 
 * mask downsampling or encoding into `[N, T, 1, Hm, Wm]`
-* PSF ROI extraction
+* peak-patch PSF dictionary export
+* peak table and patch coordinate metadata
 * frame averaging
 * dark / flat correction if available
 * wavelength metadata
@@ -390,6 +399,14 @@ The conversion layer should handle:
 * train / val / test split
 
 The raw capture format should preserve enough metadata to allow future reprocessing.
+The mainline PSF workflow is full-frame scout capture followed by a
+`PeakLayoutProfile` and a peak-patch PSF dictionary. The full-frame survey is
+calibration scout data. The production dictionary stores peak patches and their
+original sensor coordinates, preserving the geometry needed for sparse
+peak-cluster modelling outside this repository.
+`PeakLayoutProfile` records the survey masks and wavelengths used to derive the
+layout as provenance. Its default validity scope is survey-only unless a later
+audited detector or tracking method expands that scope.
 The thesis branch is treated as an audited source of useful experimental
 lessons, not as a mainline workflow to be merged wholesale.
 

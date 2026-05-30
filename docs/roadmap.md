@@ -256,7 +256,9 @@ declared.
 
 Required task families:
 
-- PSF dictionary capture
+- Full-frame PSF scout survey for peak layout discovery
+- `PeakLayoutProfile` derivation
+- Peak-patch PSF dictionary capture and derived artifact build
 - dOTF diagnostic capture
 - mask-family PSF capture
 
@@ -269,7 +271,8 @@ Expected conversion work:
 
 - Conversion scripts that read raw capture HDF5
 - Mask downsampling or encoding into `[N, T, 1, Hm, Wm]`
-- PSF ROI extraction
+- Peak-patch PSF dictionary export
+- Peak table and patch coordinate metadata transfer
 - PSF stack construction
 - Frame averaging
 - Dark / flat correction if available
@@ -494,6 +497,11 @@ tasks/profiles/
   calibrate_per_band_pupil_open_camera_profile.py
 
 tasks/psf/
+  build_full_frame_psf_survey.py
+  derive_peak_layout_profile.py
+  build_peak_patch_psf_dictionary.py
+  export_peak_patch_dictionary_to_lcd_forward.py
+  compact_dense_export.py
   capture_psf_dictionary.py
   capture_dotf_dataset.py
   capture_mask_family_psf.py
@@ -504,7 +512,7 @@ tasks/diagnostics/
   compute_h_matrix_diagnostic.py
 
 tasks/conversion/
-  extract_psf_roi.py
+  convert_peak_patch_to_lcd_forward.py
   convert_raw_to_lcd_forward.py
 ```
 
@@ -547,6 +555,7 @@ migration notes but must not become mainline task names.
 - Add broadband pupil scan
 - Add per-band pupil-open camera safety calibration
 - Make PSF-producing tasks depend explicitly on `PupilProfile` and `CameraProfile`
+- Add profile-dependent full-frame scout survey, peak layout profile, and peak-patch PSF dictionary build and export
 - Add metadata fields linking raw captures to profile IDs
 - Add diagnostic scripts for PSF dictionaries, dOTF, and H-matrix analysis
 - Add documentation describing how thesis-branch artifacts map into mainline abstractions
@@ -577,6 +586,12 @@ migration notes but must not become mainline task names.
 - Raw capture HDF5 metadata records profile IDs and illumination mode
 - TLS setpoint `0` is recorded only as broadband pass-through device state and never as a scientific wavelength
 - Thesis-branch useful outputs are represented as mainline artifacts or diagnostics
+- Full-frame PSF survey artifacts can be built from small raw scout captures
+- `PeakLayoutProfile` artifacts can be derived from full-frame surveys
+- `PeakLayoutProfile` artifacts record survey masks/wavelengths as provenance,
+  with explicit validity scope instead of implying a production mask whitelist
+- Peak-patch PSF dictionaries can be built from raw capture using a `PeakLayoutProfile`
+- Peak-patch dictionaries store patches and full-frame sensor coordinates, not full-frame production PSF stacks
 - Default tests remain hardware-free
 - Hardware execution remains opt-in
 - Phase 4 can consume profile-aware mask-family calibration data without depending on thesis-specific workflow
