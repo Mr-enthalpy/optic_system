@@ -10,17 +10,16 @@ The intended system boundary is:
 ```text
 optic_system
   -> controls camera / LCD / TLS
-  -> captures raw experimental observations
-  -> writes raw capture HDF5 with metadata
-  -> optionally converts raw capture data into LCD_forward-compatible HDF5
+  -> raw capture HDF5
+  -> profile / survey / support / peak-cluster artifacts
+  -> optional LCD_forward-compatible exports
 
 LCD_forward
-  -> loads training HDF5
-  -> trains mask -> PSF forward surrogate
-  -> renders frames from object + PSF
-  -> trains reconstruction baseline
-  -> evaluates forward / reconstruction performance
-````
+  -> dense-kernel baselines
+  -> peak-cluster forward models
+  -> multi-frame rendering / reconstruction
+  -> mask and GenerMask optimization
+```
 
 ## Current project role
 
@@ -36,7 +35,13 @@ The active responsibilities are:
 * control-layer command / event / state management
 * minimal synchronized acquisition tasks
 * raw capture HDF5 export
-* future conversion boundary toward `LCD_forward`
+* profile artifacts
+* `FullFramePSFSurvey`
+* `PeakSupportAnalysisReport`
+* `PeakPatchPSFDictionary`
+* future `AdaptivePeakClusterPSFDictionary`
+* metadata-rich diagnostic exports
+* optional export boundary toward `LCD_forward`
 
 The repository should stay focused on hardware control and data acquisition.
 Training, reconstruction, and differentiable mask optimization belong to `LCD_forward`.
@@ -116,20 +121,24 @@ The default test suite should run without TLS hardware and without vendor DLLs.
 
 `optic_system` should produce experimental data.
 
-`LCD_forward` should consume training-ready HDF5 data.
+`LCD_forward` should consume metadata-rich exports from measured artifacts.
 
-The long-term connection is:
+The connection has two useful forms:
 
 ```text
 optic_system raw capture HDF5
-  -> conversion script
-  -> LCD_forward train/val/test HDF5
-  -> forward surrogate training
-  -> reconstruction training
-  -> evaluation
+  -> profile / survey / support / peak-cluster artifacts
+  -> dense-kernel compatibility exports
+  -> peak-patch or adaptive peak-cluster exports
+
+LCD_forward
+  -> dense-kernel baselines
+  -> peak-cluster forward models
+  -> multi-frame rendering / reconstruction
+  -> mask and GenerMask optimization
 ```
 
-The `LCD_forward` training format is expected to include tensors such as:
+Dense-kernel HDF5 exports may still include tensors such as:
 
 ```text
 Forward calibration:
@@ -358,7 +367,8 @@ camera metadata
 LCD metadata
 TLS metadata
 capture timing metadata
-ROI metadata
+camera ROI / acquired-frame extent metadata
+support / peak-cluster coordinate metadata when available
 processing flags
 ```
 

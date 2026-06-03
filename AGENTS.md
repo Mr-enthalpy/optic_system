@@ -17,7 +17,14 @@ Its downstream learning repository is `LCD_forward`.
 - control-layer command / event / state management
 - minimal synchronized capture tasks
 - raw capture HDF5 export
-- conversion boundary toward `LCD_forward`
+- profile artifacts
+- `FullFramePSFSurvey`
+- `PeakSupportAnalysisReport`
+- `SupportCandidateStabilityReport`
+- `PeakLayoutProfile` and future `AdaptivePeakLayoutProfile`
+- `PeakPatchPSFDictionary` and future `AdaptivePeakClusterPSFDictionary`
+- measured-artifact diagnostics and metadata-rich exports
+- optional export boundary toward `LCD_forward`
 
 `optic_system` is not responsible for:
 
@@ -32,208 +39,73 @@ Those belong to `LCD_forward` or later experiment-specific layers.
 
 ## Current phase
 
-Current mainline phase: Phase 2C -- GUI / diagnostics / architecture consolidation.
+Current mainline phase:
 
-Meaning:
+```text
+Phase 3.5C -- real-data operationalization and support stability audit.
+```
 
-- Phase 2A minimal capture task layer is complete.
-- Phase 2B hardware smoke capture validation is complete.
-- The mainline is now consolidating GUI roles, diagnostics boundaries,
-  file-only monitoring, and stale entry points before the long-term
-  LCD_forward conversion phase.
+Completed:
+
+- Phase 2 minimal hardware capture layer.
+- Phase 3.5A full-frame scout -> first-pass `PeakLayoutProfile` -> fixed-size
+  `PeakPatchPSFDictionary`.
+- Phase 3.5B `PeakSupportAnalysisReport` baseline.
+
+Active:
+
+- scipy / streaming / energy-only support analysis.
+- real-data presets for 2048 x 2448 full-frame data.
+- `SupportCandidateStabilityReport`.
+- adaptive peak-cluster support preparation.
+
+Current meaning:
+
 - ``app/main_gui.py`` is the manual/debug control GUI and may control hardware.
 - ``scripts/monitor_run_status.py`` is the only supported read-only monitor.
   It reads task-published run-status files and must remain hardware-free.
-- The bachelor-thesis experimental branch is separate and owns its own
-  Phase 3.0--3.7 task workflow.
+- The bachelor-thesis experimental branch is separate and owns its own task
+  workflow.
+- The active mainline path is measured-artifact construction and diagnostics,
+  not learning-side modelling.
 
-Do not assume the repository is already a full calibration system.
+Do not assume connected components are stable physical peak IDs.
+Do not promote support components directly into `PeakLayoutProfile`.
 Do not assume Phase 2B output data is training-ready or scientifically valid.
 
 ## Roadmap
 
-### Phase 0  --  Documentation and boundary reset
+The active roadmap lives in `docs/roadmap.md`. AGENTS.md intentionally keeps
+only the execution constraints that agents must obey.
 
-Primary goal:
-
-- rewrite repository-level constraints
-- replace obsolete early-GUI-prototype constraints
-- clarify that hardware capture is now in scope
-- clarify that training is out of scope
-- clarify TLS backend policy
-- mark old task scripts as legacy unless audited
-
-Allowed work:
-
-- README updates
-- AGENTS updates
-- architecture docs
-- roadmap docs
-- task status docs
-- comments that clarify active vs legacy paths
-
-Do not implement large functionality in Phase 0 unless explicitly requested.
-
-### Phase 1  --  TLS SDK integration closure
-
-Primary goal:
-
-- make `tls_c1` the only active TLS backend
-- remove the active pywinauto TLS automation path
-- expose TLS through normal application/control path
-
-Expected work:
-
-- `devices/tls_service.py`
-- TLS commands
-- TLS events
-- TLS state fields
-- `SessionController` TLS handling
-- optional GUI TLS panel
-- app assembly support for optional TLS
-- no-hardware TLS tests
-- opt-in hardware TLS tests
-
-Non-goals:
-
-- full wavelength sweep workflow
-- full calibration workflow
-- capture automation
-- training integration
-- direct GUI-to-TLS calls
-
-### Phase 2A  --  Minimal capture task layer
-
-Primary goal:
-
-Create a clean minimal capture path.
-
-Expected new modules may include:
-
-- `tasks/capture_plan.py`
-- `tasks/raw_capture_h5.py`
-- `tasks/capture_forward_dataset.py`
-
-First task should support:
-
-- load capture plan
-- initialize camera / LCD / optional TLS
-- set TLS wavelength if enabled
-- move TLS and wait until idle
-- show physical mono LCD mask
-- wait `settle_ms`
-- acquire K frames
-- average or store burst
-- write raw capture HDF5 with metadata
-
-Non-goals:
-
-- full scheduler
-- full calibration engine
-- GenerMask optimization loop
-- training
-- direct `LCD_forward` training invocation
-
-### Phase 2B  --  Hardware smoke capture validation
-
-Primary goal:
-
-Validate that the Phase 2A capture task can control real camera, mono LCD,
-and optional TLS in a deterministic sequence and produce ``raw_capture.h5``
-with valid structure and metadata.
-
-Expected work:
-
-- hardware smoke test plans (camera + LCD, camera + LCD + TLS)
-- ``scripts/make_smoke_masks.py`` for ``[H, 3W]`` / ``[3H, W]`` mask generation
-- ``scripts/inspect_raw_capture.py`` for HDF5 structure inspection
-- opt-in hardware smoke tests under ``tests/``
-- axis-aware ``LCDService`` with user-configured ``subpixel_axis``
-- LCD metadata audit in raw HDF5
-
-Non-goals:
-
-- optical scientific correctness validation
-- PSF measurement or calibration
-- light-source integration
-- spectral response characterization
-- claiming captured data is training-ready
-- forward surrogate training
-- ``LCD_forward`` import or invocation
-
-Phase 2B must keep ``processing_flags_json`` as::
-
-  scientific_calibration_valid: false
-  optical_alignment_validated:   false
-  training_ready:                false
-
-Passing hardware smoke tests does **not** imply the optical system is
-calibrated or scientifically valid.
-
-### Phase 2C -- GUI / diagnostics / architecture consolidation
-
-Primary goal:
-
-Stabilize the GUI and diagnostics architecture after hardware smoke validation
-and before long-term raw-capture conversion work.
-
-Allowed work:
-
-- remove duplicated or unsafe GUI/monitor entry points
-- clarify that ``app/main_gui.py`` is the control GUI
-- clarify that ``scripts/monitor_run_status.py`` is the file-only read-only monitor
-- improve ``RunStatusPublisher`` / ``RunStatusReader``
-- improve documentation around diagnostics boundaries
-- clean empty legacy stubs and stale documentation
-- keep default tests hardware-free
-
-Non-goals:
-
-- pupil scan
-- dOTF
-- PSF dictionary
-- thesis-specific experiment scripts
-- LCD_forward conversion
-- neural training
-- GenerMask optimization
-
-### Phase 3  --  Raw capture to LCD_forward conversion
-
-Primary goal:
-
-Convert raw experimental captures into training-ready HDF5 for `LCD_forward`.
-
-Expected conversion target:
+Mainline structure:
 
 ```text
-Forward calibration:
-masks: [N, T, 1, Hm, Wm]
-psfs:  [N, T, L, Hp, Wp]
+Phase 3   -- stable capture and profile-aware artifacts
+Phase 3.5 -- support-aware peak-cluster preparation
+Phase 3.6 -- adaptive peak-cluster PSF dictionary
+Phase 4+  -- LCD_forward-side modelling / reconstruction / optimization
+```
 
-Reconstruction:
-objects: [N, L, H, W]
-frames:  [N, T, 1, H, W]
-masks:   [N, T, 1, Hm, Wm]
-````
+Current `optic_system` work is limited to measured artifact construction,
+diagnostics, and metadata-rich exports.
 
-The raw capture format must preserve enough metadata to allow reprocessing.
+`optic_system` may build:
 
-### Phase 4  --  Family-aware GenerMask calibration and closed-loop experiments
+- profile artifacts;
+- full-frame scout surveys;
+- support analysis reports;
+- support-candidate stability reports;
+- peak layout and adaptive peak layout artifacts;
+- fixed-size peak-patch and future adaptive peak-cluster dictionaries;
+- dense-kernel compatibility exports and peak-cluster exports.
 
-Primary goal:
+`optic_system` must not build:
 
-Support structured mask-family calibration and later closed-loop experiments.
-
-Possible work:
-
-* GenerMask family registry
-* family-aware capture plans
-* held-out family validation
-* perturbation robustness audit
-* repeated forward-surrogate retraining through `LCD_forward`
-* controlled mask-design experiments
-
-Do not start Phase 4 before Phase 1-3 are stable unless explicitly requested.
+- forward surrogate training code;
+- reconstruction models;
+- differentiable mask optimization loops;
+- hidden `LCD_forward` training or validation invocations.
 
 ## Mainline / thesis branch relationship
 
@@ -249,14 +121,15 @@ Mainline provides reusable infrastructure:
 - raw HDF5 conventions
 - run-status diagnostics
 - read-only monitor
-- GUI and architecture cleanup
+- profile / survey / support / dictionary artifacts
+- GUI and architecture foundations
 
 The thesis branch consumes this infrastructure and implements thesis-specific
 task workflows:
 
 - exposure safety sweep
 - effective LCD pupil scan
-- PSF repeatability and ROI alignment
+- PSF repeatability and alignment
 - dOTF diagnostic
 - measured PSF dictionary
 - minimal linear reconstruction demo
@@ -268,8 +141,8 @@ Synchronization rule:
   thesis branch.
 - thesis-specific task code should not be moved into mainline unless explicitly
   promoted as reusable infrastructure.
-- mainline documentation should not replace its long-term Phase 3/4 roadmap
-  with the thesis Phase 3.0--3.7 workflow.
+- mainline documentation should not replace its Phase 3 / 3.5 / 3.6 measured
+  artifact roadmap with the thesis workflow.
 
 ## Architecture rules
 
@@ -411,6 +284,28 @@ New minimal capture tasks should be implemented cleanly and separately.
 
 Do not silently revive legacy task logic.
 
+## Peak-cluster artifact rules
+
+The fixed-size `PeakPatchPSFDictionary` is a v1 baseline and compatibility
+artifact only. The medium-term production target is
+`AdaptivePeakClusterPSFDictionary`.
+
+Rules:
+
+* `PeakSupportAnalysisReport` is diagnostic evidence, not a layout.
+* Do not promote connected components directly into `PeakLayoutProfile`.
+* `SupportCandidateStabilityReport` is required before adaptive layout
+  promotion.
+* Component IDs are local to one report and are not stable physical peak IDs.
+* Support candidates must be traceable to `(entry_index, tau, component_id)`
+  or equivalent source component keys.
+* Adaptive clusters must record the original coordinate frame.
+* Adaptive clusters must record center, support type, radius or bbox, local raw
+  patch, background, energy metrics, and peak value.
+* Non-rectangular supports must preserve an explicit support mask.
+* Fixed-size dense or peak-patch exports may remain available as baselines, but
+  they must not be described as the final peak-cluster representation.
+
 ## Run-status diagnostics rules
 
 `RunStatusPublisher` / `RunStatusReader` provide a file-only diagnostics
@@ -447,8 +342,26 @@ camera metadata
 LCD metadata
 TLS metadata
 capture timing metadata
-ROI metadata
+camera ROI / acquired-frame extent metadata
+profile ids
+support / peak-cluster coordinate metadata when available
 processing flags
+```
+
+Measured artifacts have distinct roles:
+
+```text
+FullFramePSFSurvey:
+  scout data
+
+PeakSupportAnalysisReport:
+  diagnostic evidence
+
+PeakPatchPSFDictionary:
+  v1 fixed-size compatibility baseline
+
+AdaptivePeakClusterPSFDictionary:
+  medium-term production target
 ```
 
 Raw capture HDF5 must preserve LCD metadata when available:
@@ -477,9 +390,9 @@ Do not directly train neural models from raw capture files inside `optic_system`
 
 ## LCD_forward boundary
 
-`LCD_forward` consumes training-ready HDF5.
+`LCD_forward` consumes measured-artifact exports.
 
-Expected downstream format:
+Dense-kernel export may exist as a baseline:
 
 ```text
 Forward calibration:
@@ -492,9 +405,23 @@ frames:  [N, T, 1, H, W]
 masks:   [N, T, 1, Hm, Wm]
 ```
 
+The mainline direction is peak-patch and adaptive peak-cluster export:
+
+```text
+FullFramePSFSurvey
+  -> PeakPatchPSFDictionary baseline export
+
+FullFramePSFSurvey
+  -> PeakSupportAnalysisReport
+  -> SupportCandidateStabilityReport
+  -> AdaptivePeakLayoutProfile
+  -> AdaptivePeakClusterPSFDictionary export
+```
+
 Rules:
 
-* `optic_system` may export or convert data into this format.
+* `optic_system` may export dense-kernel baselines when useful.
+* `optic_system` may export peak-patch and adaptive peak-cluster artifacts.
 * `optic_system` must not implement `LCD_forward` models.
 * `optic_system` must not train forward surrogates.
 * `optic_system` must not train reconstruction networks.
@@ -502,7 +429,8 @@ Rules:
 
 ## GenerMask rules
 
-GenerMask work is Phase 4 or later unless explicitly requested.
+GenerMask modelling and optimization belong to `LCD_forward` unless explicitly
+requested for physical mask generation or capture-plan construction.
 
 When GenerMask appears in `optic_system`, its role is to produce physical LCD masks or capture plans, not to train neural networks.
 
@@ -609,11 +537,15 @@ Completed:
 - Phase 2B hardware smoke capture validation
 - file-only read-only monitor
 - removal of legacy monitor GUI path and empty task stubs
+- Phase 3.5A full-frame scout -> first-pass `PeakLayoutProfile` -> fixed-size
+  `PeakPatchPSFDictionary`
+- Phase 3.5B `PeakSupportAnalysisReport` baseline
 
 Current mainline priority:
 
-1. Continue Phase 2C GUI / diagnostics / architecture consolidation as needed.
-2. Keep diagnostics file-only and hardware-free.
-3. Keep ``app/main_gui.py`` and ``scripts/monitor_run_status.py`` roles distinct.
-4. After Phase 2C stabilizes, resume long-term Phase 3 raw-capture to
-   LCD_forward conversion.
+1. Accelerate `PeakSupportAnalysisReport` on real full-frame data.
+2. Add streaming / energy-only support analysis for large surveys.
+3. Define real-data presets for support analysis.
+4. Build `SupportCandidateStabilityReport`.
+5. Promote only stable support candidates into `AdaptivePeakLayoutProfile`.
+6. Build `AdaptivePeakClusterPSFDictionary`.
