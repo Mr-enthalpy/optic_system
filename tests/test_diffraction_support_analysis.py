@@ -264,3 +264,54 @@ def test_raw_frames_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:
     )
     assert manifest.coordinate_frame == "acquired_frame"
     assert manifest.entry_mask_ids == ["raw_mask"]
+
+
+def test_energy_only_report_skips_component_table_but_keeps_energy_metrics(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support_energy_only.h5"
+    _write_synthetic_survey(survey_h5)
+
+    manifest = analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[10, 30],
+        far_field_radius=20,
+        energy_only=True,
+    )
+
+    assert manifest.component_policy["analysis_mode"] == "energy_only"
+    assert manifest.component_policy["component_table_written"] is False
+    assert manifest.component_policy["frame_read_policy"] == "hdf5_entry_streaming"
+    with h5py.File(str(report_h5), "r") as f:
+        assert "components" not in f
+        assert f["support_analysis/background_value"].shape == (1,)
+        assert f["support_analysis/compact_support_energy"].shape == (1, 2)
+        assert f["support_analysis/far_field_noise_energy"].shape == (1, 1)
+        assert f["support_analysis/far_field_significant_pixel_count"].shape == (1, 1)
+
+    with pytest.raises(DiffractionSupportAnalysisError, match="energy-only"):
+        propose_peak_supports_from_report(report_h5, tau=0.5)
+
+
+def test_measured_full_frame_preset_records_min_component_area(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support_preset.h5"
+    _write_synthetic_survey(survey_h5)
+
+    manifest = analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[100],
+        far_field_radius=20,
+        preset_name="measured_full_frame_2048",
+    )
+
+    assert manifest.component_policy["preset_name"] == "measured_full_frame_2048"
+    assert manifest.component_policy["min_component_area"] == 8
+    with h5py.File(str(report_h5), "r") as f:
+        areas = f["components/area"][()]
+        manifest_json = json.loads(_decode(f["metadata/manifest_json"][()]))
+    assert all(int(x) >= 8 for x in areas)
+    assert manifest_json["component_policy"]["preset_name"] == "measured_full_frame_2048"

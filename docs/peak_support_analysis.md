@@ -70,6 +70,16 @@ real-data preset for 2048 x 2448 full-frame camera data. Real full-frame
 surveys should use an explicit real-data preset that filters tiny connected
 components before writing the candidate table.
 
+Named real-data preset:
+
+```text
+measured_full_frame_2048:
+    min_component_area = 8
+```
+
+The preset is recorded in `metadata/manifest_json` under
+`component_policy.preset_name`. Explicit CLI arguments override preset values.
+
 ## HDF5 Layout
 
 ```text
@@ -104,6 +114,23 @@ components before writing the candidate table.
 /source/survey_h5
 ```
 
+`analyze_diffraction_support` reads HDF5 frame datasets entry by entry. It does
+not materialize the full survey tensor as `float64` before analysis.
+
+When `energy_only=true`, the report intentionally omits `/components/*` and
+sets:
+
+```text
+component_policy.analysis_mode = energy_only
+component_policy.component_table_written = false
+component_policy.frame_read_policy = hdf5_entry_streaming
+```
+
+Energy-only reports still write all `/support_analysis/*` energy, background,
+center, threshold split, count, source, and manifest metadata datasets. They
+cannot be used by `propose_peak_supports_from_report` because there is no
+component table.
+
 `far_field_noise_pixel_count` is the far-field threshold-complement count:
 pixels with `radius >= far_field_radius` and `corr < tau`. It includes zero
 corrected-intensity pixels and should not be read as the count of nonzero
@@ -127,6 +154,24 @@ into layout refinement.
 
 ```bash
 python scripts/analyze_diffraction_support.py survey.h5 support_analysis.h5
+```
+
+For large measured full-frame data where only energy decomposition is needed:
+
+```bash
+python scripts/analyze_diffraction_support.py survey.h5 support_energy_only.h5 \
+  --preset measured_full_frame_2048 \
+  --energy-only
+```
+
+For legacy Phase 3 raw HDF5 inputs that do not yet have a formal
+`FullFramePSFSurvey` wrapper:
+
+```bash
+python scripts/analyze_diffraction_support.py raw.h5 support_energy_only.h5 \
+  --allow-raw-fallback \
+  --preset measured_full_frame_2048 \
+  --energy-only
 ```
 
 The report is no-hardware and read-only with respect to the source survey.
