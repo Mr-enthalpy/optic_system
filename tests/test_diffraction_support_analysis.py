@@ -1,0 +1,266 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import h5py
+import numpy as np
+import pytest
+
+from tasks.psf.analyze_diffraction_support import (
+    DiffractionSupportAnalysisError,
+    PeakSupportAnalysisManifest,
+    analyze_diffraction_support,
+    propose_peak_supports_from_report,
+)
+
+
+def _decode(value) -> str:
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def _write_synthetic_survey(path: Path) -> None:
+    frame = np.zeros((64, 64), dtype=np.float64)
+    frame += 0.02
+    frame[20:24, 20:24] += 4.0
+    frame[5:7, 56:58] += 3.0
+    frame[40, 3] += 0.04
+    with h5py.File(str(path), "w") as f:
+        string_dtype = h5py.string_dtype(encoding="utf-8")
+        g = f.require_group("full_frame_survey")
+        g.create_dataset("frames_avg", data=frame[np.newaxis, :, :])
+        g.create_dataset("entry_wavelength_nm", data=np.asarray([550.0], dtype=np.float64))
+        g.create_dataset("entry_mask_id", data=np.asarray(["mask_a"], dtype=object), dtype=string_dtype)
+        g.create_dataset(
+            "camera_frame_extent_json",
+            data=json.dumps({
+                "mode": "full_sensor",
+                "origin_xy": [0, 0],
+                "shape_hw": [64, 64],
+                "sensor_shape_hw": [64, 64],
+            }),
+            dtype=string_dtype,
+        )
+
+
+def _write_raw_frames_h5(path: Path) -> None:
+    frame = np.full((16, 16), 0.02, dtype=np.float64)
+    frame[4:6, 4:6] += 3.0
+    with h5py.File(str(path), "w") as f:
+        string_dtype = h5py.string_dtype(encoding="utf-8")
+        raw = f.require_group("raw")
+        raw.create_dataset("frames_avg", data=frame[np.newaxis, :, :])
+        raw.create_dataset("mask_id", data=np.asarray(["raw_mask"], dtype=object), dtype=string_dtype)
+        raw.create_dataset("wavelength_nm", data=np.asarray([550.0], dtype=np.float64))
+
+
+def test_builds_peak_support_analysis_report_from_synthetic_survey(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_synthetic_survey(survey_h5)
+
+    manifest = analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        report_id="support_v1",
+        tau_values=[0.5],
+        support_radii=[10, 30],
+        far_field_radius=20,
+        min_component_area=2,
+    )
+
+    assert manifest.report_id == "support_v1"
+    assert manifest.source_survey_h5 == str(survey_h5)
+    assert manifest.frame_shape == (64, 64)
+    assert manifest.coordinate_frame == "sensor_full_frame"
+    assert manifest.entry_mask_ids == ["mask_a"]
+    assert report_h5.exists()
+
+    with h5py.File(str(report_h5), "r") as f:
+        assert f["support_analysis/frame_shape"][()].tolist() == [64, 64]
+        assert f["support_analysis/background_value"].shape == (1,)
+        assert f["support_analysis/compact_support_energy"].shape == (1, 2)
+        assert f["support_analysis/far_field_significant_energy"].shape == (1, 1)
+        assert f["components/bbox_xyxy"].shape[1] == 4
+        assert _decode(f["source/survey_h5"][()]) == str(survey_h5)
+
+
+def test_uses_fifth_percentile_background_and_corr_clip(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_synthetic_survey(survey_h5)
+
+    analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[100],
+        far_field_radius=20,
+    )
+
+    with h5py.File(str(report_h5), "r") as f:
+        bg = float(f["support_analysis/background_value"][0])
+        total = float(f["support_analysis/total_corr_energy"][0])
+    assert np.isclose(bg, 0.02)
+    assert np.isclose(total, 16 * 4.0 + 4 * 3.0 + 0.04)
+
+
+def test_threshold_sweep_splits_noise_floor_and_significant_far_field(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_synthetic_survey(survey_h5)
+
+    analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[100],
+        far_field_radius=20,
+        min_component_area=2,
+    )
+
+    with h5py.File(str(report_h5), "r") as f:
+        sig_energy = float(f["support_analysis/far_field_significant_energy"][0, 0])
+        noise_energy = float(f["support_analysis/far_field_noise_energy"][0, 0])
+        sig_count = int(f["support_analysis/far_field_significant_pixel_count"][0, 0])
+        noise_count = int(f["support_analysis/far_field_noise_pixel_count"][0, 0])
+    assert np.isclose(sig_energy, 12.0)
+    assert np.isclose(noise_energy, 0.04)
+    assert sig_count == 4
+    assert noise_count > sig_count
+
+
+def test_component_table_detects_far_field_significant_component(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_synthetic_survey(survey_h5)
+
+    analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[100],
+        far_field_radius=20,
+        min_component_area=2,
+    )
+
+    with h5py.File(str(report_h5), "r") as f:
+        boxes = f["components/bbox_xyxy"][()]
+        areas = f["components/area"][()]
+        energies = f["components/energy"][()]
+        far = f["components/is_far_field"][()]
+        centroids = f["components/centroid_xy"][()]
+    assert any(tuple(row) == (56, 5, 58, 7) for row in boxes)
+    assert 1 not in set(int(x) for x in areas)
+    assert np.max(energies) >= 12.0
+    assert np.any(far)
+    assert centroids.shape[1] == 2
+
+
+def test_manifest_round_trips_and_p99_is_visualization_only(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_synthetic_survey(survey_h5)
+
+    analyze_diffraction_support(survey_h5, report_h5, tau_values=[0.5], support_radii=[100])
+
+    with h5py.File(str(report_h5), "r") as f:
+        manifest_json = json.loads(_decode(f["metadata/manifest_json"][()]))
+    manifest = PeakSupportAnalysisManifest.from_dict(manifest_json)
+    assert manifest.to_dict()["artifact_type"] == "peak_support_analysis_report"
+    text = json.dumps(manifest.to_dict())
+    assert "p=0.99" not in text
+    assert manifest.corr_policy["p99_display_tail_normalization_is_visualization_only"] is True
+
+
+def test_proposes_peak_supports_from_component_report(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_synthetic_survey(survey_h5)
+    analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[100],
+        far_field_radius=20,
+        min_component_area=2,
+    )
+
+    candidates = propose_peak_supports_from_report(report_h5, tau=0.5, padding=2, far_field_only=True)
+
+    assert candidates
+    assert candidates[0]["support_tau"] == 0.5
+    assert candidates[0]["artifact_type"] == "candidate_support"
+    assert candidates[0]["not_a_peak_layout_profile"] is True
+    assert "patch_origin_xy" in candidates[0]
+    assert "patch_shape_hw" in candidates[0]
+    assert "source_component_keys" in candidates[0]
+
+
+def test_proposed_peak_support_clamps_edge_patch_inside_frame(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_synthetic_survey(survey_h5)
+    analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[100],
+        far_field_radius=20,
+        min_component_area=2,
+    )
+
+    candidates = propose_peak_supports_from_report(report_h5, tau=0.5, padding=8, far_field_only=True)
+
+    assert candidates
+    for candidate in candidates:
+        origin_x, origin_y = candidate["patch_origin_xy"]
+        patch_h, patch_w = candidate["patch_shape_hw"]
+        assert origin_x >= 0
+        assert origin_y >= 0
+        assert origin_x + patch_w <= 64
+        assert origin_y + patch_h <= 64
+        for key in candidate["source_component_keys"]:
+            assert set(key) == {"entry_index", "tau", "component_id"}
+
+
+def test_acquired_frame_extent_maps_to_acquired_frame_coordinate_frame(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey_acquired.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_synthetic_survey(survey_h5)
+    with h5py.File(str(survey_h5), "a") as f:
+        del f["full_frame_survey/camera_frame_extent_json"]
+        f["full_frame_survey"].create_dataset(
+            "camera_frame_extent_json",
+            data=json.dumps({
+                "mode": "sensor_roi",
+                "origin_xy": [100, 50],
+                "shape_hw": [64, 64],
+                "sensor_shape_hw": [2048, 2448],
+            }),
+            dtype=h5py.string_dtype(encoding="utf-8"),
+        )
+
+    manifest = analyze_diffraction_support(survey_h5, report_h5, tau_values=[0.5], support_radii=[100])
+
+    assert manifest.coordinate_frame == "acquired_frame"
+    assert manifest.camera_frame_extent["mode"] == "sensor_roi"
+
+
+def test_raw_frames_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:
+    raw_h5 = tmp_path / "raw.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_raw_frames_h5(raw_h5)
+
+    with pytest.raises(DiffractionSupportAnalysisError, match="FullFramePSFSurvey|full_frame_survey"):
+        analyze_diffraction_support(raw_h5, report_h5, tau_values=[0.5], support_radii=[10])
+
+    manifest = analyze_diffraction_support(
+        raw_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[10],
+        allow_raw_fallback=True,
+    )
+    assert manifest.coordinate_frame == "acquired_frame"
+    assert manifest.entry_mask_ids == ["raw_mask"]
