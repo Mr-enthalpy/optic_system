@@ -143,6 +143,15 @@ class TestCapturePlan:
                 "masks": [{"mask_id": "m1"}],
             })
 
+    def test_validate_zero_wavelength_requests_pass_through(self) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "pass_through",
+            "wavelengths": [{"wavelength_nm": 0.0}],
+            "masks": [{"mask_id": "m1"}],
+        })
+
+        assert plan.wavelengths[0].wavelength_nm == 0.0
+
     def test_validate_frames_per_capture_fails(self) -> None:
         with pytest.raises(CapturePlanError, match="frames_per_capture"):
             CapturePlan.from_dict({

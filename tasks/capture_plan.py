@@ -216,9 +216,10 @@ class CapturePlan:
             raise CapturePlanError("lcd_settle_ms must be >= 0")
 
         for i, w in enumerate(self.wavelengths):
-            if w.wavelength_nm <= 0:
+            if w.wavelength_nm < 0:
                 raise CapturePlanError(
-                    f"wavelengths[{i}].wavelength_nm must be positive, "
+                    f"wavelengths[{i}].wavelength_nm must be non-negative; "
+                    "0.0 requests TLS zero-order pass-through, "
                     f"got {w.wavelength_nm}"
                 )
             if w.settle_ms < 0:

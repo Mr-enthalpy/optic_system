@@ -153,6 +153,8 @@ capture and profile-artifact layer that supports later peak-cluster work.
 
 ### Phase 3A -- Profile-Driven Experimental Calibration
 
+**Status: initial mainline task modules implemented.**
+
 Artifacts and tasks:
 
 ```text
@@ -171,6 +173,19 @@ Required principles:
   wavelength.
 - Full-LCD-open exposure profiles must not silently stand in for selected-pupil
   PSF capture profiles.
+
+Mainline dependency chain:
+
+```text
+determine broadband pass-through camera profile
+  -> scan LCD pupil under broadband pass-through
+  -> generate PupilProfile
+  -> open selected LCD pupil and determine per-band camera profile
+  -> all later PSF-producing capture tasks
+```
+
+The bachelor-thesis branch task logic may be used as audited reference
+material, but its old ordering is not the mainline workflow.
 
 ### Phase 3B -- Full-Frame Scout and Peak-Patch Data-Contract Baseline
 

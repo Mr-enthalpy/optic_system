@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import h5py
@@ -83,6 +84,40 @@ class TestCaptureForwardDatasetDryRun:
         with h5py.File(tmp_h5_path, "r") as f:
             wl = f["tls/wavelength_nm"][()]
             assert wl[0] > 0
+
+    def test_dry_run_with_tls_pass_through(
+        self, tmp_h5_path: Path
+    ) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "pass_through_test",
+            "wavelengths": [{"wavelength_nm": 0.0}],
+            "masks": [{"mask_id": "m1"}],
+            "camera": {"frames_per_capture": 1},
+        })
+        tls = FakeTLS()
+        tls.connect()
+
+        devices = FakeDeviceBundle(
+            camera=FakeCamera(height=240, width=320),
+            lcd=FakeLCD(height=600, width_phys=2400),
+            tls=tls,
+        )
+
+        run_capture_forward_dataset(
+            plan=plan,
+            devices=devices,
+            output_path=tmp_h5_path,
+            enable_tls=True,
+            dry_run=True,
+        )
+
+        assert tls._target_nm == 0.0
+        assert tls._current_nm == 0.0
+        with h5py.File(tmp_h5_path, "r") as f:
+            assert float(f["tls/wavelength_nm"][0]) == 0.0
+            raw_status = f["tls/status_json"][0]
+            status = json.loads(raw_status.decode() if isinstance(raw_status, bytes) else str(raw_status))
+            assert float(status["target_wavelength_nm"]) == 0.0
 
     def test_dry_run_writes_correct_capture_count(
         self, sample_plan: CapturePlan, tmp_h5_path: Path

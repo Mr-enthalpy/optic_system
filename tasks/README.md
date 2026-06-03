@@ -80,9 +80,9 @@ separate compatibility-preserving move is explicitly planned.
 |---|---|---|
 | `tasks/profiles/pupil_profile.py` | **active** | Effective LCD pupil profile artifact |
 | `tasks/profiles/camera_profile.py` | **active** | Camera safety profile artifact |
-| `tasks/profiles/calibrate_broadband_camera_profile.py` | **planned** | Broadband pass-through exposure calibration |
-| `tasks/profiles/scan_pupil_broadband.py` | **planned** | Broadband mixed-light pupil scan |
-| `tasks/profiles/calibrate_per_band_pupil_open_camera_profile.py` | **planned** | Per-band exposure calibration under selected-pupil-open LCD state |
+| `tasks/profiles/calibrate_broadband_camera_profile.py` | **active** | Broadband pass-through exposure calibration for LCD pupil scanning |
+| `tasks/profiles/scan_pupil_broadband.py` | **active** | Broadband pass-through LCD pupil scan and `PupilProfile` generation |
+| `tasks/profiles/calibrate_per_band_pupil_open_camera_profile.py` | **active** | Per-band exposure calibration under selected-pupil-open LCD state |
 | `tasks/psf/profile_requirements.py` | **active** | Explicit profile dependency validation for broadband pupil scan and PSF-producing tasks |
 | `tasks/psf/build_full_frame_psf_survey.py` | **active** | Small full-frame scout artifact for peak layout discovery |
 | `tasks/psf/derive_peak_layout_profile.py` | **active** | Peak layout profile derivation from scout survey data |
@@ -94,6 +94,27 @@ separate compatibility-preserving move is explicitly planned.
 | `tasks/psf/capture_mask_family_psf.py` | **planned** | Profile-dependent mask-family PSF capture |
 | `tasks/diagnostics/compute_h_matrix_diagnostic.py` | **planned** | H-matrix diagnostic export for measured PSF dictionaries |
 | `tasks/conversion/convert_raw_to_lcd_forward.py` | **planned** | Raw-to-LCD_forward conversion with profile metadata transfer |
+
+Mainline profile dependency chain:
+
+```text
+calibrate_broadband_camera_profile
+  -> CameraProfile(profile_family=broadband_passthrough,
+                   valid_for=pupil_scan_broadband)
+  -> scan_pupil_broadband
+  -> PupilProfile
+  -> calibrate_per_band_pupil_open_camera_profile
+  -> CameraProfile(profile_family=per_band_pupil_open,
+                   depends_on_pupil_profile_id=...)
+  -> downstream PSF / dOTF / mask-family capture tasks
+```
+
+This deliberately differs from the bachelor-thesis branch workflow. Mainline
+does not use full-LCD-open per-band exposure profiles for downstream
+PSF-producing tasks. Pupil scanning uses TLS zero-order pass-through
+(`wavelength_nm: 0.0` in capture plans, implemented through
+`TLSService.set_pass_through()` / `tls_c1.set_pass_through()`), not a selected
+monochromatic wavelength.
 
 ## Policy
 
