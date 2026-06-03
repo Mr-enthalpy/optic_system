@@ -1,0 +1,790 @@
+from __future__ import annotations
+
+import json
+from collections import deque
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+import h5py
+import numpy as np
+
+
+DEFAULT_TAU_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]
+DEFAULT_SUPPORT_RADII = [200.0, 300.0, 500.0]
+DEFAULT_FAR_FIELD_RADIUS = 200.0
+DEFAULT_BG_PERCENTILE = 5.0
+DEFAULT_MIN_COMPONENT_AREA = 1
+DEFAULT_CONNECTIVITY = 8
+
+
+class DiffractionSupportAnalysisError(ValueError):
+    pass
+
+
+@dataclass
+class PeakSupportAnalysisManifest:
+    report_id: str
+    source_survey_h5: str
+    frame_shape: tuple[int, int]
+    coordinate_frame: str
+    camera_frame_extent: dict[str, Any]
+    tau_values: list[float]
+    support_radii: list[float]
+    bg_policy: dict[str, Any]
+    corr_policy: dict[str, Any]
+    radial_policy: dict[str, Any]
+    component_policy: dict[str, Any]
+    entry_mask_ids: list[str]
+    entry_wavelengths_nm: list[float]
+    notes: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PeakSupportAnalysisManifest":
+        return cls(
+            report_id=str(data["report_id"]),
+            source_survey_h5=str(data["source_survey_h5"]),
+            frame_shape=_int_pair(data["frame_shape"], "frame_shape"),
+            coordinate_frame=str(data["coordinate_frame"]),
+            camera_frame_extent=dict(data.get("camera_frame_extent") or {}),
+            tau_values=[float(x) for x in data["tau_values"]],
+            support_radii=[float(x) for x in data["support_radii"]],
+            bg_policy=dict(data["bg_policy"]),
+            corr_policy=dict(data["corr_policy"]),
+            radial_policy=dict(data["radial_policy"]),
+            component_policy=dict(data["component_policy"]),
+            entry_mask_ids=[str(x) for x in data["entry_mask_ids"]],
+            entry_wavelengths_nm=[float(x) for x in data["entry_wavelengths_nm"]],
+            notes=data.get("notes"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out = asdict(self)
+        out["artifact_type"] = "peak_support_analysis_report"
+        out["schema_version"] = 1
+        out["frame_shape"] = [int(self.frame_shape[0]), int(self.frame_shape[1])]
+        return out
+
+    def to_json_text(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+
+
+@dataclass
+class SurveyData:
+    frames: np.ndarray
+    mask_ids: list[str]
+    wavelengths_nm: list[float]
+    frame_shape: tuple[int, int]
+    coordinate_frame: str
+    camera_frame_extent: dict[str, Any]
+
+
+def analyze_diffraction_support(
+    survey_h5: str | Path,
+    output_h5: str | Path,
+    *,
+    report_id: str | None = None,
+    tau_values: list[float] | tuple[float, ...] | None = None,
+    support_radii: list[float] | tuple[float, ...] | None = None,
+    far_field_radius: float = DEFAULT_FAR_FIELD_RADIUS,
+    bg_percentile: float = DEFAULT_BG_PERCENTILE,
+    min_component_area: int = DEFAULT_MIN_COMPONENT_AREA,
+    connectivity: int = DEFAULT_CONNECTIVITY,
+    center_policy: str = "frame_center",
+    manual_center_xy: tuple[float, float] | None = None,
+    valid_pixel_domain: dict[str, Any] | None = None,
+    allow_raw_fallback: bool = False,
+    notes: str | None = None,
+) -> PeakSupportAnalysisManifest:
+    source_path = Path(survey_h5)
+    out_path = Path(output_h5)
+    tau = [float(x) for x in (tau_values or DEFAULT_TAU_VALUES)]
+    radii = [float(x) for x in (support_radii or DEFAULT_SUPPORT_RADII)]
+    _validate_parameters(
+        tau_values=tau,
+        support_radii=radii,
+        far_field_radius=far_field_radius,
+        bg_percentile=bg_percentile,
+        min_component_area=min_component_area,
+        connectivity=connectivity,
+        center_policy=center_policy,
+    )
+
+    survey = load_full_frame_psf_survey(source_path, allow_raw_fallback=allow_raw_fallback)
+    valid_mask = _valid_pixel_mask(survey.frame_shape, valid_pixel_domain)
+    if not np.any(valid_mask):
+        raise DiffractionSupportAnalysisError("valid pixel mask is empty")
+
+    n = survey.frames.shape[0]
+    r_count = len(radii)
+    t_count = len(tau)
+    background = np.zeros((n,), dtype=np.float64)
+    compact_energy = np.zeros((n, r_count), dtype=np.float64)
+    compact_fraction = np.zeros((n, r_count), dtype=np.float64)
+    far_noise_energy = np.zeros((n, t_count), dtype=np.float64)
+    far_sig_energy = np.zeros((n, t_count), dtype=np.float64)
+    far_noise_count = np.zeros((n, t_count), dtype=np.int64)
+    far_sig_count = np.zeros((n, t_count), dtype=np.int64)
+    center_xy = np.zeros((n, 2), dtype=np.float64)
+    total_corr_energy = np.zeros((n,), dtype=np.float64)
+
+    component_rows: list[dict[str, Any]] = []
+    for entry_index, frame in enumerate(survey.frames):
+        psf = np.asarray(frame, dtype=np.float64)
+        bg = float(np.percentile(psf[valid_mask], bg_percentile))
+        corr = np.maximum(psf - bg, 0.0)
+        corr_valid = np.where(valid_mask, corr, 0.0)
+        center = _resolve_center_xy(corr_valid, valid_mask, center_policy, manual_center_xy)
+        radius_map = _radius_map(survey.frame_shape, center)
+        total = float(np.sum(corr_valid))
+        far_mask = (radius_map >= float(far_field_radius)) & valid_mask
+
+        background[entry_index] = bg
+        center_xy[entry_index] = center
+        total_corr_energy[entry_index] = total
+        for r_idx, radius in enumerate(radii):
+            mask = (radius_map < float(radius)) & valid_mask
+            energy = float(np.sum(corr_valid[mask]))
+            compact_energy[entry_index, r_idx] = energy
+            compact_fraction[entry_index, r_idx] = energy / total if total > 0 else 0.0
+        for t_idx, threshold in enumerate(tau):
+            significant = corr_valid >= float(threshold)
+            far_significant = far_mask & significant
+            far_noise = far_mask & ~significant
+            far_sig_energy[entry_index, t_idx] = float(np.sum(corr_valid[far_significant]))
+            far_noise_energy[entry_index, t_idx] = float(np.sum(corr_valid[far_noise]))
+            far_sig_count[entry_index, t_idx] = int(np.count_nonzero(far_significant))
+            far_noise_count[entry_index, t_idx] = int(np.count_nonzero(far_noise))
+
+            component_rows.extend(
+                _component_rows_for_entry(
+                    corr=corr_valid,
+                    significant_mask=significant & valid_mask,
+                    radius_map=radius_map,
+                    entry_index=entry_index,
+                    tau=float(threshold),
+                    far_field_radius=float(far_field_radius),
+                    min_component_area=int(min_component_area),
+                    connectivity=int(connectivity),
+                    mask_id=survey.mask_ids[entry_index],
+                    wavelength_nm=survey.wavelengths_nm[entry_index],
+                )
+            )
+
+    manifest = PeakSupportAnalysisManifest(
+        report_id=report_id or out_path.with_suffix("").name,
+        source_survey_h5=str(source_path),
+        frame_shape=survey.frame_shape,
+        coordinate_frame=survey.coordinate_frame,
+        camera_frame_extent=survey.camera_frame_extent,
+        tau_values=tau,
+        support_radii=radii,
+        bg_policy={
+            "method": "percentile",
+            "percentile": float(bg_percentile),
+            "domain": "valid_pixels",
+        },
+        corr_policy={
+            "formula": "corr = max(psf - bg, 0)",
+            "negative_values": "clipped_to_zero",
+            "full_frame_apparent_cumulative_energy_is_not_support_selection": True,
+            "p99_display_tail_normalization_is_visualization_only": True,
+        },
+        radial_policy={
+            "center_policy": center_policy,
+            "far_field_radius": float(far_field_radius),
+            "support_radii": radii,
+        },
+        component_policy={
+            "threshold_source": "corr >= tau",
+            "min_component_area": int(min_component_area),
+            "connectivity": int(connectivity),
+        },
+        entry_mask_ids=survey.mask_ids,
+        entry_wavelengths_nm=survey.wavelengths_nm,
+        notes=notes,
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_report_h5(
+        out_path,
+        manifest=manifest,
+        source_survey_h5=str(source_path),
+        tau_values=tau,
+        support_radii=radii,
+        background=background,
+        center_xy=center_xy,
+        total_corr_energy=total_corr_energy,
+        compact_energy=compact_energy,
+        compact_fraction=compact_fraction,
+        far_noise_energy=far_noise_energy,
+        far_sig_energy=far_sig_energy,
+        far_noise_count=far_noise_count,
+        far_sig_count=far_sig_count,
+        component_rows=component_rows,
+    )
+    return manifest
+
+
+def load_full_frame_psf_survey(path: str | Path, *, allow_raw_fallback: bool = False) -> SurveyData:
+    source_path = Path(path)
+    with h5py.File(str(source_path), "r") as f:
+        if "full_frame_survey/frames_avg" in f:
+            frames = np.asarray(f["full_frame_survey/frames_avg"], dtype=np.float64)
+            group = f["full_frame_survey"]
+            mask_ids = _read_survey_mask_ids(f, group, frames.shape[0])
+            wavelengths = _read_survey_wavelengths(f, group, frames.shape[0])
+            survey_manifest = _read_json_dataset_or_attr(group, "manifest_json")
+            extent = _read_json_dataset_or_attr(group, "camera_frame_extent_json")
+            if not extent and isinstance(survey_manifest.get("camera_frame_extent"), dict):
+                extent = dict(survey_manifest["camera_frame_extent"])
+            coordinate_frame = _coordinate_frame_from_manifest_or_extent(survey_manifest, extent)
+        elif allow_raw_fallback and "raw/frames_avg" in f:
+            frames = np.asarray(f["raw/frames_avg"], dtype=np.float64)
+            group = f["raw"]
+            mask_ids = _read_dataset_strings(f, "raw/mask_id", frames.shape[0], "entry")
+            wavelengths = _read_raw_wavelengths(f, frames.shape[0])
+            coordinate_frame = "acquired_frame"
+            extent = {}
+        else:
+            raise DiffractionSupportAnalysisError(
+                "support analysis requires full_frame_survey/frames_avg; pass "
+                "allow_raw_fallback=True only for legacy/dev raw/frames_avg inputs"
+            )
+    frames = _normalize_frames(frames)
+    frame_shape = (int(frames.shape[1]), int(frames.shape[2]))
+    if not extent:
+        extent = {
+            "mode": "unknown",
+            "origin_xy": [0, 0],
+            "shape_hw": [int(frame_shape[0]), int(frame_shape[1])],
+            "sensor_shape_hw": None,
+        }
+    if coordinate_frame not in {"sensor_full_frame", "acquired_frame"}:
+        coordinate_frame = _coordinate_frame_from_extent(extent)
+    if len(mask_ids) != frames.shape[0]:
+        raise DiffractionSupportAnalysisError("mask id count does not match frame count")
+    if len(wavelengths) != frames.shape[0]:
+        raise DiffractionSupportAnalysisError("wavelength count does not match frame count")
+    return SurveyData(
+        frames=frames,
+        mask_ids=mask_ids,
+        wavelengths_nm=wavelengths,
+        frame_shape=frame_shape,
+        coordinate_frame=coordinate_frame,
+        camera_frame_extent=extent,
+    )
+
+
+def propose_peak_supports_from_report(
+    report_h5: str | Path,
+    *,
+    tau: float,
+    padding: int = 8,
+    snap_sizes: tuple[int, ...] = (64, 128, 256),
+    merge_overlapping: bool = True,
+    far_field_only: bool = False,
+) -> list[dict[str, Any]]:
+    rows = _read_component_rows(report_h5)
+    frame_h, frame_w = _read_report_frame_shape(report_h5)
+    selected = [
+        row for row in rows
+        if np.isclose(float(row["tau"]), float(tau), rtol=0.0, atol=1e-12)
+        and (not far_field_only or bool(row["is_far_field"]))
+    ]
+    boxes: list[dict[str, Any]] = []
+    for row in selected:
+        x0, y0, x1, y1 = [int(v) for v in row["bbox_xyxy"]]
+        boxes.append(
+            {
+                "source_component_ids": [int(row["component_id"])],
+                "source_component_keys": [_component_key(row)],
+                "entry_indices": [int(row["entry_index"])],
+                "bbox_xyxy": _clip_box_to_frame(
+                    [x0 - padding, y0 - padding, x1 + padding, y1 + padding],
+                    frame_shape_hw=(frame_h, frame_w),
+                ),
+                "energy_score": float(row["energy"]),
+                "area_cost": 0.0,
+                "support_tau": float(tau),
+            }
+        )
+    if merge_overlapping:
+        boxes = _merge_overlapping_boxes(boxes)
+    candidates: list[dict[str, Any]] = []
+    for idx, box in enumerate(boxes):
+        x0, y0, x1, y1 = box["bbox_xyxy"]
+        width = max(1, int(x1) - int(x0))
+        height = max(1, int(y1) - int(y0))
+        raw_patch_h = _snap_size(height, snap_sizes)
+        raw_patch_w = _snap_size(width, snap_sizes)
+        patch_h = min(int(raw_patch_h), int(frame_h))
+        patch_w = min(int(raw_patch_w), int(frame_w))
+        cx = (float(x0) + float(x1)) / 2.0
+        cy = (float(y0) + float(y1)) / 2.0
+        origin_x = _clamp_int(int(round(cx - patch_w / 2.0)), 0, max(0, frame_w - patch_w))
+        origin_y = _clamp_int(int(round(cy - patch_h / 2.0)), 0, max(0, frame_h - patch_h))
+        candidates.append(
+            {
+                "candidate_id": f"support_{idx:04d}",
+                "artifact_type": "candidate_support",
+                "not_a_peak_layout_profile": True,
+                "source_component_ids": box["source_component_ids"],
+                "source_component_keys": [_component_key_to_dict(key) for key in box["source_component_keys"]],
+                "bbox_xyxy": [int(x0), int(y0), int(x1), int(y1)],
+                "patch_origin_xy": [origin_x, origin_y],
+                "patch_shape_hw": [int(patch_h), int(patch_w)],
+                "patch_clipped_to_frame": bool(raw_patch_h > frame_h or raw_patch_w > frame_w),
+                "support_tau": float(tau),
+                "support_radius_class": "far_field" if far_field_only else "all_components",
+                "stability_score": None,
+                "energy_score": float(box["energy_score"]),
+                "area_cost": float(patch_h * patch_w),
+            }
+        )
+    return candidates
+
+
+def _validate_parameters(
+    *,
+    tau_values: list[float],
+    support_radii: list[float],
+    far_field_radius: float,
+    bg_percentile: float,
+    min_component_area: int,
+    connectivity: int,
+    center_policy: str,
+) -> None:
+    if not tau_values or any(float(x) < 0.0 for x in tau_values):
+        raise DiffractionSupportAnalysisError("tau_values must be non-empty and non-negative")
+    if not support_radii or any(float(x) <= 0.0 for x in support_radii):
+        raise DiffractionSupportAnalysisError("support_radii must be non-empty and positive")
+    if float(far_field_radius) <= 0.0:
+        raise DiffractionSupportAnalysisError("far_field_radius must be positive")
+    if not (0.0 <= float(bg_percentile) <= 100.0):
+        raise DiffractionSupportAnalysisError("bg_percentile must be in [0, 100]")
+    if int(min_component_area) <= 0:
+        raise DiffractionSupportAnalysisError("min_component_area must be > 0")
+    if int(connectivity) not in (4, 8):
+        raise DiffractionSupportAnalysisError("connectivity must be 4 or 8")
+    if center_policy not in {"frame_center", "manual_xy", "brightest_component"}:
+        raise DiffractionSupportAnalysisError("unsupported center_policy")
+
+
+def _component_rows_for_entry(
+    *,
+    corr: np.ndarray,
+    significant_mask: np.ndarray,
+    radius_map: np.ndarray,
+    entry_index: int,
+    tau: float,
+    far_field_radius: float,
+    min_component_area: int,
+    connectivity: int,
+    mask_id: str,
+    wavelength_nm: float,
+) -> list[dict[str, Any]]:
+    labels = _connected_components(significant_mask, connectivity=connectivity)
+    rows: list[dict[str, Any]] = []
+    for component_id, coords in enumerate(labels):
+        if coords.shape[0] < min_component_area:
+            continue
+        yy = coords[:, 0]
+        xx = coords[:, 1]
+        values = corr[yy, xx]
+        radii = radius_map[yy, xx]
+        energy = float(np.sum(values))
+        area = int(coords.shape[0])
+        rows.append(
+            {
+                "entry_index": int(entry_index),
+                "tau": float(tau),
+                "component_id": int(component_id),
+                "bbox_xyxy": [
+                    int(np.min(xx)),
+                    int(np.min(yy)),
+                    int(np.max(xx)) + 1,
+                    int(np.max(yy)) + 1,
+                ],
+                "centroid_xy": [
+                    float(np.sum(xx * values) / energy) if energy > 0 else float(np.mean(xx)),
+                    float(np.sum(yy * values) / energy) if energy > 0 else float(np.mean(yy)),
+                ],
+                "area": area,
+                "energy": energy,
+                "peak_value": float(np.max(values)) if values.size else 0.0,
+                "mean_value": float(np.mean(values)) if values.size else 0.0,
+                "max_radius": float(np.max(radii)) if radii.size else 0.0,
+                "is_far_field": bool(np.max(radii) >= far_field_radius) if radii.size else False,
+                "mask_id": str(mask_id),
+                "wavelength_nm": float(wavelength_nm),
+            }
+        )
+    return rows
+
+
+def _connected_components(mask: np.ndarray, *, connectivity: int) -> list[np.ndarray]:
+    arr = np.asarray(mask, dtype=bool)
+    visited = np.zeros(arr.shape, dtype=bool)
+    h, w = arr.shape
+    if connectivity == 4:
+        neighbors = [(-1, 0), (0, -1), (0, 1), (1, 0)]
+    else:
+        neighbors = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    components: list[np.ndarray] = []
+    starts = np.argwhere(arr & ~visited)
+    for start_y, start_x in starts:
+        if visited[start_y, start_x] or not arr[start_y, start_x]:
+            continue
+        q: deque[tuple[int, int]] = deque([(int(start_y), int(start_x))])
+        visited[start_y, start_x] = True
+        coords: list[tuple[int, int]] = []
+        while q:
+            y, x = q.popleft()
+            coords.append((y, x))
+            for dy, dx in neighbors:
+                ny = y + dy
+                nx = x + dx
+                if 0 <= ny < h and 0 <= nx < w and arr[ny, nx] and not visited[ny, nx]:
+                    visited[ny, nx] = True
+                    q.append((ny, nx))
+        components.append(np.asarray(coords, dtype=np.int64))
+    return components
+
+
+def _write_report_h5(
+    path: Path,
+    *,
+    manifest: PeakSupportAnalysisManifest,
+    source_survey_h5: str,
+    tau_values: list[float],
+    support_radii: list[float],
+    background: np.ndarray,
+    center_xy: np.ndarray,
+    total_corr_energy: np.ndarray,
+    compact_energy: np.ndarray,
+    compact_fraction: np.ndarray,
+    far_noise_energy: np.ndarray,
+    far_sig_energy: np.ndarray,
+    far_noise_count: np.ndarray,
+    far_sig_count: np.ndarray,
+    component_rows: list[dict[str, Any]],
+) -> None:
+    string_dtype = h5py.string_dtype(encoding="utf-8")
+    with h5py.File(str(path), "w") as f:
+        support = f.require_group("support_analysis")
+        support.create_dataset("tau_values", data=np.asarray(tau_values, dtype=np.float64))
+        support.create_dataset("support_radii", data=np.asarray(support_radii, dtype=np.float64))
+        support.create_dataset("frame_shape", data=np.asarray(manifest.frame_shape, dtype=np.int64))
+        support.create_dataset("background_value", data=background)
+        support.create_dataset("center_xy", data=center_xy)
+        support.create_dataset("total_corr_energy", data=total_corr_energy)
+        support.create_dataset("compact_support_energy", data=compact_energy)
+        support.create_dataset("compact_support_fraction", data=compact_fraction)
+        support.create_dataset("far_field_noise_energy", data=far_noise_energy)
+        support.create_dataset("far_field_significant_energy", data=far_sig_energy)
+        support.create_dataset("far_field_noise_pixel_count", data=far_noise_count)
+        support.create_dataset("far_field_significant_pixel_count", data=far_sig_count)
+
+        comp = f.require_group("components")
+        n_comp = len(component_rows)
+        comp.create_dataset("entry_index", data=np.asarray([r["entry_index"] for r in component_rows], dtype=np.int64))
+        comp.create_dataset("tau", data=np.asarray([r["tau"] for r in component_rows], dtype=np.float64))
+        comp.create_dataset("component_id", data=np.asarray([r["component_id"] for r in component_rows], dtype=np.int64))
+        comp.create_dataset(
+            "bbox_xyxy",
+            data=np.asarray([r["bbox_xyxy"] for r in component_rows], dtype=np.int64).reshape((n_comp, 4)),
+        )
+        comp.create_dataset(
+            "centroid_xy",
+            data=np.asarray([r["centroid_xy"] for r in component_rows], dtype=np.float64).reshape((n_comp, 2)),
+        )
+        comp.create_dataset("area", data=np.asarray([r["area"] for r in component_rows], dtype=np.int64))
+        comp.create_dataset("energy", data=np.asarray([r["energy"] for r in component_rows], dtype=np.float64))
+        comp.create_dataset("peak_value", data=np.asarray([r["peak_value"] for r in component_rows], dtype=np.float64))
+        comp.create_dataset("mean_value", data=np.asarray([r["mean_value"] for r in component_rows], dtype=np.float64))
+        comp.create_dataset("max_radius", data=np.asarray([r["max_radius"] for r in component_rows], dtype=np.float64))
+        comp.create_dataset("is_far_field", data=np.asarray([r["is_far_field"] for r in component_rows], dtype=np.bool_))
+        comp.create_dataset(
+            "mask_id",
+            data=np.asarray([r["mask_id"] for r in component_rows], dtype=object),
+            dtype=string_dtype,
+        )
+        comp.create_dataset(
+            "wavelength_nm",
+            data=np.asarray([r["wavelength_nm"] for r in component_rows], dtype=np.float64),
+        )
+
+        metadata = f.require_group("metadata")
+        metadata.create_dataset("manifest_json", data=manifest.to_json_text(), dtype=string_dtype)
+        source = f.require_group("source")
+        source.create_dataset("survey_h5", data=str(source_survey_h5), dtype=string_dtype)
+
+
+def _read_component_rows(report_h5: str | Path) -> list[dict[str, Any]]:
+    with h5py.File(str(report_h5), "r") as f:
+        comp = f["components"]
+        n = int(comp["entry_index"].shape[0])
+        rows: list[dict[str, Any]] = []
+        for i in range(n):
+            rows.append(
+                {
+                    "entry_index": int(comp["entry_index"][i]),
+                    "tau": float(comp["tau"][i]),
+                    "component_id": int(comp["component_id"][i]),
+                    "bbox_xyxy": [int(v) for v in comp["bbox_xyxy"][i]],
+                    "centroid_xy": [float(v) for v in comp["centroid_xy"][i]],
+                    "area": int(comp["area"][i]),
+                    "energy": float(comp["energy"][i]),
+                    "peak_value": float(comp["peak_value"][i]),
+                    "mean_value": float(comp["mean_value"][i]),
+                    "max_radius": float(comp["max_radius"][i]),
+                    "is_far_field": bool(comp["is_far_field"][i]),
+                    "mask_id": _decode(comp["mask_id"][i]),
+                    "wavelength_nm": float(comp["wavelength_nm"][i]),
+                }
+            )
+    return rows
+
+
+def _read_report_frame_shape(report_h5: str | Path) -> tuple[int, int]:
+    with h5py.File(str(report_h5), "r") as f:
+        if "support_analysis/frame_shape" in f:
+            return _int_pair(f["support_analysis/frame_shape"][()].tolist(), "support_analysis/frame_shape")
+        if "metadata/manifest_json" in f:
+            manifest = json.loads(_decode(f["metadata/manifest_json"][()]))
+            return _int_pair(manifest["frame_shape"], "metadata/manifest_json.frame_shape")
+    raise DiffractionSupportAnalysisError("support report is missing frame_shape")
+
+
+def _normalize_frames(frames: np.ndarray) -> np.ndarray:
+    arr = np.asarray(frames, dtype=np.float64)
+    if arr.ndim == 2:
+        return arr[np.newaxis, :, :]
+    if arr.ndim == 3:
+        return arr
+    raise DiffractionSupportAnalysisError(f"survey frames must be 2D or 3D, got {arr.shape}")
+
+
+def _read_survey_mask_ids(f: h5py.File, group: h5py.Group, n: int) -> list[str]:
+    for path in ("full_frame_survey/entry_mask_id", "full_frame_survey/entry_mask_ids", "full_frame_survey/mask_id"):
+        if path in f:
+            return _read_dataset_strings(f, path, n, "entry")
+    for index_name in ("mask_index", "entry_mask_index"):
+        if index_name in group and "unique_mask_ids" in group:
+            indices = np.asarray(group[index_name], dtype=np.int64)
+            unique = [_decode(x) for x in group["unique_mask_ids"][()]]
+            return [unique[int(i)] for i in indices]
+    if "capture/mask_index" in f and "masks/mask_id" in f:
+        indices = np.asarray(f["capture/mask_index"], dtype=np.int64)
+        unique = [_decode(x) for x in f["masks/mask_id"][()]]
+        return [unique[int(i)] for i in indices[:n]]
+    manifest = _read_json_dataset_or_attr(group, "manifest_json")
+    if isinstance(manifest.get("entry_mask_ids"), list):
+        return [str(x) for x in manifest["entry_mask_ids"]]
+    return [f"entry_{i:04d}" for i in range(n)]
+
+
+def _read_survey_wavelengths(f: h5py.File, group: h5py.Group, n: int) -> list[float]:
+    for name in ("entry_wavelength_nm", "entry_wavelengths_nm", "wavelength_nm"):
+        if name in group:
+            arr = np.asarray(group[name], dtype=np.float64)
+            return [float(x) for x in arr[:n]]
+    if "wavelength_index" in group and "unique_wavelength_nm" in group:
+        indices = np.asarray(group["wavelength_index"], dtype=np.int64)
+        unique = np.asarray(group["unique_wavelength_nm"], dtype=np.float64)
+        return [float(unique[int(i)]) for i in indices[:n]]
+    if "capture/wavelength_index" in f and "tls/wavelength_nm" in f:
+        indices = np.asarray(f["capture/wavelength_index"], dtype=np.int64)
+        unique = np.asarray(f["tls/wavelength_nm"], dtype=np.float64)
+        return [float(unique[int(i)]) for i in indices[:n]]
+    manifest = _read_json_dataset_or_attr(group, "manifest_json")
+    if isinstance(manifest.get("entry_wavelengths_nm"), list):
+        return [float(x) for x in manifest["entry_wavelengths_nm"]]
+    return [float("nan") for _ in range(n)]
+
+
+def _read_raw_wavelengths(f: h5py.File, n: int) -> list[float]:
+    if "raw/wavelength_nm" in f:
+        return [float(x) for x in np.asarray(f["raw/wavelength_nm"], dtype=np.float64)[:n]]
+    if "raw/wavelength_index" in f and "capture/plan_json" in f:
+        plan = _read_json_dataset(f, "capture/plan_json")
+        wavelengths = plan.get("wavelengths")
+        if isinstance(wavelengths, list) and wavelengths:
+            unique = [float(item["wavelength_nm"]) for item in wavelengths]
+            indices = np.asarray(f["raw/wavelength_index"], dtype=np.int64)
+            return [unique[int(i)] for i in indices[:n]]
+        wavelength = plan.get("wavelength")
+        if isinstance(wavelength, dict) and wavelength.get("wavelength_nm") is not None:
+            return [float(wavelength["wavelength_nm"]) for _ in range(n)]
+    return [float("nan") for _ in range(n)]
+
+
+def _coordinate_frame_from_manifest_or_extent(
+    manifest: dict[str, Any],
+    extent: dict[str, Any],
+) -> str:
+    value = manifest.get("coordinate_frame")
+    if isinstance(value, str) and value in {"sensor_full_frame", "acquired_frame"}:
+        return value
+    return _coordinate_frame_from_extent(extent)
+
+
+def _coordinate_frame_from_extent(extent: dict[str, Any]) -> str:
+    if extent.get("mode") == "full_sensor":
+        return "sensor_full_frame"
+    return "acquired_frame"
+
+
+def _read_dataset_strings(f: h5py.File, path: str, n: int, fallback_prefix: str) -> list[str]:
+    if path not in f:
+        return [f"{fallback_prefix}_{i:04d}" for i in range(n)]
+    values = f[path][()]
+    return [_decode(x) for x in values[:n]]
+
+
+def _read_json_dataset(f: h5py.File, path: str) -> dict[str, Any]:
+    value = f[path][()]
+    text = _decode(value)
+    return json.loads(text) if text else {}
+
+
+def _read_json_dataset_or_attr(group: h5py.Group, name: str) -> dict[str, Any]:
+    if name in group:
+        value = group[name][()]
+        text = _decode(value)
+        return json.loads(text) if text else {}
+    if name in group.attrs:
+        text = _decode(group.attrs[name])
+        return json.loads(text) if text else {}
+    return {}
+
+
+def _valid_pixel_mask(shape: tuple[int, int], valid_pixel_domain: dict[str, Any] | None) -> np.ndarray:
+    mask = np.ones((int(shape[0]), int(shape[1])), dtype=bool)
+    if not valid_pixel_domain:
+        return mask
+    policy_type = str(valid_pixel_domain.get("type") or "full_frame")
+    if policy_type == "full_frame":
+        return mask
+    if policy_type == "exclude_top_rows":
+        top_rows = int(valid_pixel_domain.get("top_rows", 0))
+        if top_rows > 0:
+            mask[:top_rows, :] = False
+        return mask
+    raise DiffractionSupportAnalysisError(f"unsupported valid_pixel_domain.type: {policy_type}")
+
+
+def _resolve_center_xy(
+    corr: np.ndarray,
+    valid_mask: np.ndarray,
+    center_policy: str,
+    manual_center_xy: tuple[float, float] | None,
+) -> tuple[float, float]:
+    h, w = corr.shape
+    if center_policy == "frame_center":
+        return ((float(w) - 1.0) / 2.0, (float(h) - 1.0) / 2.0)
+    if center_policy == "manual_xy":
+        if manual_center_xy is None:
+            raise DiffractionSupportAnalysisError("manual_center_xy is required for center_policy='manual_xy'")
+        return (float(manual_center_xy[0]), float(manual_center_xy[1]))
+    if center_policy == "brightest_component":
+        peak_eval = np.where(valid_mask, corr, -np.inf)
+        y, x = np.unravel_index(int(np.argmax(peak_eval)), peak_eval.shape)
+        return (float(x), float(y))
+    raise DiffractionSupportAnalysisError(f"unsupported center_policy: {center_policy}")
+
+
+def _radius_map(shape: tuple[int, int], center_xy: tuple[float, float]) -> np.ndarray:
+    h, w = int(shape[0]), int(shape[1])
+    cx, cy = float(center_xy[0]), float(center_xy[1])
+    yy, xx = np.ogrid[:h, :w]
+    return np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+
+
+def _merge_overlapping_boxes(boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for box in boxes:
+        current = dict(box)
+        changed = True
+        while changed:
+            changed = False
+            keep: list[dict[str, Any]] = []
+            for other in merged:
+                if _boxes_overlap(current["bbox_xyxy"], other["bbox_xyxy"]):
+                    current["bbox_xyxy"] = _union_box(current["bbox_xyxy"], other["bbox_xyxy"])
+                    current["source_component_ids"] = sorted(
+                        set(current["source_component_ids"] + other["source_component_ids"])
+                    )
+                    current["source_component_keys"] = sorted(
+                        set(current["source_component_keys"] + other["source_component_keys"])
+                    )
+                    current["entry_indices"] = sorted(set(current["entry_indices"] + other["entry_indices"]))
+                    current["energy_score"] = float(current["energy_score"]) + float(other["energy_score"])
+                    changed = True
+                else:
+                    keep.append(other)
+            merged = keep
+        merged.append(current)
+    return merged
+
+
+def _boxes_overlap(a: list[int], b: list[int]) -> bool:
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+def _union_box(a: list[int], b: list[int]) -> list[int]:
+    return [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
+
+
+def _clip_box_to_frame(box: list[int], *, frame_shape_hw: tuple[int, int]) -> list[int]:
+    h, w = int(frame_shape_hw[0]), int(frame_shape_hw[1])
+    x0, y0, x1, y1 = [int(v) for v in box]
+    clipped = [
+        _clamp_int(x0, 0, w),
+        _clamp_int(y0, 0, h),
+        _clamp_int(x1, 0, w),
+        _clamp_int(y1, 0, h),
+    ]
+    if clipped[2] <= clipped[0]:
+        clipped[2] = min(w, clipped[0] + 1)
+    if clipped[3] <= clipped[1]:
+        clipped[3] = min(h, clipped[1] + 1)
+    return clipped
+
+
+def _clamp_int(value: int, low: int, high: int) -> int:
+    return max(int(low), min(int(high), int(value)))
+
+
+def _component_key(row: dict[str, Any]) -> tuple[int, float, int]:
+    return (int(row["entry_index"]), float(row["tau"]), int(row["component_id"]))
+
+
+def _component_key_to_dict(key: tuple[int, float, int]) -> dict[str, Any]:
+    return {
+        "entry_index": int(key[0]),
+        "tau": float(key[1]),
+        "component_id": int(key[2]),
+    }
+
+
+def _snap_size(value: int, snap_sizes: tuple[int, ...]) -> int:
+    for size in sorted(int(x) for x in snap_sizes):
+        if value <= size:
+            return size
+    return int(max(snap_sizes))
+
+
+def _decode(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    if isinstance(value, np.bytes_):
+        return value.tobytes().decode("utf-8")
+    return str(value)
+
+
+def _int_pair(value: Any, name: str) -> tuple[int, int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise DiffractionSupportAnalysisError(f"{name} must be a pair")
+    return (int(value[0]), int(value[1]))

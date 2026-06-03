@@ -17,6 +17,12 @@ from .derive_peak_layout_profile import (
     PeakLayoutProfileManifest,
     derive_peak_layout_profile,
 )
+from .analyze_diffraction_support import (
+    DiffractionSupportAnalysisError,
+    PeakSupportAnalysisManifest,
+    analyze_diffraction_support,
+    propose_peak_supports_from_report,
+)
 from .export_peak_patch_dictionary_to_lcd_forward import (
     PeakPatchDictionaryExportError,
     export_peak_patch_dictionary_to_lcd_forward,
@@ -29,6 +35,7 @@ from .profile_requirements import (
 
 __all__ = [
     "CompactDenseExportError",
+    "DiffractionSupportAnalysisError",
     "FullFramePSFSurveyError",
     "FullFramePSFSurveyManifest",
     "PeakLayoutProfileError",
@@ -36,11 +43,14 @@ __all__ = [
     "PeakPatchDictionaryExportError",
     "PeakPatchPSFDictionaryError",
     "PeakPatchPSFDictionaryManifest",
+    "PeakSupportAnalysisManifest",
     "ProfileDependencyError",
+    "analyze_diffraction_support",
     "build_full_frame_psf_survey",
     "build_peak_patch_psf_dictionary",
     "derive_peak_layout_profile",
     "export_peak_patch_dictionary_to_lcd_forward",
+    "propose_peak_supports_from_report",
     "render_peak_patch_dense_view",
     "validate_broadband_pupil_scan_dependencies",
     "validate_psf_profile_dependencies",
