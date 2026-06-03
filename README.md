@@ -146,154 +146,45 @@ masks:   [N, T, 1, Hm, Wm]
 
 ## Development roadmap
 
-### Phase 0  --  Documentation and boundary reset
+The active roadmap is maintained in [`docs/roadmap.md`](docs/roadmap.md).
+Completed Phase 0/1/2 implementation details and hardware-smoke evidence are
+preserved in [`docs/completed_phases.md`](docs/completed_phases.md).
 
-**Complete.**  (See `docs/architecture.md`, `docs/roadmap.md`, `tasks/README.md`, `AGENTS.md`.)
-
-Goals:
-
-* redefine `optic_system` as the hardware-control and synchronized-capture frontend
-* replace old prototype-stage constraints
-* clarify that neural training belongs to `LCD_forward`
-* mark old experimental tasks as legacy unless audited
-* document TLS SDK backend replacement
-* prepare Codex / AGENT for staged implementation
-
-Expected outputs:
-
-* updated `README.md`
-* updated `AGENTS.md`
-* optional `docs/architecture.md`
-* optional `docs/roadmap.md`
-* optional `tasks/README.md`
-
-### Phase 1  --  TLS SDK integration closure
-
-**Complete.**  `tls_c1` is the sole active TLS backend.  Use `--enable-tls` to
-assemble `TLSService` and inject it into `SessionController`.  An optional
-`TLSPanel` provides GUI control (connect / disconnect / set grating / set
-wavelength / move / refresh).  Pywinauto TLS automation is fully removed from
-active code paths.  All default tests are hardware-free.
-
-### Phase 2A  --  Minimal capture task layer
-
-**Implemented.**  Modules `tasks/capture_plan.py`, `tasks/raw_capture_h5.py`,
-`tasks/capture_forward_dataset.py` provide the minimal capture path.  The CLI
-entry point is `scripts/capture_forward_dataset.py`.
-
-The capture task supports:
+Current stage:
 
 ```text
-load capture plan
-initialize camera / LCD / optional TLS
-for each wavelength:
-    set TLS wavelength
-    move and wait until idle
-    for each mask:
-        show LCD mono mask
-        wait settle_ms
-        acquire K frames
-        average or store burst
-        save frame data and metadata
-write raw capture HDF5
+Phase 3.5C -- real-data operationalization and support stability audit.
 ```
 
-Modules and tests:
+Completed baseline:
 
 ```text
-tasks/capture_plan.py              capture plan dataclasses + JSON/YAML loading
-tasks/raw_capture_h5.py            incremental raw HDF5 writer (context manager)
-tasks/capture_forward_dataset.py   orchestration + CaptureDeviceBundle protocol
-scripts/capture_forward_dataset.py thin CLI entry point
+Phase 2 -- minimal hardware capture layer.
+Phase 3.5A -- full-frame scout -> peak layout -> fixed-size peak-patch dictionary data contract.
+Phase 3.5B -- first-pass diffraction support analysis report.
 ```
 
-Tests: `tests/test_capture_plan.py`, `tests/test_raw_capture_h5.py`,
-`tests/test_capture_forward_dataset_dry_run.py`.
-
-#### CLI usage
-
-Dry-run (no hardware required)::
-
-```bash
-python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --dry-run
-```
-
-Hardware mode (explicit opt-in)::
-
-```bash
-python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --hardware --enable-tls
-```
-
-With explicit LCD configuration::
-
-```bash
-python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --hardware \
-  --lcd-display-index 1 --lcd-subpixel-axis 1 --enable-tls
-```
-
-See `docs/hardware_smoke.md` for complete hardware setup and environment variables.
-
-### Phase 2B  --  Hardware smoke capture validation
-
-**Implemented for current local hardware.**  Validates that the Phase 2 capture
-task can control the real camera, mono LCD, and optional TLS in a deterministic
-sequence and produce ``raw_capture.h5`` with valid structure and metadata.
-
-See `docs/hardware_smoke.md` for the full hardware capture guide, including
-exact commands, environment variables, LCD identity model, and failure modes.
-
-New modules:
+The current mainline data-artifact paths are:
 
 ```text
-plans/hardware_smoke_no_tls.yaml       capture plan: camera + LCD
-plans/hardware_smoke_with_tls.yaml     capture plan: camera + LCD + TLS
-scripts/make_smoke_masks.py            generate [H,3W]/[3H,W] .npy masks
-scripts/inspect_raw_capture.py         print HDF5 structure and metadata
-tests/test_phase2_hardware_smoke.py    5 opt-in hardware smoke tests
-tests/test_lcd_service.py              axis-aware mono↔RGB roundtrip tests
+FullFramePSFSurvey
+  -> first-pass PeakLayoutProfile
+  -> fixed-size PeakPatchPSFDictionary
+
+FullFramePSFSurvey
+  -> PeakSupportAnalysisReport
+  -> future SupportCandidateStabilityReport
+  -> future AdaptivePeakLayoutProfile
+  -> future AdaptivePeakClusterPSFDictionary
 ```
 
-**Important:** Raw captures produced by Phase 2B are not scientifically
-calibrated data.  ``processing_flags_json`` always records::
+The fixed-size `PeakPatchPSFDictionary` is a v1 compatibility baseline. The
+medium-term representation target is an adaptive peak-cluster dictionary where
+each real diffraction peak cluster has its own support, coordinates, and local
+raw data.
 
-```json
-{
-  "scientific_calibration_valid": false,
-  "optical_alignment_validated":   false,
-  "training_ready":                false,
-  "phase":                         "phase2_minimal_capture"
-}
-```
-
-### Phase 2C -- GUI / diagnostics / architecture consolidation
-
-**In progress.**
-
-After Phase 2B proved that the camera, mono LCD, and optional TLS can be
-controlled in a deterministic capture sequence, the mainline entered an
-architecture-consolidation stage.
-
-This phase focuses on reducing duplicated entry points, clarifying GUI roles,
-and stabilizing file-only diagnostics for long-running capture tasks.
-
-Goals:
-
-* keep `app/main_gui.py` as the manual/debug control GUI
-* keep `scripts/monitor_run_status.py` as the only supported read-only monitor
-* remove unsafe or duplicated monitor paths
-* keep monitor behavior file-only and hardware-free
-* stabilize `RunStatusPublisher` / `RunStatusReader` as the diagnostics boundary
-* reduce legacy task stubs and stale documentation
-* prepare reusable GUI / diagnostics infrastructure for future task branches
-
-Non-goals:
-
-* no dOTF implementation
-* no pupil scan implementation
-* no PSF dictionary implementation
-* no neural training
-* no LCD_forward conversion implementation inside this phase
-* no GenerMask optimization
+Training the peak-cluster forward model, multi-frame reconstruction, and
+differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 
 ### Raw capture HDF5 schema
 
@@ -334,122 +225,25 @@ Non-goals:
 /capture/processing_flags_json scalar str
 ```
 
-### Phase 3  --  Profile-driven experimental capture and LCD_forward conversion
+### Mainline artifact path
 
-**Planned.**
+The mainline no longer treats Phase 3 as one broad bucket containing profile
+calibration, PSF dictionaries, support diagnostics, conversion, and learning
+experiments. The active staged plan is documented in
+[`docs/roadmap.md`](docs/roadmap.md).
 
-This is the long-term mainline Phase 3. It is distinct from the
-bachelor-thesis experimental branch, which has its own thesis-specific
-Phase 3.0--3.7 workflow.
-
-Goal:
-
-Build a profile-driven capture architecture and convert preserved raw captures
-into `LCD_forward` training data.
-
-Phase 3 is split by dependency type:
+In short:
 
 ```text
-Phase 3A: profile-driven experimental calibration
-  PupilProfile
-  CameraProfile
-
-Phase 3B: profile-dependent PSF capture task families
-  full-frame scout capture
-  peak layout profile
-  peak-patch PSF dictionary
-  dOTF diagnostics
-  mask-family PSF capture
-
-Phase 3C: raw-to-LCD_forward conversion
-  peak-patch dictionary export
-  PSF stack construction
-  metadata transfer
+Phase 3   -- stable capture and profile-aware experimental artifacts
+Phase 3.5 -- support-aware peak-cluster preparation
+Phase 3.6 -- adaptive peak-cluster PSF dictionary
+Phase 4+  -- LCD_forward-side modelling, reconstruction, and optimization
 ```
 
-Phase 3A and Phase 3B are inserted profile phases between Phase 2 capture
-infrastructure and the original raw-to-LCD_forward conversion work. Phase 3C is
-the original conversion layer, now consuming profile-aware raw captures and
-diagnostics. Phase 3A/3B do not execute `LCD_forward` conversion; they prepare
-profile-aware raw captures, full-frame scout data, peak layout profiles, and
-diagnostic artifacts for later conversion.
-
-Important profile rules:
-
-* broadband pupil scan uses broadband passthrough illumination, with TLS /
-  monochromator setpoint `0` recorded as device pass-through state, not as a
-  physical wavelength;
-* PSF-producing tasks depend on per-band camera parameters measured under
-  selected-pupil-open LCD state;
-* full-LCD-open exposure profiles must not be used as the default prerequisite
-  for PSF capture;
-* profile IDs must be recorded in raw capture metadata.
-
-The conversion layer should handle:
-
-* mask downsampling or encoding into `[N, T, 1, Hm, Wm]`
-* peak-patch PSF dictionary export
-* peak table and patch coordinate metadata
-* frame averaging
-* dark / flat correction if available
-* wavelength metadata
-* camera metadata
-* TLS metadata
-* profile metadata transfer
-* train / val / test split
-
-The raw capture format should preserve enough metadata to allow future reprocessing.
-The mainline PSF workflow is full-frame scout capture followed by a
-`PeakLayoutProfile` and a peak-patch PSF dictionary. The full-frame survey is
-calibration scout data. The production dictionary stores peak patches and their
-original sensor coordinates, preserving the geometry needed for sparse
-peak-cluster modelling outside this repository.
-`PeakLayoutProfile` records the survey masks and wavelengths used to derive the
-layout as provenance. Its default validity scope is survey-only unless a later
-audited detector or tracking method expands that scope.
-The thesis branch is treated as an audited source of useful experimental
-lessons, not as a mainline workflow to be merged wholesale.
-
-### Phase 4  --  Family-aware GenerMask calibration and closed-loop experiments
-
-Goal:
-
-Support structured mask-family calibration and controlled optimization loops.
-
-This phase may include:
-
-* GenerMask family registry
-* family-aware calibration plans
-* held-out family generalization checks
-* perturbation robustness audits
-* repeated forward-surrogate retraining
-* controlled mask design experiments
-
-This phase should only begin after Phase 1-3 are stable.
-
-### Bachelor-thesis experimental branch
-
-A separate bachelor-thesis experimental branch starts from the post-Phase-2B
-baseline. It uses the Phase 2 capture infrastructure and periodically receives
-mainline GUI / diagnostics / architecture updates.
-
-That branch owns its own thesis-specific workflow:
-
-```text
-Phase 3.0   branch bootstrap and old-project knowledge migration
-Phase 3.0.5 exposure/gain safety sweep
-Phase 3.1   effective LCD pupil / active region scan
-Phase 3.2   PSF ROI, alignment, and repeatability
-Phase 3.3   dOTF diagnostic
-Phase 3.4   measured PSF dictionary and LCD_forward export
-Phase 3.5   simple forward model validation
-Phase 3.6   three-wavelength multiframe linear reconstruction
-Phase 3.7   thesis figures and report freeze
-```
-
-This thesis workflow does not redefine the mainline roadmap.
-Thesis-specific scripts and plans should stay on the thesis branch unless they
-are explicitly promoted as reusable infrastructure.
+Historical Phase 0/1/2 details are preserved in
+[`docs/completed_phases.md`](docs/completed_phases.md). Thesis-branch phase
+numbers are experimental history and do not define the mainline roadmap.
 
 ## Active scope
 
@@ -673,17 +467,14 @@ The repository currently has:
 
 * camera sidecar / frame stream infrastructure
 * GUI preview path
-* mono LCD display abstraction (axis-aware subpixel model)
-* control-layer architecture (commands / events / state)
-* **completed TLS SDK integration** — tls_c1 via TLSService, SessionController TLS handling, TLSPanel GUI, opt-in TLS hardware smoke tests
-* **completed Phase 2A** — minimal capture task layer with raw HDF5 export, CaptureDeviceBundle protocol, no-hardware tests
-* **completed Phase 2B** — hardware smoke capture validation for current local setup, axis-aware LCDService, opt-in hardware tests, HDF5 metadata audit
-* **Phase 2C in progress** — GUI / diagnostics / architecture consolidation
-* hardware-free test infrastructure for all layers
+* mono LCD display abstraction with axis-aware subpixel model
+* control-layer architecture with commands, events, and state
+* completed minimal hardware capture and raw HDF5 preservation baseline
+* completed full-frame scout -> peak layout -> fixed-size peak-patch dictionary data contract
+* completed first-pass `PeakSupportAnalysisReport`
+* hardware-free default test infrastructure
 
-The repository still needs:
-
-* continuation of Phase 2C consolidation work
-* profile-driven experimental capture and LCD_forward conversion (Phase 3, after Phase 2C stabilization)
-* explicit profile dependencies for calibration and PSF capture (Phase 3A/3B)
-* family-aware GenerMask calibration (Phase 4)
+The active work is Phase 3.5C: real-data support-analysis operationalization and
+support stability audit. Immediate `optic_system` work is limited to measured
+artifact construction and diagnostics. Learning-side forward modelling,
+reconstruction, and mask optimization remain `LCD_forward` responsibilities.

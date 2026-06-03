@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
-from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import h5py
 import numpy as np
+
+try:  # scipy is optional; keep the pure-Python fallback for minimal environments.
+    from scipy import ndimage as _scipy_ndimage
+except Exception:  # pragma: no cover - exercised only when scipy is unavailable.
+    _scipy_ndimage = None
 
 
 DEFAULT_TAU_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]
@@ -386,7 +390,7 @@ def _component_rows_for_entry(
 ) -> list[dict[str, Any]]:
     labels = _connected_components(significant_mask, connectivity=connectivity)
     rows: list[dict[str, Any]] = []
-    for component_id, coords in enumerate(labels):
+    for component_id, coords in labels:
         if coords.shape[0] < min_component_area:
             continue
         yy = coords[:, 0]
@@ -423,7 +427,36 @@ def _component_rows_for_entry(
     return rows
 
 
-def _connected_components(mask: np.ndarray, *, connectivity: int) -> list[np.ndarray]:
+def _connected_components(mask: np.ndarray, *, connectivity: int) -> list[tuple[int, np.ndarray]]:
+    if _scipy_ndimage is not None:
+        return _connected_components_scipy(mask, connectivity=connectivity)
+    return _connected_components_python(mask, connectivity=connectivity)
+
+
+def _connected_components_scipy(mask: np.ndarray, *, connectivity: int) -> list[tuple[int, np.ndarray]]:
+    arr = np.asarray(mask, dtype=bool)
+    if connectivity == 4:
+        structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=bool)
+    else:
+        structure = np.ones((3, 3), dtype=bool)
+    labeled, count = _scipy_ndimage.label(arr, structure=structure)
+    objects = _scipy_ndimage.find_objects(labeled)
+    components: list[tuple[int, np.ndarray]] = []
+    for label_id in range(1, int(count) + 1):
+        obj = objects[label_id - 1]
+        if obj is None:
+            continue
+        local = labeled[obj] == label_id
+        local_coords = np.argwhere(local)
+        y0 = int(obj[0].start)
+        x0 = int(obj[1].start)
+        local_coords[:, 0] += y0
+        local_coords[:, 1] += x0
+        components.append((label_id - 1, local_coords.astype(np.int64, copy=False)))
+    return components
+
+
+def _connected_components_python(mask: np.ndarray, *, connectivity: int) -> list[tuple[int, np.ndarray]]:
     arr = np.asarray(mask, dtype=bool)
     visited = np.zeros(arr.shape, dtype=bool)
     h, w = arr.shape
@@ -431,16 +464,17 @@ def _connected_components(mask: np.ndarray, *, connectivity: int) -> list[np.nda
         neighbors = [(-1, 0), (0, -1), (0, 1), (1, 0)]
     else:
         neighbors = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-    components: list[np.ndarray] = []
+    components: list[tuple[int, np.ndarray]] = []
     starts = np.argwhere(arr & ~visited)
+    component_id = 0
     for start_y, start_x in starts:
         if visited[start_y, start_x] or not arr[start_y, start_x]:
             continue
-        q: deque[tuple[int, int]] = deque([(int(start_y), int(start_x))])
+        q: list[tuple[int, int]] = [(int(start_y), int(start_x))]
         visited[start_y, start_x] = True
         coords: list[tuple[int, int]] = []
         while q:
-            y, x = q.popleft()
+            y, x = q.pop()
             coords.append((y, x))
             for dy, dx in neighbors:
                 ny = y + dy
@@ -448,7 +482,8 @@ def _connected_components(mask: np.ndarray, *, connectivity: int) -> list[np.nda
                 if 0 <= ny < h and 0 <= nx < w and arr[ny, nx] and not visited[ny, nx]:
                     visited[ny, nx] = True
                     q.append((ny, nx))
-        components.append(np.asarray(coords, dtype=np.int64))
+        components.append((component_id, np.asarray(coords, dtype=np.int64)))
+        component_id += 1
     return components
 
 
