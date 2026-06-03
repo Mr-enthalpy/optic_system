@@ -46,6 +46,57 @@ per-cluster model family is fixed, this becomes effectively `O(K)`. This makes
 it possible to model broad, sparse, and stable diffraction structures at finite
 cost.
 
+## Medium-Term Representation Target
+
+The current `PeakPatchPSFDictionary` is a v1 data-contract baseline. It proves
+that `optic_system` can move from a full-frame scout survey to a measured,
+coordinate-preserving peak-patch artifact and export it in a form that
+`LCD_forward` can read. It is not the final PSF representation.
+
+The medium-term target is an `AdaptivePeakClusterPSFDictionary`. In that
+representation, one PSF entry is an indexed collection of physical diffraction
+peak clusters rather than a dense stack of equal-size patches:
+
+```text
+PSF entry
+  -> peak_cluster_0:
+       center_xy
+       support_type
+       radius_px or bbox_xyxy
+       raw_patch
+       support_mask
+       background
+       energy
+       peak_value
+       full-frame coordinate metadata
+  -> peak_cluster_1:
+       ...
+```
+
+Different peak clusters in the same PSF may use different radii, rectangles, or
+support masks. The important unit is not a fixed ROI window; it is a real,
+traceable diffraction support with original full-frame coordinates and local
+raw data. Fixed-size peak patches remain useful as compatibility output, but
+the production scientific representation should preserve adaptive per-cluster
+support.
+
+The staged path is:
+
+```text
+FullFramePSFSurvey
+  -> first-pass PeakLayoutProfile
+  -> fixed-size PeakPatchPSFDictionary baseline
+  -> PeakSupportAnalysisReport
+  -> SupportCandidateStabilityReport
+  -> AdaptivePeakLayoutProfile
+  -> AdaptivePeakClusterPSFDictionary
+```
+
+The support-analysis and stability-audit stages exist to avoid promoting
+apparent full-frame background integration into a peak-cluster layout. Only
+stable, significant diffraction components should become adaptive peak-cluster
+support.
+
 The inverse-problem layer is multi-frame joint reconstruction. The frames should
 not be reconstructed independently and fused afterward. Instead, all frames
 should be written as a single joint observation system. The goal is to use
@@ -70,15 +121,19 @@ non-idealities can be measured, modeled, and optimized.
 ## Repository boundary
 
 `optic_system` supports this route by controlling hardware, preserving raw
-captures, storing full-frame PSF scout surveys, deriving peak layout profiles,
-building peak-patch measured PSF dictionaries, recording metadata and profile
-artifacts, and exporting diagnostics.
+captures, building profile artifacts, storing full-frame PSF scout surveys,
+deriving peak layout profiles, building support reports, building measured
+peak-cluster dictionaries, recording metadata, and exporting diagnostics.
 
 The current peak layout derivation is a replaceable first-pass implementation.
 It provides an auditable threshold-and-component baseline for estimating peak
 patch geometry, not the final peak tracking or diffraction-order modelling
 method. Its detection policy is explicitly marked as a high-energy layout
 baseline because it may miss low-energy but stable far-field diffraction peaks.
+
+`LCD_forward` owns the learning-side work: LCD-to-PSF forward modelling,
+multi-frame rendering, joint reconstruction, and differentiable mask or
+`GenerMask` optimization.
 
 `optic_system` must not train peak-cluster forward models, differentiable
 forward surrogates, reconstruction networks, or mask-optimization loops. Those

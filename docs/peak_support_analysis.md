@@ -64,6 +64,12 @@ connectivity     = 8
 center_policy    = frame_center
 ```
 
+`min_component_area=1` is appropriate for synthetic tests and small diagnostic
+images because it preserves every connected component. It is not a good
+real-data preset for 2048 x 2448 full-frame camera data. Real full-frame
+surveys should use an explicit real-data preset that filters tiny connected
+components before writing the candidate table.
+
 ## HDF5 Layout
 
 ```text
@@ -126,3 +132,40 @@ python scripts/analyze_diffraction_support.py survey.h5 support_analysis.h5
 The report is no-hardware and read-only with respect to the source survey.
 Use `--allow-raw-fallback` only for legacy or development diagnostics that do
 not yet have a `FullFramePSFSurvey` artifact.
+
+## Real-Data Lessons
+
+Issue #62 records the first mainline trial on real Phase 3 full-frame PSF data.
+The useful conclusions are general rules for the mainline pipeline:
+
+- The formal input remains `FullFramePSFSurvey`. Raw HDF5 fallback is useful for
+  legacy diagnostics, but it should not become the production boundary.
+- Synthetic defaults should not be treated as real-data defaults. In
+  2048 x 2448 full-frame data, `min_component_area=1` can generate very large
+  component tables dominated by tiny noise components. Real-data presets should
+  set a practical component-area threshold and record it in the manifest.
+- Large survey-scale files need streaming support. Energy decomposition can be
+  computed entry by entry without loading all frames into memory.
+- Large survey-scale files may also need energy-only mode. This mode computes
+  background, corrected energy, compact support fractions, and far-field
+  noise/significant splits while intentionally skipping the component table.
+- A component table is not a layout. Connected components are raw support
+  evidence and must pass repeat, wavelength, and mask stability audit before
+  they can become layout inputs.
+- `p=0.99` display-tail normalization remains visualization-only, even when it
+  is useful for inspecting real far-field diffraction patterns.
+
+The next artifact after `PeakSupportAnalysisReport` should be a stability audit
+report, not an immediate replacement of `PeakLayoutProfile`.
+
+```text
+PeakSupportAnalysisReport
+  -> SupportCandidateStabilityReport
+  -> AdaptivePeakLayoutProfile
+  -> AdaptivePeakClusterPSFDictionary
+```
+
+The stability audit should aggregate components across repeat, wavelength, and
+mask; estimate centroid stability, energy stability, and hit rate; merge
+consistent components into support candidates; and reject noise-floor or
+unstable components.
