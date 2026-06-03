@@ -19,12 +19,9 @@ def _ensure_sys_path() -> None:
 _ensure_sys_path()
 
 from tasks.psf.analyze_diffraction_support import (  # noqa: E402
-    DEFAULT_BG_PERCENTILE,
-    DEFAULT_CONNECTIVITY,
-    DEFAULT_FAR_FIELD_RADIUS,
-    DEFAULT_MIN_COMPONENT_AREA,
     DEFAULT_SUPPORT_RADII,
     DEFAULT_TAU_VALUES,
+    SUPPORT_ANALYSIS_PRESETS,
     analyze_diffraction_support,
 )
 
@@ -38,10 +35,24 @@ def main() -> int:
     parser.add_argument("--report-id", default=None)
     parser.add_argument("--tau", dest="tau_values", type=float, nargs="+", default=DEFAULT_TAU_VALUES)
     parser.add_argument("--support-radii", type=float, nargs="+", default=DEFAULT_SUPPORT_RADII)
-    parser.add_argument("--far-field-radius", type=float, default=DEFAULT_FAR_FIELD_RADIUS)
-    parser.add_argument("--bg-percentile", type=float, default=DEFAULT_BG_PERCENTILE)
-    parser.add_argument("--min-component-area", type=int, default=DEFAULT_MIN_COMPONENT_AREA)
-    parser.add_argument("--connectivity", type=int, choices=(4, 8), default=DEFAULT_CONNECTIVITY)
+    parser.add_argument("--far-field-radius", type=float, default=None)
+    parser.add_argument("--bg-percentile", type=float, default=None)
+    parser.add_argument("--min-component-area", type=int, default=None)
+    parser.add_argument("--connectivity", type=int, choices=(4, 8), default=None)
+    parser.add_argument(
+        "--preset",
+        choices=sorted(SUPPORT_ANALYSIS_PRESETS),
+        default=None,
+        help=(
+            "Named analysis preset. measured_full_frame_2048 keeps synthetic defaults untouched "
+            "but uses min_component_area=8 unless explicitly overridden."
+        ),
+    )
+    parser.add_argument(
+        "--energy-only",
+        action="store_true",
+        help="Compute energy metrics only and intentionally skip the connected-component table.",
+    )
     parser.add_argument(
         "--allow-raw-fallback",
         action="store_true",
@@ -69,6 +80,8 @@ def main() -> int:
         center_policy=args.center_policy,
         manual_center_xy=tuple(args.manual_center_xy) if args.manual_center_xy is not None else None,
         allow_raw_fallback=bool(args.allow_raw_fallback),
+        energy_only=bool(args.energy_only),
+        preset_name=args.preset,
         notes=args.notes,
     )
     print(manifest.to_json_text())
