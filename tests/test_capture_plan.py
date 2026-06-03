@@ -135,6 +135,14 @@ class TestCapturePlan:
                 "masks": [],
             })
 
+    def test_validate_zero_wavelength_allowed(self) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "p",
+            "wavelengths": [{"wavelength_nm": 0.0}],
+            "masks": [{"mask_id": "m1"}],
+        })
+        assert plan.wavelengths[0].wavelength_nm == 0.0
+
     def test_validate_negative_wavelength_fails(self) -> None:
         with pytest.raises(CapturePlanError, match="wavelength_nm"):
             CapturePlan.from_dict({
@@ -142,6 +150,19 @@ class TestCapturePlan:
                 "wavelengths": [{"wavelength_nm": -1}],
                 "masks": [{"mask_id": "m1"}],
             })
+
+    def test_validate_zero_wavelength_can_coexist_with_positive(self) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "p",
+            "wavelengths": [
+                {"wavelength_nm": 450.0},
+                {"wavelength_nm": 0.0},
+            ],
+            "masks": [{"mask_id": "m1"}],
+        })
+        assert plan.n_wavelengths == 2
+        assert plan.wavelengths[0].wavelength_nm == 450.0
+        assert plan.wavelengths[1].wavelength_nm == 0.0
 
     def test_validate_frames_per_capture_fails(self) -> None:
         with pytest.raises(CapturePlanError, match="frames_per_capture"):

@@ -217,10 +217,12 @@ Operational conclusion:
   - mask-induced PSF differences are much larger than repeatability noise
   - same-mask cross-wavelength PSF shape differences remain much larger than
     repeatability noise after background subtraction and unit-energy normalization
-- Fig 3 (fig3_wavelength_psf_scale.pdf) visualizes the same-mask
+- Fig 3 (`fig3_wavelength_psf_scale.pdf`) visualizes the same-mask
   cross-wavelength PSF scale dependence via side-by-side log-scale
-  comparison and cumulative enclosed energy vs square window
-  half-size with r₅₀% vertical markers.
+  comparison and cumulative enclosed energy vs square-window half-size
+  with r50% vertical markers. The generated figure now uses Chinese labels
+  except for standard abbreviations such as PSF and dataset identifiers such
+  as `all_open_window`.
 - Interpretation boundary:
   - raw metrics still mix shape differences with residual photometric scaling
   - normalized metrics are the stricter basis for cross-wavelength shape claims
@@ -228,11 +230,12 @@ Operational conclusion:
   as forward-model success.
 
 Recommended thesis caption for the Phase 3.2b mean-PSF montage:
-"不同掩膜和不同波长下的平均 PSF 形态差异". The combined montage
-`multi_wavelength_mask_mean_psfs` has mask patterns as columns and
-wavelengths as rows; each tile is the repeat-averaged PSF crop shown with
-log intensity. The per-wavelength `wl_*/mask_mean_psfs` figures show the
-same eight masks for one wavelength at a time.
+
+不同掩膜与波长下的平均 PSF 形态。合成图
+`multi_wavelength_mask_mean_psfs` 中，横向为不同掩膜，纵向为不同波长；
+每个子图为对应条件下重复采集后的平均 PSF crop，并采用 log 强度显示。
+图内不再放置英文结构说明，相关说明保留在本文档和论文图注中。
+单波长 `wl_*/mask_mean_psfs` 图展示同一波长下的八种掩膜结果。
 
 ## Phase 3.3
 

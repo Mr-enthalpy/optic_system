@@ -56,6 +56,12 @@ class FakeTLSC1:
             raise FakeTLSC1ValidationError("invalid grating")
         self.status.grating = int(grating)
 
+    def set_pass_through(self, timeout=60.0):
+        self.status.moving = True
+        self.status.target_wavelength_nm = 0.0
+        self.status.current_wavelength_nm = 0.0
+        self.status.moving = False
+
     def set_wavelength(self, wavelength):
         self.status.target_wavelength_nm = float(wavelength)
 
@@ -136,3 +142,8 @@ def test_tls_service_converts_backend_errors(monkeypatch):
 
     assert "invalid grating" in str(exc_info.value)
     assert "set_grating" in str(exc_info.value)
+
+    service.set_pass_through(timeout_s=10.0)
+    assert service.get_status().target_wavelength_nm == 0.0
+    assert service.get_status().current_wavelength_nm == 0.0
+    assert service.get_status().moving is False

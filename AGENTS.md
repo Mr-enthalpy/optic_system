@@ -219,6 +219,24 @@ Rules:
 * Do not silently change camera startup semantics.
 * If changing `PreConfigGUI`, trigger mode, or open/start behavior, update README and tests together.
 
+### Exposure parameter switching
+
+Switching camera exposure parameters (exposure_us, gain_db) does not take
+effect on the very next frame.  Old parameter values persist for several
+frames; the larger the SHUTTER value of the old configuration, the more
+pronounced the transition and the more frames are affected.
+
+* After any exposure parameter change, discard **at least 40-50 frames**
+  before capturing data intended for measurement.
+* The current conservative default in exposure-calibration plans is
+  ``discard_frames_after_camera_param_change: 80`` and in generated plans
+  100 frames, with an additional ``camera_param_settle_ms: 300`` wait
+  before the discard burst.
+* Do not reduce ``discard_frames_after_camera_param_change`` below 40
+  unless a specific task documents a shorter safe lower bound with
+  hardware evidence.
+* This constraint is independent of the LCD settle time.
+
 ## LCD rules
 
 The LCD is a physical mono subpixel device.
@@ -259,6 +277,19 @@ Rules:
 * Do not silently reinterpret mono masks as ordinary grayscale ``[H, W]`` if
   physical subpixel semantics matter.
 
+### LCD refresh rate and settle timing
+
+The physical LCD operates at 50 Hz panel refresh (20 ms per frame).
+
+* After displaying a new mask, the LCD liquid-crystal elements require
+  physical switching time.  The absolute physical minimum wait is 20 ms
+  (one frame period), but this is insufficient in practice because LCD
+  response time extends beyond one frame.
+* The conservative default ``lcd_settle_ms`` is 200 ms (10 frame periods).
+* Hardware validation rejects values below 100 ms.
+* Do not reduce ``lcd_settle_ms`` below 100 ms without a documented valid
+  optical reason.
+
 ## TLS rules
 
 The active TLS backend is `tls_c1`.
@@ -293,6 +324,42 @@ RefreshTLSStatus:
 ```
 
 Preserve this separation. Setting a target wavelength and moving the hardware are not the same operation.
+
+### TLS zero-order pass-through mode
+
+Setting the TLS wavelength to ``0 nm`` places the monochromator grating in
+zero-order position, where it acts as a mirror and passes unfiltered broadband
+light through the optical path.
+
+* Use ``tls_c1.set_pass_through(timeout=...)`` for zero-order mode.
+* Do not call ``set_wavelength_nm(0)``; ``tls_c1.parse_wavelength_nm``
+  rejects ``value <= 0`` and directs callers to ``set_pass_through()``.
+* Capture plans may use ``wavelength_nm: 0.0`` to request pass-through.
+  Capture scripts must detect wavelength 0 and call ``set_pass_through()``
+  instead of the normal ``set_wavelength_nm`` / ``move`` sequence.
+* Wavelength labels without TLS (``--allow-wavelength-labels-without-tls``)
+  are not equivalent to pass-through mode; they skip TLS entirely, while
+  pass-through explicitly moves the grating to zero-order.
+
+## Hardware timing and thermal constraints
+
+### Xe lamp warm-up drift
+
+The Xe lamp output drifts significantly during the first ~10 minutes after
+ignition.  Capturing data before thermal stabilisation yields unreliable
+measurements: the output power may rise slowly or abruptly as the lamp
+approaches thermal equilibrium.  Once thermally stable, the output power
+remains steady.
+
+* Wait for the lamp to reach thermal stabilisation before starting any
+  capture sequence (consult the lamp manual for model-specific warm-up time).
+* The warm-up wait is a manual pre-capture step; no automated thermal
+  gate is implemented.
+* Linear baseline subtraction in analysis algorithms compensates partially
+  for residual drift, but it is not a substitute for proper thermal
+  stabilisation.
+* For very long scans, consider splitting into shorter segments or using
+  periodic bright-reference re-measurement.
 
 ## Task-layer rules
 

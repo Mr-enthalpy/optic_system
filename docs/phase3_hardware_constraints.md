@@ -67,7 +67,14 @@ Source this file before any hardware run: `. .\env.local.ps1`
 
 ### H1: LCD settle time
 
+The physical LCD operates at 50 Hz panel refresh (20 ms per frame).
+
 `lcd.settle_ms` must be **at least 200 ms by default** for all Phase 3 tasks.
+The absolute physical minimum wait is 20 ms (one frame period), but this is
+insufficient in practice because LCD liquid-crystal response time extends
+beyond one frame.  200 ms = 10 frame periods gives the LC elements adequate
+physical switching time.
+
 2 ms is insufficient for the LCD liquid-crystal elements to physically
 switch; the camera captures LCD transition frames, corrupting bright/dark
 references and producing unreliable bar scan energies.
@@ -118,6 +125,9 @@ and will show a strong linear trend in energies (observed ~150k drop).
 Mitigations:
 - Wait for the lamp to thermally stabilise before starting the scan
   (warm-up time depends on lamp model; consult the lamp manual).
+- This is a **manual pre-capture step**; no automated thermal gate is
+  implemented.  The operator must ensure sufficient warm-up time before
+  launching any capture script.
 - If a linear trend persists, the bar scan fit algorithm's baseline
   subtraction compensates partially.
 - For very long scans, consider splitting into shorter segments or
@@ -131,6 +141,41 @@ isolated data point: clean it by replacing with the average of
 neighbouring positions, not by deleting the HDF5.
 
 Do not remove the entire dataset because of one outlier.
+
+### H6: Camera exposure parameter frame discard
+
+Switching camera exposure parameters (exposure_us, gain_db) does not take
+effect on the very next frame.  Old parameter values persist for several
+frames; the larger the SHUTTER value of the old configuration, the more
+pronounced the transition and the more frames are affected.
+
+- After any exposure parameter change, discard **at least 40-50 frames**
+  before capturing data intended for measurement.
+- The current conservative default in exposure-calibration plans is
+  ``discard_frames_after_camera_param_change: 80``, with generated plans
+  using 100 frames, plus a ``camera_param_settle_ms: 300`` wait before
+  the discard burst.
+- Do not reduce ``discard_frames_after_camera_param_change`` below 40
+  unless a specific task documents a shorter safe lower bound with
+  hardware evidence.
+- This constraint is independent of the LCD settle time.
+
+### H7: TLS zero-order pass-through mode
+
+Setting the TLS wavelength to ``0 nm`` places the monochromator grating in
+zero-order position, where it acts as a mirror and passes unfiltered broadband
+light through the optical path.
+
+- ``tls_c1.parse_wavelength_nm`` rejects ``value <= 0`` and directs callers
+  to ``set_pass_through()``.
+- ``tls_c1.set_pass_through(timeout=...)`` calls ``api.move_to_wave(device_id, 0.0)``
+  and waits for the grating to reach zero-order position.
+- Capture plans may use ``wavelength_nm: 0.0`` to request pass-through.
+  Capture scripts must detect wavelength 0 and call ``set_pass_through()``
+  instead of the normal ``set_wavelength_nm`` / ``move`` sequence.
+- Wavelength labels without TLS (``--allow-wavelength-labels-without-tls``)
+  are **not** equivalent to pass-through mode; they skip TLS entirely, while
+  pass-through explicitly moves the grating to zero-order.
 
 ---
 

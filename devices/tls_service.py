@@ -110,6 +110,20 @@ class TLSService:
         self._last_status = self._disconnected_status()
         return self._last_status
 
+    def set_pass_through(self, timeout_s: float = 60.0) -> TLSStatus:
+        device = self._require_device()
+        try:
+            device.set_pass_through(timeout=float(timeout_s))
+            status = self._refresh_status(
+                self._safe_get_status(),
+                target_wavelength_nm=0.0,
+                moving=False,
+                last_error=None,
+            )
+            return status
+        except Exception as exc:
+            raise self._wrap_exception("set_pass_through", exc) from exc
+
     def set_grating(self, grating: int) -> TLSStatus:
         device = self._require_device()
         try:

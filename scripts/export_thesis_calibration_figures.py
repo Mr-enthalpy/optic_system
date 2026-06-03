@@ -44,8 +44,9 @@ MATPLOTLIB_RCPARAMS = {
     "savefig.bbox": "tight",
     "savefig.pad_inches": 0.1,
     "font.family": "sans-serif",
-    "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"],
+    "font.sans-serif": ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "Arial Unicode MS", "DejaVu Sans", "Arial", "Helvetica"],
     "mathtext.default": "regular",
+    "axes.unicode_minus": False,
 }
 
 
@@ -789,10 +790,10 @@ def _build_figure_wavelength_psf_scale(out_dir: Path, dpi: int, fmt: str) -> Pat
 
     cax = fig.add_subplot(gs[0, 3])
     cbar = fig.colorbar(im, cax=cax)
-    cbar.set_label(r"log$_{10}$(bg-sub + 1)", fontsize=7)
+    cbar.set_label(r"log$_{10}$(背景扣除 + 1)", fontsize=7)
     cbar.ax.tick_params(labelsize=6)
 
-    fig.text(0.03, 0.955, "(a) all_open_window PSF, same log scale", fontsize=8, fontweight="bold", va="top")
+    fig.text(0.03, 0.955, "(a) 全开掩膜 PSF，同一 log 标尺", fontsize=8, fontweight="bold", va="top")
 
     # ---- panel (b): cumulative enclosed energy vs window half-size ----
     ax_c = fig.add_axes([0.12, 0.08, 0.78, 0.24])
@@ -817,8 +818,8 @@ def _build_figure_wavelength_psf_scale(out_dir: Path, dpi: int, fmt: str) -> Pat
 
     ax_c.axhline(0.5, color="gray", linestyle="--", linewidth=0.6, alpha=0.5)
     ax_c.text(2, 0.52, "0.5", fontsize=6, color="gray", va="bottom")
-    ax_c.set_xlabel("Enclosing square half-size [px]")
-    ax_c.set_ylabel("Enclosed energy fraction")
+    ax_c.set_xlabel("包围方窗半宽 [px]")
+    ax_c.set_ylabel("封闭能量比例")
     ax_c.legend(fontsize=7, loc="lower right", framealpha=0.7)
     ax_c.set_xlim(0, half_range)
     ax_c.set_ylim(0, 1.05)
@@ -838,11 +839,11 @@ def _build_figure_wavelength_psf_scale(out_dir: Path, dpi: int, fmt: str) -> Pat
             fontsize=6.5, color=color, va="bottom",
         )
 
-    fig.text(0.03, 0.40, "(b) cumulative enclosed energy vs square window size", fontsize=8, fontweight="bold", va="top")
+    fig.text(0.03, 0.40, "(b) 封闭能量随方窗半宽变化", fontsize=8, fontweight="bold", va="top")
 
     fig.text(
         0.06, 1.01,
-        "Same-Mask Cross-Wavelength PSF Scale  |  all_open_window  |  roi_256 crop",
+        "三波长 PSF 尺度对比  |  全开掩膜  |  256×256 裁剪",
         fontsize=9, fontweight="bold", va="bottom",
     )
 

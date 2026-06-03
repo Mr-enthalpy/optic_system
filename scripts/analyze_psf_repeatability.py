@@ -18,6 +18,20 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+plt.rcParams.update(
+    {
+        "font.family": "sans-serif",
+        "font.sans-serif": [
+            "Microsoft YaHei",
+            "SimHei",
+            "Noto Sans CJK SC",
+            "Arial Unicode MS",
+            "DejaVu Sans",
+        ],
+        "axes.unicode_minus": False,
+    }
+)
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -513,9 +527,9 @@ def _write_contact_sheet(
         axes[r, c].imshow(_psf_log_preview(means[i]), cmap="magma", vmin=0.0, vmax=1.0)
         axes[r, c].set_title(_short_mask_label(labels[i]), fontsize=8.5)
     if wavelength_nm is None:
-        title = "Mean PSF morphology by mask"
+        title = "不同掩膜下的平均 PSF 形态"
     else:
-        title = f"Mean PSF morphology by mask at {float(wavelength_nm):.0f} nm"
+        title = f"不同掩膜下的平均 PSF 形态（{float(wavelength_nm):.0f} nm）"
     fig.suptitle(title, fontsize=11, fontweight="bold")
     fig.tight_layout(pad=0.9)
     _save_matplotlib_figure(fig, path)
@@ -551,16 +565,8 @@ def _write_multi_wavelength_mean_psf_figure(out_dir: Path, per_wavelength_metric
                 ax.set_title(_short_mask_label(mask_id), fontsize=7.5)
             if col_idx == 0:
                 ax.set_ylabel(f"{wavelength_nm:.0f} nm", fontsize=9, rotation=0, ha="right", va="center", labelpad=26)
-    fig.suptitle("Mean PSF morphology across masks and wavelengths", fontsize=12, fontweight="bold")
-    fig.text(
-        0.5,
-        0.02,
-        "Columns: mask patterns. Rows: wavelengths. Each tile is the repeat-averaged PSF crop shown with log intensity.",
-        ha="center",
-        va="bottom",
-        fontsize=8.5,
-    )
-    fig.tight_layout(rect=(0.0, 0.045, 1.0, 0.94), pad=0.55)
+    fig.suptitle("不同掩膜与波长下的平均 PSF 形态", fontsize=12, fontweight="bold")
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.94), pad=0.55)
     _save_matplotlib_figure(fig, out_dir / "multi_wavelength_mask_mean_psfs.png")
 
 
@@ -580,18 +586,23 @@ def _psf_log_preview(image: np.ndarray) -> np.ndarray:
 
 def _short_mask_label(mask_id: str) -> str:
     replacements = {
-        "all_open_window": "open",
-        "vertical_stripes_lowfreq": "vertical\nstripes",
-        "horizontal_stripes_lowfreq": "horizontal\nstripes",
-        "checkerboard_lowfreq": "checkerboard",
-        "central_block": "central\nblock",
-        "edge_block": "edge\nblock",
-        "random_lowfreq_1": "random\nlowfreq 1",
-        "random_lowfreq_2": "random\nlowfreq 2",
+        "all_open_window": "全开",
+        "all_closed_window": "全闭",
+        "vertical_stripes_lowfreq": "竖向\n低频条纹",
+        "horizontal_stripes_lowfreq": "横向\n低频条纹",
+        "checkerboard_lowfreq": "低频\n棋盘",
+        "central_block": "中心块",
+        "edge_block": "边缘块",
+        "edge_block_left": "左边缘块",
+        "edge_block_right": "右边缘块",
+        "edge_block_top": "上边缘块",
+        "edge_block_bottom": "下边缘块",
+        "random_lowfreq_1": "随机\n低频 1",
+        "random_lowfreq_2": "随机\n低频 2",
     }
     if mask_id in replacements:
         return replacements[mask_id]
-    text = str(mask_id).replace("_", " ")
+    text = _translate_mask_label(str(mask_id))
     if len(text) <= 18:
         return text
     words = text.split()
@@ -607,6 +618,37 @@ def _short_mask_label(mask_id: str) -> str:
     if current:
         lines.append(current)
     return "\n".join(lines[:2])
+
+
+def _translate_mask_label(mask_id: str) -> str:
+    text = str(mask_id)
+    token_map = [
+        ("all_open", "全开"),
+        ("all_closed", "全闭"),
+        ("vertical", "竖向"),
+        ("horizontal", "横向"),
+        ("stripes", "条纹"),
+        ("stripe", "条纹"),
+        ("checkerboard", "棋盘"),
+        ("central", "中心"),
+        ("edge", "边缘"),
+        ("left", "左"),
+        ("right", "右"),
+        ("top", "上"),
+        ("bottom", "下"),
+        ("random", "随机"),
+        ("lowfreq", "低频"),
+        ("midfreq", "中频"),
+        ("task", "任务"),
+        ("related", "相关"),
+        ("mask", "掩膜"),
+        ("window", "窗口"),
+        ("block", "块"),
+    ]
+    for src, dst in token_map:
+        text = text.replace(src, dst)
+    text = text.replace("_", " ").strip()
+    return " ".join(text.split())
 
 
 def _save_matplotlib_figure(fig: plt.Figure, png_path: Path) -> None:

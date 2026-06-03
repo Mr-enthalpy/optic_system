@@ -5,6 +5,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 
 from scripts.calibrate_psf_safe_exposure import _build_result, _GainResult, run_psf_safe_exposure
 from tasks.psf_safe_exposure_h5 import PsfSafeExposureWriter
@@ -20,6 +21,8 @@ def _plan(tmp_path: Path) -> dict:
         "wavelengths": [{"wavelength_nm": 550.0}],
         "camera_search": {
             "gain_db_min": 0.0,
+            "gain_db_max": 0.0,
+            "gain_db_step_db": 3.0,
             "frames_per_setting": 3,
         },
         "psf_safety": {},
@@ -60,20 +63,26 @@ def test_camera_params_psf_safe_json_schema(tmp_path: Path) -> None:
     )
 
     result = _build_result(
-        _plan(tmp_path), accepted, [], 255,
+        _plan(tmp_path), accepted, [], [], 255,
     )
 
-    assert result["schema_version"] == "1.0"
+    assert result["schema_version"] == 2
+    assert result["phase"] == "3.0.5b"
+    assert result["task"] == "psf_safe_camera_catalog"
     assert result["plan_id"] == "bishe_psf_safe_exposure"
     assert result["frame_dtype_full_scale"] == 255
     assert result["frame_dtype_full_scale_source"] == "unknown"
-    assert result["global_safe_camera"] == {
-        "exposure_us": 5000.0,
-        "gain_db": 0.0,
-        "frames_per_capture": 3,
-        "roi": None,
-        "gain_elevated": False,
-    }
+    assert result["global_safe_camera"]["exposure_us"] == 5000.0
+    assert result["global_safe_camera"]["gain_db"] == 0.0
+    assert result["global_safe_camera"]["frames_per_capture"] == 3
+    assert result["global_safe_camera"]["roi"] is None
+    assert result["global_safe_camera"]["gain_elevated"] is False
+    assert result["global_safe_camera"]["derived_from"] == (
+        "minimum_safe_exposure_across_wavelengths_without_common_gain_fallback"
+    )
+    assert result["valid_pixel_domain"] == {"type": "full_frame"}
+    assert result["camera_param_catalog"]["550.0"]["recommended"]["exposure_us"] == 5000.0
+    assert result["derived_profiles"]["global_safe_camera"]["exposure_us"] == 5000.0
     assert result["psf_safety_policy"] == {
         "rule": "all_frames_all_pixels_strictly_below_full_scale",
         "evaluated_on": "raw_burst_frames",
