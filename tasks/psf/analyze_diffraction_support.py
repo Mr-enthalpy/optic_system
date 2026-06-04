@@ -8,6 +8,17 @@ from typing import Any
 import h5py
 import numpy as np
 
+from tasks.artifacts.errors import ArtifactIOError
+from tasks.artifacts.frame_source import (
+    frame_dataset_count_and_shape as _shared_frame_dataset_count_and_shape,
+    open_survey_or_raw_frame_source,
+    read_frame_entry as _shared_read_frame_entry,
+)
+from tasks.artifacts.json_io import (
+    decode_h5_string,
+    read_json_dataset_or_attr as _shared_read_json_dataset_or_attr,
+)
+
 from .sensor_energy_center import (
     SensorEnergyCenterError,
     SensorEnergyCenterProfile,
@@ -330,69 +341,40 @@ def _open_survey_frame_source(
     *,
     allow_raw_fallback: bool = False,
 ) -> tuple[h5py.Dataset, SurveyMetadata]:
-    if "full_frame_survey/frames_avg" in f:
-        frames = f["full_frame_survey/frames_avg"]
-        group = f["full_frame_survey"]
-        frame_count, frame_shape = _frame_dataset_count_and_shape(frames)
-        mask_ids = _read_survey_mask_ids(f, group, frame_count)
-        wavelengths = _read_survey_wavelengths(f, group, frame_count)
-        survey_manifest = _read_json_dataset_or_attr(group, "manifest_json")
-        extent = _read_json_dataset_or_attr(group, "camera_frame_extent_json")
-        if not extent and isinstance(survey_manifest.get("camera_frame_extent"), dict):
-            extent = dict(survey_manifest["camera_frame_extent"])
-        coordinate_frame = _coordinate_frame_from_manifest_or_extent(survey_manifest, extent)
-        dataset_path = "full_frame_survey/frames_avg"
-    elif allow_raw_fallback and "raw/frames_avg" in f:
-        frames = f["raw/frames_avg"]
-        frame_count, frame_shape = _frame_dataset_count_and_shape(frames)
-        mask_ids = _read_dataset_strings(f, "raw/mask_id", frame_count, "entry")
-        wavelengths = _read_raw_wavelengths(f, frame_count)
-        coordinate_frame = "acquired_frame"
-        extent = {}
-        dataset_path = "raw/frames_avg"
-    else:
-        raise DiffractionSupportAnalysisError(
-            "support analysis requires full_frame_survey/frames_avg; pass "
-            "allow_raw_fallback=True only for legacy/dev raw/frames_avg inputs"
+    try:
+        source = open_survey_or_raw_frame_source(
+            f,
+            getattr(f, "filename", ""),
+            allow_raw_fallback=allow_raw_fallback,
         )
-    if not extent:
-        extent = {
-            "mode": "unknown",
-            "origin_xy": [0, 0],
-            "shape_hw": [int(frame_shape[0]), int(frame_shape[1])],
-            "sensor_shape_hw": None,
-        }
-    if coordinate_frame not in {"sensor_full_frame", "acquired_frame"}:
-        coordinate_frame = _coordinate_frame_from_extent(extent)
-    if len(mask_ids) != frame_count:
-        raise DiffractionSupportAnalysisError("mask id count does not match frame count")
-    if len(wavelengths) != frame_count:
-        raise DiffractionSupportAnalysisError("wavelength count does not match frame count")
-    return frames, SurveyMetadata(
-        mask_ids=mask_ids,
-        wavelengths_nm=wavelengths,
-        frame_shape=frame_shape,
-        coordinate_frame=coordinate_frame,
-        camera_frame_extent=extent,
-        frame_count=frame_count,
-        frame_dataset_path=dataset_path,
+    except ArtifactIOError as exc:
+        raise DiffractionSupportAnalysisError(
+            str(exc)
+        ) from exc
+    descriptor = source.descriptor
+    return source.dataset, SurveyMetadata(
+        mask_ids=list(descriptor.mask_ids),
+        wavelengths_nm=[float(v) for v in descriptor.wavelengths_nm],
+        frame_shape=descriptor.frame_shape,
+        coordinate_frame=descriptor.coordinate_frame,
+        camera_frame_extent=descriptor.camera_frame_extent_dict(),
+        frame_count=descriptor.frame_count,
+        frame_dataset_path=descriptor.dataset_path,
     )
 
 
 def _frame_dataset_count_and_shape(frames: h5py.Dataset) -> tuple[int, tuple[int, int]]:
-    if frames.ndim == 2:
-        return 1, (int(frames.shape[0]), int(frames.shape[1]))
-    if frames.ndim == 3:
-        return int(frames.shape[0]), (int(frames.shape[1]), int(frames.shape[2]))
-    raise DiffractionSupportAnalysisError(f"survey frames must be 2D or 3D, got {frames.shape}")
+    try:
+        return _shared_frame_dataset_count_and_shape(frames)
+    except ArtifactIOError as exc:
+        raise DiffractionSupportAnalysisError(str(exc)) from exc
 
 
 def _read_frame_entry(frames: h5py.Dataset, entry_index: int) -> np.ndarray:
-    if frames.ndim == 2:
-        if int(entry_index) != 0:
-            raise DiffractionSupportAnalysisError("2D survey frame has only one entry")
-        return np.asarray(frames[()], dtype=np.float64)
-    return np.asarray(frames[int(entry_index), :, :], dtype=np.float64)
+    try:
+        return _shared_read_frame_entry(frames, entry_index)
+    except ArtifactIOError as exc:
+        raise DiffractionSupportAnalysisError(str(exc)) from exc
 
 
 def propose_peak_supports_from_report(
@@ -902,14 +884,10 @@ def _read_json_dataset(f: h5py.File, path: str) -> dict[str, Any]:
 
 
 def _read_json_dataset_or_attr(group: h5py.Group, name: str) -> dict[str, Any]:
-    if name in group:
-        value = group[name][()]
-        text = _decode(value)
-        return json.loads(text) if text else {}
-    if name in group.attrs:
-        text = _decode(group.attrs[name])
-        return json.loads(text) if text else {}
-    return {}
+    try:
+        return _shared_read_json_dataset_or_attr(group, name)
+    except ValueError as exc:
+        raise DiffractionSupportAnalysisError(str(exc)) from exc
 
 
 def _valid_pixel_mask(shape: tuple[int, int], valid_pixel_domain: dict[str, Any] | None) -> np.ndarray:
@@ -1036,11 +1014,7 @@ def _snap_size(value: int, snap_sizes: tuple[int, ...]) -> int:
 
 
 def _decode(value: Any) -> str:
-    if isinstance(value, bytes):
-        return value.decode("utf-8")
-    if isinstance(value, np.bytes_):
-        return value.tobytes().decode("utf-8")
-    return str(value)
+    return decode_h5_string(value)
 
 
 def _int_pair(value: Any, name: str) -> tuple[int, int]:
