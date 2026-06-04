@@ -7,6 +7,12 @@ from typing import Any
 
 import numpy as np
 
+from .illumination import (
+    IlluminationSpec,
+    IlluminationSpecError,
+    normalize_illumination_spec,
+)
+
 
 class CapturePlanError(ValueError):
     pass
@@ -91,26 +97,59 @@ class TLSWavelengthEntry:
     grating: int | None = None
     settle_ms: int = 2000
     extra: dict[str, Any] = field(default_factory=dict)
+    illumination: IlluminationSpec | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TLSWavelengthEntry:
+        try:
+            spec = normalize_illumination_spec(d)
+        except IlluminationSpecError as exc:
+            raise CapturePlanError(str(exc)) from exc
+        if "wavelength_nm" in d:
+            wavelength_nm = float(d["wavelength_nm"])
+            if wavelength_nm < 0.0:
+                raise CapturePlanError(
+                    "wavelength_nm must be non-negative; 0.0 is a compatibility "
+                    "encoding for TLS zero-order broadband pass-through"
+                )
+            if "illumination" in d and not np.isclose(
+                wavelength_nm,
+                spec.compatibility_wavelength_nm(),
+                rtol=0.0,
+                atol=1e-12,
+            ):
+                raise CapturePlanError(
+                    "wavelength_nm does not match illumination compatibility encoding"
+                )
+        else:
+            wavelength_nm = spec.compatibility_wavelength_nm()
         return cls(
-            wavelength_nm=float(_require_key(d, "wavelength_nm")),
+            wavelength_nm=float(wavelength_nm),
             grating=_optional_int(d.get("grating")),
             settle_ms=int(d.get("settle_ms", 2000)),
             extra=_optional_dict(d.get("extra")) or {},
+            illumination=spec,
         )
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "wavelength_nm": self.wavelength_nm,
             "settle_ms": self.settle_ms,
+            "illumination": self.resolved_illumination().to_dict(),
         }
         if self.grating is not None:
             result["grating"] = self.grating
         if self.extra:
             result["extra"] = self.extra
         return result
+
+    def resolved_illumination(self) -> IlluminationSpec:
+        if self.illumination is not None:
+            return self.illumination
+        try:
+            return normalize_illumination_spec(float(self.wavelength_nm))
+        except IlluminationSpecError as exc:
+            raise CapturePlanError(str(exc)) from exc
 
 
 @dataclass
@@ -216,11 +255,24 @@ class CapturePlan:
             raise CapturePlanError("lcd_settle_ms must be >= 0")
 
         for i, w in enumerate(self.wavelengths):
+            try:
+                spec = w.resolved_illumination()
+            except IlluminationSpecError as exc:
+                raise CapturePlanError(f"wavelengths[{i}]: {exc}") from exc
             if w.wavelength_nm < 0:
                 raise CapturePlanError(
                     f"wavelengths[{i}].wavelength_nm must be non-negative; "
                     "0.0 requests TLS zero-order pass-through, "
                     f"got {w.wavelength_nm}"
+                )
+            if not np.isclose(
+                float(w.wavelength_nm),
+                spec.compatibility_wavelength_nm(),
+                rtol=0.0,
+                atol=1e-12,
+            ):
+                raise CapturePlanError(
+                    f"wavelengths[{i}].wavelength_nm does not match illumination"
                 )
             if w.settle_ms < 0:
                 raise CapturePlanError(
@@ -258,6 +310,9 @@ class CapturePlan:
     @property
     def n_captures(self) -> int:
         return self.n_wavelengths * self.n_masks
+
+    def resolved_illumination_specs(self) -> list[IlluminationSpec]:
+        return [entry.resolved_illumination() for entry in self.wavelengths]
 
 
 def _require_key(d: dict[str, Any], key: str) -> Any:

@@ -30,11 +30,16 @@ broadband pass-through camera calibration
 
 ## Pass-Through Semantics
 
-`wavelength_nm: 0.0` requests TLS zero-order pass-through. Task code must call
-`TLSService.set_pass_through()` / `tls_c1.set_pass_through()`.
+`wavelength_nm: 0.0` remains a compatibility encoding for TLS zero-order
+broadband pass-through in capture plans. Task internals should normalize it to
+`IlluminationSpec(mode="broadband_passthrough")`.
 
 Do not call `set_wavelength(0)` or `set_wavelength_nm(0)`. The `tls_c1`
-high-level API exposes pass-through as a separate operation.
+high-level API exposes pass-through as a separate operation, and task code must
+call `TLSService.set_pass_through()` / `tls_c1.set_pass_through()`.
+
+Pass-through is a device-control mode, not a physical wavelength. Wavelength
+labels without TLS are not equivalent to pass-through.
 
 ## Exposure Search Policy
 

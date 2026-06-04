@@ -118,10 +118,11 @@ GUI / task intent
 Hardware tests for TLS must remain opt-in.
 The default test suite should run without TLS hardware and without vendor DLLs.
 
-TLS zero-order pass-through is represented in capture plans as
-`wavelength_nm: 0.0`, but task code must not call `set_wavelength(0)`.
-It must call `TLSService.set_pass_through()`, which uses the high-level
-`tls_c1.set_pass_through()` API.
+Capture plans may still use `wavelength_nm: 0.0` as a compatibility encoding
+for TLS zero-order broadband pass-through. Task internals should normalize
+wavelength entries to `IlluminationSpec` and should not scatter
+`wavelength_nm == 0.0` checks. Pass-through is a device-control mode, not a
+physical wavelength, and task code must call `TLSService.set_pass_through()`.
 
 ## Relationship with LCD_forward
 
