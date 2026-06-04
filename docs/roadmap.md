@@ -179,10 +179,15 @@ Mainline dependency chain:
 ```text
 determine broadband pass-through camera profile
   -> scan LCD pupil under broadband pass-through
+     (bar profiles -> radius scan -> ellipse fit)
   -> generate PupilProfile
   -> open selected LCD pupil and determine per-band camera profile
   -> all later PSF-producing capture tasks
 ```
+
+Camera-profile determination uses gain-outer binary exposure search. Per-band
+profile calibration must keep TLS wavelength as the outermost loop and perform
+all camera probes for one wavelength before moving the spectrometer again.
 
 The bachelor-thesis branch task logic may be used as audited reference
 material, but its old ordering is not the mainline workflow.

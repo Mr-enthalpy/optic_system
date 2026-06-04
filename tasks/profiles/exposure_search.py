@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -7,6 +8,10 @@ import numpy as np
 
 
 class ExposureSearchError(ValueError):
+    pass
+
+
+class ExposureLowerBoundUnsafeError(ExposureSearchError):
     pass
 
 
@@ -26,6 +31,121 @@ class ExposureCandidate:
         return {
             "exposure_us": float(self.exposure_us),
             "gain_db": float(self.gain_db),
+        }
+
+
+@dataclass(frozen=True)
+class ExposureBinarySearchConfig:
+    min_exposure_us: float
+    max_exposure_us: float
+    gain_db: float = 0.0
+    iterations: int = 8
+    safety_fraction: float = 0.95
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ExposureBinarySearchConfig":
+        return cls(
+            min_exposure_us=float(data["min_exposure_us"]),
+            max_exposure_us=float(data["max_exposure_us"]),
+            gain_db=float(data.get("gain_db", 0.0)),
+            iterations=int(data.get("iterations", 8)),
+            safety_fraction=float(data.get("safety_fraction", 0.95)),
+        )
+
+    @classmethod
+    def from_candidates(
+        cls,
+        candidates: list[ExposureCandidate],
+        *,
+        iterations: int = 8,
+        safety_fraction: float = 0.95,
+    ) -> "ExposureBinarySearchConfig":
+        if not candidates:
+            raise ExposureSearchError("at least one exposure candidate is required")
+        gains = {float(c.gain_db) for c in candidates}
+        if len(gains) != 1:
+            raise ExposureSearchError(
+                "binary exposure search requires one fixed gain_db per search"
+            )
+        exposures = [float(c.exposure_us) for c in candidates]
+        return cls(
+            min_exposure_us=min(exposures),
+            max_exposure_us=max(exposures),
+            gain_db=float(candidates[0].gain_db),
+            iterations=iterations,
+            safety_fraction=safety_fraction,
+        )
+
+    def to_dict(self) -> dict[str, float | int]:
+        return {
+            "min_exposure_us": float(self.min_exposure_us),
+            "max_exposure_us": float(self.max_exposure_us),
+            "gain_db": float(self.gain_db),
+            "iterations": int(self.iterations),
+            "safety_fraction": float(self.safety_fraction),
+        }
+
+
+@dataclass(frozen=True)
+class ExposureGainSearchConfig:
+    min_exposure_us: float
+    max_exposure_us: float
+    gains_db: list[float]
+    iterations: int = 8
+    safety_fraction: float = 0.95
+    camera_param_settle_ms: float = 300.0
+    discard_frames_after_param_change: int = 80
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ExposureGainSearchConfig":
+        gains = data.get("gains_db")
+        if not isinstance(gains, list) or not gains:
+            raise ExposureSearchError("gains_db must be a non-empty list")
+        return cls(
+            min_exposure_us=float(data["min_exposure_us"]),
+            max_exposure_us=float(data["max_exposure_us"]),
+            gains_db=[float(g) for g in gains],
+            iterations=int(data.get("iterations", 8)),
+            safety_fraction=float(data.get("safety_fraction", 0.95)),
+            camera_param_settle_ms=float(data.get("camera_param_settle_ms", 300.0)),
+            discard_frames_after_param_change=int(
+                data.get("discard_frames_after_param_change", 80)
+            ),
+        )
+
+    @classmethod
+    def from_candidates(
+        cls,
+        candidates: list[ExposureCandidate],
+        *,
+        iterations: int = 8,
+        safety_fraction: float = 0.95,
+        camera_param_settle_ms: float = 300.0,
+        discard_frames_after_param_change: int = 80,
+    ) -> "ExposureGainSearchConfig":
+        if not candidates:
+            raise ExposureSearchError("at least one exposure candidate is required")
+        exposures = [float(c.exposure_us) for c in candidates]
+        gains = sorted({float(c.gain_db) for c in candidates})
+        return cls(
+            min_exposure_us=min(exposures),
+            max_exposure_us=max(exposures),
+            gains_db=gains,
+            iterations=iterations,
+            safety_fraction=safety_fraction,
+            camera_param_settle_ms=camera_param_settle_ms,
+            discard_frames_after_param_change=discard_frames_after_param_change,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "min_exposure_us": float(self.min_exposure_us),
+            "max_exposure_us": float(self.max_exposure_us),
+            "gains_db": [float(g) for g in self.gains_db],
+            "iterations": int(self.iterations),
+            "safety_fraction": float(self.safety_fraction),
+            "camera_param_settle_ms": float(self.camera_param_settle_ms),
+            "discard_frames_after_param_change": int(self.discard_frames_after_param_change),
         }
 
 
@@ -89,29 +209,159 @@ def evaluate_exposure_candidates(
 
     rows: list[ExposureProbeResult] = []
     for candidate in candidates:
-        if candidate.exposure_us <= 0:
-            raise ExposureSearchError("candidate exposure_us must be positive")
-        camera.apply_camera_params(
-            exposure_us=float(candidate.exposure_us),
-            gain_db=float(candidate.gain_db),
-        )
-        capture = camera.acquire_burst(int(frames_per_capture))
-        burst = np.asarray(capture.burst, dtype=np.float64)
-        avg = np.asarray(capture.frames_avg, dtype=np.float64)
         rows.append(
-            evaluate_capture_safety(
-                burst=burst,
-                avg_frame=avg,
-                exposure_us=float(candidate.exposure_us),
-                gain_db=float(candidate.gain_db),
-                full_scale=float(full_scale),
+            _probe_candidate(
+                camera,
+                candidate,
+                frames_per_capture=frames_per_capture,
+                full_scale=full_scale,
                 valid_pixel_mask=valid_pixel_mask,
                 signal_percentile=signal_percentile,
                 min_signal_fraction=min_signal_fraction,
                 min_dynamic_range_fraction=min_dynamic_range_fraction,
-                metadata=getattr(capture, "metadata", {}) or {},
             )
         )
+    return rows
+
+
+def evaluate_gain_binary_search(
+    camera: ExposureSearchCamera,
+    config: ExposureGainSearchConfig,
+    *,
+    frames_per_capture: int,
+    full_scale: float,
+    valid_pixel_mask: np.ndarray | None = None,
+    signal_percentile: float = 99.0,
+    min_signal_fraction: float = 0.10,
+    min_dynamic_range_fraction: float = 0.08,
+) -> list[ExposureProbeResult]:
+    if not config.gains_db:
+        raise ExposureSearchError("at least one gain is required")
+    rows: list[ExposureProbeResult] = []
+    configured_gains = [float(g) for g in config.gains_db]
+    gains = sorted(configured_gains)
+    for gain_index, gain_db in enumerate(gains):
+        try:
+            gain_rows = evaluate_exposure_binary_search(
+                camera,
+                ExposureBinarySearchConfig(
+                    min_exposure_us=float(config.min_exposure_us),
+                    max_exposure_us=float(config.max_exposure_us),
+                    gain_db=float(gain_db),
+                    iterations=int(config.iterations),
+                    safety_fraction=float(config.safety_fraction),
+                ),
+                frames_per_capture=frames_per_capture,
+                full_scale=full_scale,
+                valid_pixel_mask=valid_pixel_mask,
+                signal_percentile=signal_percentile,
+                min_signal_fraction=min_signal_fraction,
+                min_dynamic_range_fraction=min_dynamic_range_fraction,
+                camera_param_settle_ms=float(config.camera_param_settle_ms),
+                discard_frames_after_param_change=int(config.discard_frames_after_param_change),
+            )
+        except ExposureLowerBoundUnsafeError:
+            if gain_index == 0:
+                raise
+            for row in rows:
+                row.metadata["gain_search_stopped_after_gain_db"] = float(gain_db)
+                row.metadata["gain_search_stop_reason"] = "min_exposure_unsafe_at_higher_gain"
+            break
+        for row in gain_rows:
+            row.metadata["gain_search_method"] = "gain_outer_binary_exposure_inner"
+            row.metadata["configured_gains_db"] = list(configured_gains)
+            row.metadata["sorted_gains_db"] = list(gains)
+            row.metadata["gain_iteration_order"] = "ascending"
+            row.metadata["gain_index"] = int(gain_index)
+        rows.extend(gain_rows)
+    if not rows:
+        raise ExposureSearchError("no gain/exposure probes were completed")
+    return rows
+
+
+def evaluate_exposure_binary_search(
+    camera: ExposureSearchCamera,
+    config: ExposureBinarySearchConfig,
+    *,
+    frames_per_capture: int,
+    full_scale: float,
+    valid_pixel_mask: np.ndarray | None = None,
+    signal_percentile: float = 99.0,
+    min_signal_fraction: float = 0.10,
+    min_dynamic_range_fraction: float = 0.08,
+    camera_param_settle_ms: float = 300.0,
+    discard_frames_after_param_change: int = 80,
+) -> list[ExposureProbeResult]:
+    if int(frames_per_capture) < 1:
+        raise ExposureSearchError("frames_per_capture must be >= 1")
+    if float(full_scale) <= 0:
+        raise ExposureSearchError("full_scale must be positive")
+    if config.min_exposure_us <= 0 or config.max_exposure_us <= 0:
+        raise ExposureSearchError("binary exposure bounds must be positive")
+    if config.max_exposure_us < config.min_exposure_us:
+        raise ExposureSearchError("max_exposure_us must be >= min_exposure_us")
+    if int(config.iterations) < 1:
+        raise ExposureSearchError("binary exposure iterations must be >= 1")
+    if not (0.0 < float(config.safety_fraction) <= 1.0):
+        raise ExposureSearchError("safety_fraction must be in (0,1]")
+
+    rows: list[ExposureProbeResult] = []
+    safety_limit = float(full_scale) * float(config.safety_fraction)
+
+    def probe(exposure_us: float, stage: str) -> ExposureProbeResult:
+        candidate = ExposureCandidate(exposure_us=float(exposure_us), gain_db=float(config.gain_db))
+        row = _probe_candidate(
+            camera,
+            candidate,
+            frames_per_capture=frames_per_capture,
+            full_scale=full_scale,
+            valid_pixel_mask=valid_pixel_mask,
+            signal_percentile=signal_percentile,
+            min_signal_fraction=min_signal_fraction,
+            min_dynamic_range_fraction=min_dynamic_range_fraction,
+            camera_param_settle_ms=camera_param_settle_ms,
+            discard_frames_after_param_change=discard_frames_after_param_change,
+        )
+        row.metadata.update({
+            "search_method": "binary",
+            "search_stage": stage,
+            "min_exposure_us": float(config.min_exposure_us),
+            "max_exposure_us": float(config.max_exposure_us),
+            "max_exposure_source": "config_expected_camera_api_upper_bound",
+            "upper_bound_policy": "no_extrapolation_past_config_max",
+            "safety_fraction": float(config.safety_fraction),
+            "safety_limit": safety_limit,
+            "binary_search_safe": bool(row.peak_pixel_burst < safety_limit),
+        })
+        rows.append(row)
+        return row
+
+    low = float(config.min_exposure_us)
+    high = float(config.max_exposure_us)
+    low_row = probe(low, "lower_bound")
+    if not bool(low_row.metadata["binary_search_safe"]):
+        raise ExposureLowerBoundUnsafeError(
+            "minimum exposure is not safe under binary search policy"
+        )
+    high_row = probe(high, "upper_bound")
+    if bool(high_row.metadata["binary_search_safe"]):
+        for row in rows:
+            row.metadata["binary_search_termination"] = "max_exposure_safe_no_extrapolation"
+            row.metadata["max_exposure_safe_without_saturation"] = True
+        return rows
+
+    safe_low = low
+    unsafe_high = high
+    for _ in range(int(config.iterations)):
+        mid = 0.5 * (safe_low + unsafe_high)
+        mid_row = probe(mid, "midpoint")
+        if bool(mid_row.metadata["binary_search_safe"]):
+            safe_low = mid
+        else:
+            unsafe_high = mid
+    for row in rows:
+        row.metadata["binary_search_termination"] = "bracketed_unsafe_upper_bound"
+        row.metadata["max_exposure_safe_without_saturation"] = False
     return rows
 
 
@@ -172,13 +422,93 @@ def evaluate_capture_safety(
 
 
 def select_recommended_probe(rows: list[ExposureProbeResult]) -> ExposureProbeResult:
-    safe = [row for row in rows if row.psf_safe]
+    safe = [
+        row for row in rows
+        if row.psf_safe and bool(row.metadata.get("binary_search_safe", True))
+    ]
     if not safe:
         raise ExposureSearchError("no PSF-safe exposure candidate was found")
     usable = [row for row in safe if row.usable_signal]
     pool = usable or safe
     # Prefer lower gain, then strongest usable signal without saturation.
     return sorted(pool, key=lambda r: (float(r.gain_db), -float(r.p_signal), -float(r.exposure_us)))[0]
+
+
+def safe_exposure_profiles_by_gain(rows: list[ExposureProbeResult]) -> list[dict[str, Any]]:
+    """Publish the maximum verified safe exposure for each enumerated gain."""
+    safe = [
+        row for row in rows
+        if row.psf_safe and bool(row.metadata.get("binary_search_safe", True))
+    ]
+    by_gain: dict[float, list[ExposureProbeResult]] = {}
+    for row in safe:
+        by_gain.setdefault(float(row.gain_db), []).append(row)
+
+    profiles: list[dict[str, Any]] = []
+    for gain_db in sorted(by_gain):
+        gain_rows = by_gain[gain_db]
+        selected = sorted(
+            gain_rows,
+            key=lambda r: (-float(r.exposure_us), -float(r.p_signal)),
+        )[0]
+        profiles.append({
+            "gain_db": float(selected.gain_db),
+            "max_safe_exposure_us": float(selected.exposure_us),
+            "exposure_us": float(selected.exposure_us),
+            "peak_pixel_burst": float(selected.peak_pixel_burst),
+            "peak_pixel_avg": float(selected.peak_pixel_avg),
+            "peak_pixel_fraction_burst": float(selected.peak_pixel_fraction_burst),
+            "saturation_margin": float(selected.peak_margin_to_full_scale),
+            "p_signal": float(selected.p_signal),
+            "dynamic_range": float(selected.dynamic_range),
+            "usable_signal": bool(selected.usable_signal),
+            "selection": "max_verified_safe_exposure_for_gain",
+            "binary_search_termination": selected.metadata.get("binary_search_termination"),
+            "max_exposure_safe_without_saturation": bool(
+                selected.metadata.get("max_exposure_safe_without_saturation", False)
+            ),
+        })
+    return profiles
+
+
+def _probe_candidate(
+    camera: ExposureSearchCamera,
+    candidate: ExposureCandidate,
+    *,
+    frames_per_capture: int,
+    full_scale: float,
+    valid_pixel_mask: np.ndarray | None,
+    signal_percentile: float,
+    min_signal_fraction: float,
+    min_dynamic_range_fraction: float,
+    camera_param_settle_ms: float = 0.0,
+    discard_frames_after_param_change: int = 0,
+) -> ExposureProbeResult:
+    if candidate.exposure_us <= 0:
+        raise ExposureSearchError("candidate exposure_us must be positive")
+    camera.apply_camera_params(
+        exposure_us=float(candidate.exposure_us),
+        gain_db=float(candidate.gain_db),
+    )
+    if float(camera_param_settle_ms) > 0:
+        time.sleep(float(camera_param_settle_ms) / 1000.0)
+    if int(discard_frames_after_param_change) > 0:
+        camera.acquire_burst(int(discard_frames_after_param_change))
+    capture = camera.acquire_burst(int(frames_per_capture))
+    burst = np.asarray(capture.burst, dtype=np.float64)
+    avg = np.asarray(capture.frames_avg, dtype=np.float64)
+    return evaluate_capture_safety(
+        burst=burst,
+        avg_frame=avg,
+        exposure_us=float(candidate.exposure_us),
+        gain_db=float(candidate.gain_db),
+        full_scale=float(full_scale),
+        valid_pixel_mask=valid_pixel_mask,
+        signal_percentile=signal_percentile,
+        min_signal_fraction=min_signal_fraction,
+        min_dynamic_range_fraction=min_dynamic_range_fraction,
+        metadata=getattr(capture, "metadata", {}) or {},
+    )
 
 
 def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> np.ndarray:

@@ -314,13 +314,48 @@ broadband pass-through camera calibration
 
 Rules:
 
+* Each scan stage must be independently restartable from the previous persisted
+  artifact. Do not require rerunning broadband camera calibration after a
+  completed `CameraProfile`, or rerunning pupil scan after a completed
+  `PupilProfile`.
+* Camera exposure calibration is a gain-outer, exposure-binary-search process:
+  record configured gain candidates, sort them ascending for execution, and
+  for each gain binary-search the largest shutter/exposure that keeps
+  valid-domain peak pixels below the configured full-scale safety limit.
+  Higher-gain failure may stop later higher-gain probes; this must be recorded
+  in metadata rather than hidden. Only explicit lower-bound-unsafe failures may
+  be converted into this stop condition. Configuration errors, frame-shape
+  errors, and backend exceptions must propagate as task failures.
+* `max_exposure_us` is a hard no-extrapolation bound. Hardware profile plans
+  should set it from the camera API's real shutter upper limit. If that upper
+  bound remains safe, artifacts must record that the search reached the
+  configured maximum without finding saturation.
+* Camera profiles should publish all completed gain options with their maximum
+  verified safe exposure. The default selected profile should still prefer low
+  gain, then stronger signal, then longer exposure.
+* In selected-pupil-open per-band camera calibration, TLS wavelength traversal
+  must be the outermost loop. Move the spectrometer once per wavelength, then
+  perform all camera exposure/gain probes for that wavelength before moving TLS
+  again.
+* Any task that uses TLS hardware should order loops to minimize TLS motion;
+  TLS is slow and expensive compared with camera exposure changes.
 * Broadband camera profiles are valid for LCD pupil scanning only.
 * LCD pupil scanning must use TLS pass-through / broadband light, not one
   selected monochromatic wavelength.
 * `PupilScanPlan.scan_range_xyxy` uses conventional physical LCD coordinate
   order: `x0, y0, x1, y1`.
+* Broadband pupil scanning must use bar profiles followed by radius scan and
+  ellipse/circle overlap fitting; the effective circular radius is a factor of
+  the fitted ellipse semi-minor axis.
 * Broadband camera calibration must receive an LCD adapter and must explicitly
   display an all-transmissive physical mask before exposure probing.
+* After setting any LCD mask, wait at least 20 ms before capture or the next
+  hardware-dependent action; the LCD refresh rate is 50 Hz.
+* A below-refresh LCD settle value is allowed only as an explicit no-hardware
+  unit-test override. Hardware plans and CLIs must clearly distinguish this
+  test override from real timing defaults.
+* After changing camera exposure or gain, discard more than 40 frames before
+  using frames for measurement. The mainline profile search default is 80.
 * Per-band camera profiles for PSF-producing tasks must be measured with the
   selected LCD pupil open.
 * Do not reuse full-LCD-open per-band exposure profiles as selected-pupil-open

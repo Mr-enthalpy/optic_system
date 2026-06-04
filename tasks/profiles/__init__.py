@@ -22,17 +22,27 @@ from .calibrate_per_band_pupil_open_camera_profile import (
     calibrate_per_band_pupil_open_camera_profile,
 )
 from .exposure_search import (
+    ExposureBinarySearchConfig,
     ExposureCandidate,
+    ExposureGainSearchConfig,
+    ExposureLowerBoundUnsafeError,
     ExposureProbeResult,
     ExposureSearchError,
+    evaluate_exposure_binary_search,
+    evaluate_gain_binary_search,
     evaluate_exposure_candidates,
+    safe_exposure_profiles_by_gain,
     select_recommended_probe,
 )
 from .pupil_profile import PupilProfile
 from .scan_pupil_broadband import (
+    EllipseOverlapFit,
     PupilScanError,
     PupilScanPlan,
     PupilScanReport,
+    ellipse_circle_overlap_area,
+    estimate_ellipse_parameters,
+    fit_radius_overlap_function,
     run_broadband_pupil_scan,
 )
 
@@ -45,7 +55,11 @@ __all__ = [
     "BroadbandCameraCalibrationPlan",
     "BroadbandCameraCalibrationResult",
     "CameraProfile",
+    "EllipseOverlapFit",
+    "ExposureBinarySearchConfig",
     "ExposureCandidate",
+    "ExposureGainSearchConfig",
+    "ExposureLowerBoundUnsafeError",
     "ExposureProbeResult",
     "ExposureSearchError",
     "IlluminationSpec",
@@ -61,7 +75,13 @@ __all__ = [
     "WavelengthCalibrationSpec",
     "calibrate_broadband_camera_profile",
     "calibrate_per_band_pupil_open_camera_profile",
+    "ellipse_circle_overlap_area",
+    "estimate_ellipse_parameters",
+    "evaluate_exposure_binary_search",
     "evaluate_exposure_candidates",
+    "evaluate_gain_binary_search",
+    "fit_radius_overlap_function",
     "run_broadband_pupil_scan",
+    "safe_exposure_profiles_by_gain",
     "select_recommended_probe",
 ]
