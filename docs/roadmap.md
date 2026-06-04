@@ -2,11 +2,17 @@
 
 ## Current Stage
 
-Current stage:
+Current active tracks:
 
 ```text
+Phase 3A-H -- hardware validation of the profile-driven calibration chain.
 Phase 3.5C -- real-data operationalization and support stability audit.
 ```
+
+Phase 3A-H is a current implementation / validation subtrack for
+profile-producing hardware tasks. It is not a new formal roadmap phase.
+Phase 3.5C is the real-data support operationalization and stability-audit
+track.
 
 Completed baseline:
 
@@ -19,6 +25,8 @@ Phase 3.5B -- first-pass diffraction support analysis report.
 Active work:
 
 ```text
+validate broadband pass-through CameraProfile -> broadband LCD pupil scan
+  -> PupilProfile -> selected-pupil-open per-band CameraProfile on hardware;
 accelerate and stream support analysis on real 2048 x 2448 full-frame data;
 define real-data parameter presets;
 aggregate connected components across repeat / wavelength / mask;
@@ -165,6 +173,12 @@ broadband pupil scan
 per-band selected-pupil-open camera profile
 ```
 
+Current validation subtrack:
+
+```text
+Phase 3A-H -- hardware validation of the profile-driven calibration chain.
+```
+
 Required principles:
 
 - PSF-producing tasks must declare explicit `PupilProfile` and `CameraProfile`
@@ -174,20 +188,19 @@ Required principles:
 - Full-LCD-open exposure profiles must not silently stand in for selected-pupil
   PSF capture profiles.
 
-Mainline dependency chain:
+The detailed mainline dependency chain, pass-through semantics, exposure
+search policy, timing policy, and TLS loop ordering are documented in
+[`profile_task_chain.md`](profile_task_chain.md).
+
+Short dependency chain:
 
 ```text
-determine broadband pass-through camera profile
-  -> scan LCD pupil under broadband pass-through
-     (bar profiles -> radius scan -> ellipse fit)
-  -> generate PupilProfile
-  -> open selected LCD pupil and determine per-band camera profile
-  -> all later PSF-producing capture tasks
+broadband pass-through CameraProfile
+  -> broadband LCD pupil scan
+  -> PupilProfile
+  -> selected-pupil-open per-band CameraProfile
+  -> downstream PSF / dOTF / mask-family capture tasks
 ```
-
-Camera-profile determination uses gain-outer binary exposure search. Per-band
-profile calibration must keep TLS wavelength as the outermost loop and perform
-all camera probes for one wavelength before moving the spectrometer again.
 
 The bachelor-thesis branch task logic may be used as audited reference
 material, but its old ordering is not the mainline workflow.
@@ -438,18 +451,42 @@ This is the long-term target, not the current `optic_system` responsibility.
 
 ---
 
-## Immediate Next PRs
+## Future Task Directions
 
-The next `optic_system` PRs should focus on measured artifact construction and
-diagnostics:
+These names are planned directions, not active files unless they are listed as
+active in `tasks/README.md`.
+
+Future profile-dependent capture tasks:
 
 ```text
-1. scipy connected-component backend for PeakSupportAnalysisReport
-2. streaming / energy-only mode for large full-frame data
-3. real-data presets for support analysis
-4. SupportCandidateStabilityReport
-5. AdaptivePeakLayoutProfile
-6. AdaptivePeakClusterPSFDictionary
+capture_psf_dictionary
+capture_dotf_dataset
+capture_mask_family_psf
+```
+
+Future diagnostics / conversion:
+
+```text
+compute_h_matrix_diagnostic
+convert_raw_to_lcd_forward
+```
+
+---
+
+## Immediate Next PRs
+
+The next `optic_system` PRs should keep Phase 3A-H hardware validation and
+Phase 3.5C support-stability work separate unless a PR is explicitly scoped to
+both tracks.
+
+```text
+1. validate the profile-driven calibration chain on real hardware
+2. scipy connected-component backend for PeakSupportAnalysisReport
+3. streaming / energy-only mode for large full-frame data
+4. real-data presets for support analysis
+5. SupportCandidateStabilityReport
+6. AdaptivePeakLayoutProfile
+7. AdaptivePeakClusterPSFDictionary
 ```
 
 Training and validation of the peak-cluster forward model are explicitly

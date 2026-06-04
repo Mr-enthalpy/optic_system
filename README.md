@@ -165,11 +165,17 @@ The active roadmap is maintained in [`docs/roadmap.md`](docs/roadmap.md).
 Completed Phase 0/1/2 implementation details and hardware-smoke evidence are
 preserved in [`docs/completed_phases.md`](docs/completed_phases.md).
 
-Current stage:
+Current active tracks:
 
 ```text
+Phase 3A-H -- hardware validation of the profile-driven calibration chain.
 Phase 3.5C -- real-data operationalization and support stability audit.
 ```
+
+Phase 3A-H validates profile-producing hardware tasks before large PSF
+capture. Phase 3.5C prepares support and peak-cluster artifacts from real
+full-frame data. Phase 3A-H is a current implementation / validation subtrack,
+not a new formal roadmap phase.
 
 Completed baseline:
 
@@ -183,7 +189,7 @@ The current mainline data-artifact paths are:
 
 ```text
 Broadband pass-through CameraProfile
-  -> broadband LCD pupil scan: bar profiles + radius scan + ellipse fit
+  -> broadband LCD pupil scan
   -> PupilProfile
   -> selected-pupil-open per-band CameraProfile
   -> downstream PSF / dOTF / mask-family captures
@@ -200,6 +206,10 @@ FullFramePSFSurvey
   -> future AdaptivePeakClusterPSFDictionary
 ```
 
+The profile-driven calibration chain is documented in
+[`docs/profile_task_chain.md`](docs/profile_task_chain.md). Each stage
+persists an artifact and downstream tasks should restart from saved artifacts.
+
 `SensorEnergyCenterProfile` records one global sensor energy center as a camera
 coordinate origin for support analysis and future peak-cluster modelling. It is
 not a crop-window artifact and must not introduce ROI extraction, ROI size
@@ -207,29 +217,6 @@ selection, or ROI-centered exports. The profile also records per-entry
 background, corrected energy, and fallback diagnostics, and may be derived with
 an explicit valid pixel domain when known invalid sensor regions must be
 excluded.
-
-The broadband pass-through profile is only valid for pupil scanning. It must
-not be reused as the exposure profile for PSF-producing captures. Those tasks
-must depend on a `PupilProfile` and a per-band `CameraProfile` measured with
-the selected LCD pupil open.
-
-The broadband camera-profile task explicitly displays an all-transmissive
-physical LCD mask before exposure probing. It should not claim
-`lcd_state.mode=all_transmissive` based on an unverified external LCD state.
-The broadband pupil-scan task selects its effective circular pupil radius as a
-configured factor of the fitted ellipse semi-minor axis from the radius scan.
-Each profile stage is an artifact boundary: later stages should load the saved
-`CameraProfile` or `PupilProfile` rather than rerunning earlier scans.
-Camera exposure profile scans record configured gain settings, execute them in
-ascending gain order, and binary-search the maximum safe exposure for each
-completed gain. `max_exposure_us` is a hard no-extrapolation bound and should
-come from the camera API's real shutter upper limit for hardware plans. Profile
-artifacts publish the per-gain safe exposure table; the default selected profile
-prefers low gain, then stronger signal, then longer exposure. In per-band scans,
-TLS wavelength is the outermost loop because spectrometer motion is slow and
-expensive. Profile tasks also enforce LCD mask settle time of at least 20 ms and
-default to discarding 80 frames after camera exposure/gain changes. Tests may
-use a below-refresh LCD settle only through an explicit test override.
 
 The fixed-size `PeakPatchPSFDictionary` is a v1 compatibility baseline. The
 medium-term representation target is an adaptive peak-cluster dictionary where
@@ -528,7 +515,8 @@ The repository currently has:
 * completed first-pass `PeakSupportAnalysisReport`
 * hardware-free default test infrastructure
 
-The active work is Phase 3.5C: real-data support-analysis operationalization and
-support stability audit. Immediate `optic_system` work is limited to measured
-artifact construction and diagnostics. Learning-side forward modelling,
-reconstruction, and mask optimization remain `LCD_forward` responsibilities.
+Current active work has two tracks: Phase 3A-H hardware validation of the
+profile-driven calibration chain, and Phase 3.5C real-data support-analysis
+operationalization and support stability audit. Learning-side forward
+modelling, reconstruction, and mask optimization remain `LCD_forward`
+responsibilities.
