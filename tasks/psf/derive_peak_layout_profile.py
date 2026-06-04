@@ -9,6 +9,11 @@ import h5py
 import numpy as np
 
 from ._artifact_utils import PSFArtifactError, read_scalar_string
+from .sensor_energy_center import (
+    SensorEnergyCenterError,
+    SensorEnergyCenterProfile,
+    validate_center_profile_for_frame_source,
+)
 
 
 class PeakLayoutProfileError(PSFArtifactError):
@@ -36,6 +41,9 @@ class PeakLayoutProfileManifest:
     validity_scope: dict[str, str]
     detection_policy: dict[str, Any]
     notes: str | None = None
+    center_profile_id: str | None = None
+    energy_center_xy: list[float] | None = None
+    center_xy_rel: list[list[float]] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PeakLayoutProfileManifest:
@@ -80,6 +88,15 @@ class PeakLayoutProfileManifest:
             validity_scope=_require_dict(data, "validity_scope"),
             detection_policy=_require_dict(data, "detection_policy"),
             notes=_optional_str(data.get("notes")),
+            center_profile_id=_optional_str(data.get("center_profile_id")),
+            energy_center_xy=(
+                [float(v) for v in _float_pair(data["energy_center_xy"], "energy_center_xy")]
+                if data.get("energy_center_xy") is not None else None
+            ),
+            center_xy_rel=(
+                _float_pairs(data, "center_xy_rel")
+                if data.get("center_xy_rel") is not None else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +132,7 @@ def derive_peak_layout_profile(
     threshold_sigma: float = 3.0,
     min_area: int = 1,
     max_peaks: int | None = None,
+    center_profile: str | Path | SensorEnergyCenterProfile | None = None,
     notes: str | None = None,
 ) -> PeakLayoutProfileManifest:
     """Derive a replaceable first-pass peak layout from a full-frame scout survey."""
@@ -126,6 +144,7 @@ def derive_peak_layout_profile(
         peak_layout_id = output_path.stem
     if patch_shape_hw[0] <= 0 or patch_shape_hw[1] <= 0:
         raise PeakLayoutProfileError("patch_shape_hw must be positive")
+    center_profile_obj = _load_center_profile(center_profile)
 
     with h5py.File(survey_path, "r") as src:
         if "full_frame_survey/frames_avg" not in src:
@@ -189,11 +208,36 @@ def derive_peak_layout_profile(
         valid_wavelengths = _read_float_dataset(src, "full_frame_survey/unique_wavelength_nm")
         valid_mask_ids = _read_string_dataset(src, "full_frame_survey/unique_mask_ids")
         camera_extent = _read_camera_frame_extent(src)
+        coordinate_frame = _coordinate_frame(camera_extent)
+        if center_profile_obj is not None:
+            try:
+                validate_center_profile_for_frame_source(
+                    center_profile_obj,
+                    coordinate_frame=coordinate_frame,
+                    camera_frame_extent=camera_extent,
+                    frame_shape=(int(h), int(w)),
+                )
+            except SensorEnergyCenterError as exc:
+                raise PeakLayoutProfileError(str(exc)) from exc
+        energy_center_xy = (
+            [float(center_profile_obj.center_xy[0]), float(center_profile_obj.center_xy[1])]
+            if center_profile_obj is not None else None
+        )
+        center_xy_rel = (
+            [
+                [
+                    float(p["center_xy"][0]) - float(energy_center_xy[0]),
+                    float(p["center_xy"][1]) - float(energy_center_xy[1]),
+                ]
+                for p in peaks
+            ]
+            if energy_center_xy is not None else None
+        )
         manifest = PeakLayoutProfileManifest(
             peak_layout_id=str(peak_layout_id),
             source_survey_h5=str(survey_path),
             frame_shape=(int(h), int(w)),
-            coordinate_frame=_coordinate_frame(camera_extent),
+            coordinate_frame=coordinate_frame,
             camera_frame_extent=camera_extent,
             peak_ids=peak_ids,
             center_xy=[p["center_xy"] for p in peaks],
@@ -223,7 +267,14 @@ def derive_peak_layout_profile(
                 "min_area": int(min_area),
                 "max_peaks": max_peaks,
                 "patch_shape_hw": [int(patch_shape_hw[0]), int(patch_shape_hw[1])],
+                "center_profile_role": "optional_but_preferred",
             },
+            center_profile_id=(
+                center_profile_obj.center_profile_id
+                if center_profile_obj is not None else None
+            ),
+            energy_center_xy=energy_center_xy,
+            center_xy_rel=center_xy_rel,
             notes=notes,
         )
 
@@ -321,6 +372,19 @@ def _coordinate_frame(camera_frame_extent: dict[str, Any]) -> str:
     return "acquired_frame"
 
 
+def _load_center_profile(
+    center_profile: str | Path | SensorEnergyCenterProfile | None,
+) -> SensorEnergyCenterProfile | None:
+    if center_profile is None:
+        return None
+    if isinstance(center_profile, SensorEnergyCenterProfile):
+        return center_profile
+    try:
+        return SensorEnergyCenterProfile.load_json(center_profile)
+    except SensorEnergyCenterError as exc:
+        raise PeakLayoutProfileError(str(exc)) from exc
+
+
 def _require_str(data: dict[str, Any], key: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -360,6 +424,12 @@ def _require_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
 
 def _float_pairs(data: dict[str, Any], key: str) -> list[list[float]]:
     return [[float(pair[0]), float(pair[1])] for pair in _require_list(data, key)]
+
+
+def _float_pair(value: Any, name: str) -> tuple[float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise PeakLayoutProfileError(f"{name} must be a pair")
+    return (float(value[0]), float(value[1]))
 
 
 def _int_pairs(data: dict[str, Any], key: str) -> list[list[int]]:

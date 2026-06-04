@@ -85,6 +85,7 @@ separate compatibility-preserving move is explicitly planned.
 | `tasks/profiles/calibrate_per_band_pupil_open_camera_profile.py` | **active** | Per-band exposure calibration under selected-pupil-open LCD state |
 | `tasks/psf/profile_requirements.py` | **active** | Explicit profile dependency validation for broadband pupil scan and PSF-producing tasks |
 | `tasks/psf/build_full_frame_psf_survey.py` | **active** | Small full-frame scout artifact for peak layout discovery |
+| `tasks/psf/sensor_energy_center.py` | **active** | Sensor energy center profile derivation for center-relative PSF / peak-cluster coordinates |
 | `tasks/psf/derive_peak_layout_profile.py` | **active** | Peak layout profile derivation from scout survey data |
 | `tasks/psf/build_peak_patch_psf_dictionary.py` | **active** | Profile-dependent peak-patch PSF dictionary builder |
 | `tasks/psf/export_peak_patch_dictionary_to_lcd_forward.py` | **active** | Peak-patch dictionary export with LCD_forward-readable metadata |

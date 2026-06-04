@@ -8,6 +8,12 @@ from typing import Any
 import h5py
 import numpy as np
 
+from .sensor_energy_center import (
+    SensorEnergyCenterError,
+    SensorEnergyCenterProfile,
+    validate_center_profile_for_frame_source,
+)
+
 try:  # scipy is optional; keep the pure-Python fallback for minimal environments.
     from scipy import ndimage as _scipy_ndimage
 except Exception:  # pragma: no cover - exercised only when scipy is unavailable.
@@ -113,6 +119,7 @@ def analyze_diffraction_support(
     connectivity: int | None = None,
     center_policy: str = "frame_center",
     manual_center_xy: tuple[float, float] | None = None,
+    center_profile: str | Path | SensorEnergyCenterProfile | None = None,
     valid_pixel_domain: dict[str, Any] | None = None,
     allow_raw_fallback: bool = False,
     energy_only: bool = False,
@@ -122,6 +129,13 @@ def analyze_diffraction_support(
     source_path = Path(survey_h5)
     out_path = Path(output_h5)
     preset = _support_analysis_preset(preset_name)
+    center_profile_obj = _load_center_profile(center_profile)
+    if center_profile_obj is not None:
+        if center_policy not in {"frame_center", "sensor_energy_center_profile"}:
+            raise DiffractionSupportAnalysisError(
+                "center_profile requires center_policy='sensor_energy_center_profile'"
+            )
+        center_policy = "sensor_energy_center_profile"
     tau = [float(x) for x in (tau_values or DEFAULT_TAU_VALUES)]
     radii = [float(x) for x in (support_radii or DEFAULT_SUPPORT_RADII)]
     resolved_far_field_radius = (
@@ -157,6 +171,16 @@ def analyze_diffraction_support(
     component_rows: list[dict[str, Any]] = []
     with h5py.File(str(source_path), "r") as source_file:
         frames, survey = _open_survey_frame_source(source_file, allow_raw_fallback=allow_raw_fallback)
+        if center_profile_obj is not None:
+            try:
+                validate_center_profile_for_frame_source(
+                    center_profile_obj,
+                    coordinate_frame=survey.coordinate_frame,
+                    camera_frame_extent=survey.camera_frame_extent,
+                    frame_shape=survey.frame_shape,
+                )
+            except SensorEnergyCenterError as exc:
+                raise DiffractionSupportAnalysisError(str(exc)) from exc
         valid_mask = _valid_pixel_mask(survey.frame_shape, valid_pixel_domain)
         if not np.any(valid_mask):
             raise DiffractionSupportAnalysisError("valid pixel mask is empty")
@@ -179,7 +203,13 @@ def analyze_diffraction_support(
             bg = float(np.percentile(psf[valid_mask], resolved_bg_percentile))
             corr = np.maximum(psf - bg, 0.0)
             corr_valid = np.where(valid_mask, corr, 0.0)
-            center = _resolve_center_xy(corr_valid, valid_mask, center_policy, manual_center_xy)
+            center = _resolve_center_xy(
+                corr_valid,
+                valid_mask,
+                center_policy,
+                manual_center_xy,
+                center_profile_obj,
+            )
             radius_map = _radius_map(survey.frame_shape, center)
             total = float(np.sum(corr_valid))
             far_mask = (radius_map >= float(resolved_far_field_radius)) & valid_mask
@@ -214,6 +244,7 @@ def analyze_diffraction_support(
                             connectivity=int(resolved_connectivity),
                             mask_id=survey.mask_ids[entry_index],
                             wavelength_nm=survey.wavelengths_nm[entry_index],
+                            energy_center_xy=center,
                         )
                 )
 
@@ -240,6 +271,7 @@ def analyze_diffraction_support(
             "center_policy": center_policy,
             "far_field_radius": float(resolved_far_field_radius),
             "support_radii": radii,
+            **_center_profile_radial_policy(center_profile_obj),
         },
         component_policy={
             "analysis_mode": "energy_only" if energy_only else "component_table",
@@ -454,8 +486,43 @@ def _validate_parameters(
         raise DiffractionSupportAnalysisError("min_component_area must be > 0")
     if int(connectivity) not in (4, 8):
         raise DiffractionSupportAnalysisError("connectivity must be 4 or 8")
-    if center_policy not in {"frame_center", "manual_xy", "brightest_component"}:
+    if center_policy not in {
+        "frame_center",
+        "manual_xy",
+        "brightest_component",
+        "sensor_energy_center_profile",
+    }:
         raise DiffractionSupportAnalysisError("unsupported center_policy")
+
+
+def _load_center_profile(
+    center_profile: str | Path | SensorEnergyCenterProfile | None,
+) -> SensorEnergyCenterProfile | None:
+    if center_profile is None:
+        return None
+    if isinstance(center_profile, SensorEnergyCenterProfile):
+        return center_profile
+    try:
+        return SensorEnergyCenterProfile.load_json(center_profile)
+    except SensorEnergyCenterError as exc:
+        raise DiffractionSupportAnalysisError(str(exc)) from exc
+
+
+def _center_profile_radial_policy(
+    center_profile: SensorEnergyCenterProfile | None,
+) -> dict[str, Any]:
+    if center_profile is None:
+        return {}
+    return {
+        "center_profile_id": center_profile.center_profile_id,
+        "center_xy": [float(center_profile.center_xy[0]), float(center_profile.center_xy[1])],
+        "center_profile_coordinate_frame": center_profile.coordinate_frame,
+        "global_center_std_xy": [
+            float(center_profile.global_center_std_xy[0]),
+            float(center_profile.global_center_std_xy[1]),
+        ],
+        "max_center_deviation_px": float(center_profile.max_center_deviation_px),
+    }
 
 
 def _support_analysis_preset(preset_name: str | None) -> dict[str, Any]:
@@ -479,6 +546,7 @@ def _component_rows_for_entry(
     connectivity: int,
     mask_id: str,
     wavelength_nm: float,
+    energy_center_xy: tuple[float, float],
 ) -> list[dict[str, Any]]:
     labels = _connected_components(significant_mask, connectivity=connectivity)
     rows: list[dict[str, Any]] = []
@@ -491,6 +559,10 @@ def _component_rows_for_entry(
         radii = radius_map[yy, xx]
         energy = float(np.sum(values))
         area = int(coords.shape[0])
+        centroid = [
+            float(np.sum(xx * values) / energy) if energy > 0 else float(np.mean(xx)),
+            float(np.sum(yy * values) / energy) if energy > 0 else float(np.mean(yy)),
+        ]
         rows.append(
             {
                 "entry_index": int(entry_index),
@@ -502,15 +574,18 @@ def _component_rows_for_entry(
                     int(np.max(xx)) + 1,
                     int(np.max(yy)) + 1,
                 ],
-                "centroid_xy": [
-                    float(np.sum(xx * values) / energy) if energy > 0 else float(np.mean(xx)),
-                    float(np.sum(yy * values) / energy) if energy > 0 else float(np.mean(yy)),
+                "centroid_xy": centroid,
+                "centroid_xy_abs": centroid,
+                "centroid_xy_rel": [
+                    float(centroid[0]) - float(energy_center_xy[0]),
+                    float(centroid[1]) - float(energy_center_xy[1]),
                 ],
                 "area": area,
                 "energy": energy,
                 "peak_value": float(np.max(values)) if values.size else 0.0,
                 "mean_value": float(np.mean(values)) if values.size else 0.0,
                 "max_radius": float(np.max(radii)) if radii.size else 0.0,
+                "max_radius_from_energy_center": float(np.max(radii)) if radii.size else 0.0,
                 "is_far_field": bool(np.max(radii) >= far_field_radius) if radii.size else False,
                 "mask_id": str(mask_id),
                 "wavelength_nm": float(wavelength_nm),
@@ -634,6 +709,14 @@ def _write_report_h5(
                 "centroid_xy",
                 data=np.asarray([r["centroid_xy"] for r in component_rows], dtype=np.float64).reshape((n_comp, 2)),
             )
+            comp.create_dataset(
+                "centroid_xy_abs",
+                data=np.asarray([r["centroid_xy_abs"] for r in component_rows], dtype=np.float64).reshape((n_comp, 2)),
+            )
+            comp.create_dataset(
+                "centroid_xy_rel",
+                data=np.asarray([r["centroid_xy_rel"] for r in component_rows], dtype=np.float64).reshape((n_comp, 2)),
+            )
             comp.create_dataset("area", data=np.asarray([r["area"] for r in component_rows], dtype=np.int64))
             comp.create_dataset("energy", data=np.asarray([r["energy"] for r in component_rows], dtype=np.float64))
             comp.create_dataset(
@@ -647,6 +730,10 @@ def _write_report_h5(
             comp.create_dataset(
                 "max_radius",
                 data=np.asarray([r["max_radius"] for r in component_rows], dtype=np.float64),
+            )
+            comp.create_dataset(
+                "max_radius_from_energy_center",
+                data=np.asarray([r["max_radius_from_energy_center"] for r in component_rows], dtype=np.float64),
             )
             comp.create_dataset(
                 "is_far_field",
@@ -678,18 +765,32 @@ def _read_component_rows(report_h5: str | Path) -> list[dict[str, Any]]:
         n = int(comp["entry_index"].shape[0])
         rows: list[dict[str, Any]] = []
         for i in range(n):
+            centroid_xy = [float(v) for v in comp["centroid_xy"][i]]
             rows.append(
                 {
                     "entry_index": int(comp["entry_index"][i]),
                     "tau": float(comp["tau"][i]),
                     "component_id": int(comp["component_id"][i]),
                     "bbox_xyxy": [int(v) for v in comp["bbox_xyxy"][i]],
-                    "centroid_xy": [float(v) for v in comp["centroid_xy"][i]],
+                    "centroid_xy": centroid_xy,
+                    "centroid_xy_abs": (
+                        [float(v) for v in comp["centroid_xy_abs"][i]]
+                        if "centroid_xy_abs" in comp else centroid_xy
+                    ),
+                    "centroid_xy_rel": (
+                        [float(v) for v in comp["centroid_xy_rel"][i]]
+                        if "centroid_xy_rel" in comp else [0.0, 0.0]
+                    ),
                     "area": int(comp["area"][i]),
                     "energy": float(comp["energy"][i]),
                     "peak_value": float(comp["peak_value"][i]),
                     "mean_value": float(comp["mean_value"][i]),
                     "max_radius": float(comp["max_radius"][i]),
+                    "max_radius_from_energy_center": (
+                        float(comp["max_radius_from_energy_center"][i])
+                        if "max_radius_from_energy_center" in comp
+                        else float(comp["max_radius"][i])
+                    ),
                     "is_far_field": bool(comp["is_far_field"][i]),
                     "mask_id": _decode(comp["mask_id"][i]),
                     "wavelength_nm": float(comp["wavelength_nm"][i]),
@@ -831,6 +932,7 @@ def _resolve_center_xy(
     valid_mask: np.ndarray,
     center_policy: str,
     manual_center_xy: tuple[float, float] | None,
+    center_profile: SensorEnergyCenterProfile | None = None,
 ) -> tuple[float, float]:
     h, w = corr.shape
     if center_policy == "frame_center":
@@ -843,6 +945,12 @@ def _resolve_center_xy(
         peak_eval = np.where(valid_mask, corr, -np.inf)
         y, x = np.unravel_index(int(np.argmax(peak_eval)), peak_eval.shape)
         return (float(x), float(y))
+    if center_policy == "sensor_energy_center_profile":
+        if center_profile is None:
+            raise DiffractionSupportAnalysisError(
+                "center_profile is required for center_policy='sensor_energy_center_profile'"
+            )
+        return (float(center_profile.center_xy[0]), float(center_profile.center_xy[1]))
     raise DiffractionSupportAnalysisError(f"unsupported center_policy: {center_policy}")
 
 

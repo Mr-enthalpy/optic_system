@@ -60,10 +60,15 @@ def main() -> int:
     )
     parser.add_argument(
         "--center-policy",
-        choices=("frame_center", "manual_xy", "brightest_component"),
+        choices=("frame_center", "manual_xy", "brightest_component", "sensor_energy_center_profile"),
         default="frame_center",
     )
     parser.add_argument("--manual-center-xy", type=float, nargs=2, default=None)
+    parser.add_argument(
+        "--center-profile",
+        default=None,
+        help="SensorEnergyCenterProfile JSON. Implies center-policy=sensor_energy_center_profile.",
+    )
     parser.add_argument("--notes", default=None)
     args = parser.parse_args()
 
@@ -79,6 +84,7 @@ def main() -> int:
         connectivity=args.connectivity,
         center_policy=args.center_policy,
         manual_center_xy=tuple(args.manual_center_xy) if args.manual_center_xy is not None else None,
+        center_profile=args.center_profile,
         allow_raw_fallback=bool(args.allow_raw_fallback),
         energy_only=bool(args.energy_only),
         preset_name=args.preset,
