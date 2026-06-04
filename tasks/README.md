@@ -116,6 +116,17 @@ PSF-producing tasks. Pupil scanning uses TLS zero-order pass-through
 `TLSService.set_pass_through()` / `tls_c1.set_pass_through()`), not a selected
 monochromatic wavelength.
 
+`PupilScanPlan.scan_range_xyxy` uses the conventional image-coordinate order
+`x0, y0, x1, y1` in LCD physical pixels. For example,
+`scan_range_xyxy: [10, 20, 90, 70]` scans x bars over `[10, 90)` and y bars
+over `[20, 70)`.
+
+No-hardware tests may construct a broadband pass-through profile with
+`tls=None`, in which case the profile records
+`tls_status.pass_through_requested=false`. Real hardware profile generation
+must provide TLS and must actually move the monochromator to zero-order
+pass-through.
+
 ## Policy
 
 - Old tasks may be referenced for design patterns but must not be assumed correct.

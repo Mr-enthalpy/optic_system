@@ -21,6 +21,7 @@ from tasks.profiles import (
     calibrate_per_band_pupil_open_camera_profile,
     run_broadband_pupil_scan,
 )
+from tasks.profiles.scan_pupil_broadband import _bar_starts
 
 
 @dataclass
@@ -184,6 +185,22 @@ def test_broadband_pupil_scan_outputs_pupil_profile() -> None:
     assert abs(pupil.lcd_physical_center[1] - 37.0) < 5.0
     assert pupil.lcd_physical_radius is not None
     assert pupil.extra["illumination_mode"] == BROADBAND_PASSTHROUGH
+
+
+def test_pupil_scan_range_xyxy_uses_x0_y0_x1_y1_order() -> None:
+    plan = PupilScanPlan(
+        pupil_profile_id="pupil_profile_scan_v1",
+        camera_profile_id="broadband_scan_safe_v1",
+        physical_shape=(80, 120),
+        lcd_display_index=1,
+        subpixel_axis=1,
+        bar_width=6,
+        scan_step=20,
+        scan_range_xyxy=(10, 20, 90, 70),
+    )
+
+    assert _bar_starts("x", plan) == [10, 30, 50, 70]
+    assert _bar_starts("y", plan) == [20, 40, 60]
 
 
 def test_per_band_pupil_open_calibration_outputs_profile() -> None:

@@ -55,6 +55,7 @@ class PupilScanPlan:
     frames_per_capture: int = 5
     bar_width: int = 16
     scan_step: int = 8
+    # Conventional image/detection order: x0, y0, x1, y1 in LCD physical pixels.
     scan_range_xyxy: tuple[int, int, int, int] | None = None
     bg_code: int = 255
     bar_code: int = 0
@@ -116,6 +117,7 @@ class PupilScanReport:
                     list(self.plan.scan_range_xyxy)
                     if self.plan.scan_range_xyxy is not None else None
                 ),
+                "scan_range_xyxy_convention": "x0,y0,x1,y1",
                 "radius_factor": float(self.plan.radius_factor),
             },
         }
@@ -313,7 +315,7 @@ def _bar_starts(axis: str, plan: PupilScanPlan) -> list[int]:
     if plan.scan_range_xyxy is None:
         start, end = (0, w) if axis == "x" else (0, h)
     else:
-        x0, x1, y0, y1 = plan.scan_range_xyxy
+        x0, y0, x1, y1 = plan.scan_range_xyxy
         start, end = (x0, x1) if axis == "x" else (y0, y1)
     limit = w if axis == "x" else h
     step = max(1, int(plan.scan_step))
@@ -406,5 +408,5 @@ def _optional_int_quad(value: Any) -> tuple[int, int, int, int] | None:
     if value is None:
         return None
     if not isinstance(value, (list, tuple)) or len(value) != 4:
-        raise PupilScanError("scan_range_xyxy must contain four integers")
+        raise PupilScanError("scan_range_xyxy must contain four integers: x0, y0, x1, y1")
     return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))
