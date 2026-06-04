@@ -323,7 +323,9 @@ Rules:
   for each gain binary-search the largest shutter/exposure that keeps
   valid-domain peak pixels below the configured full-scale safety limit.
   Higher-gain failure may stop later higher-gain probes; this must be recorded
-  in metadata rather than hidden.
+  in metadata rather than hidden. Only explicit lower-bound-unsafe failures may
+  be converted into this stop condition. Configuration errors, frame-shape
+  errors, and backend exceptions must propagate as task failures.
 * `max_exposure_us` is a hard no-extrapolation bound. Hardware profile plans
   should set it from the camera API's real shutter upper limit. If that upper
   bound remains safe, artifacts must record that the search reached the

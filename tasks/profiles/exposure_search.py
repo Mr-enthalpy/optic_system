@@ -11,6 +11,10 @@ class ExposureSearchError(ValueError):
     pass
 
 
+class ExposureLowerBoundUnsafeError(ExposureSearchError):
+    pass
+
+
 @dataclass(frozen=True)
 class ExposureCandidate:
     exposure_us: float
@@ -256,7 +260,7 @@ def evaluate_gain_binary_search(
                 camera_param_settle_ms=float(config.camera_param_settle_ms),
                 discard_frames_after_param_change=int(config.discard_frames_after_param_change),
             )
-        except ExposureSearchError:
+        except ExposureLowerBoundUnsafeError:
             if gain_index == 0:
                 raise
             for row in rows:
@@ -342,7 +346,9 @@ def evaluate_exposure_binary_search(
             row.metadata["max_exposure_safe_without_saturation"] = True
         return rows
     if not bool(low_row.metadata["binary_search_safe"]):
-        raise ExposureSearchError("minimum exposure is not safe under binary search policy")
+        raise ExposureLowerBoundUnsafeError(
+            "minimum exposure is not safe under binary search policy"
+        )
 
     safe_low = low
     unsafe_high = high

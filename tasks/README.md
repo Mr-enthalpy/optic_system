@@ -136,8 +136,11 @@ for gain_db in sorted(configured gains ascending):
 `gains_db` is recorded as configured, but execution sorts it ascending before
 probing. If a non-first higher gain is already unsafe at the minimum exposure,
 later higher gains are skipped and this stop condition is recorded in probe
-metadata. Profile artifacts publish a safe exposure table for every completed
-gain, not just the single default setting.
+metadata. Only the explicit lower-bound-unsafe error is interpreted this way;
+configuration errors, capture shape errors, and backend exceptions must fail
+the task instead of being reported as high-gain saturation. Profile artifacts
+publish a safe exposure table for every completed gain, not just the single
+default setting.
 
 `max_exposure_us` is a hard search bound. The binary search never extrapolates
 past it. Hardware plans should set it from the camera API's actual shutter
