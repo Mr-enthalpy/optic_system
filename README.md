@@ -203,6 +203,10 @@ not be reused as the exposure profile for PSF-producing captures. Those tasks
 must depend on a `PupilProfile` and a per-band `CameraProfile` measured with
 the selected LCD pupil open.
 
+The broadband camera-profile task explicitly displays an all-transmissive
+physical LCD mask before exposure probing. It should not claim
+`lcd_state.mode=all_transmissive` based on an unverified external LCD state.
+
 The fixed-size `PeakPatchPSFDictionary` is a v1 compatibility baseline. The
 medium-term representation target is an adaptive peak-cluster dictionary where
 each real diffraction peak cluster has its own support, coordinates, and local

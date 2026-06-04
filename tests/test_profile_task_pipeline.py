@@ -126,7 +126,8 @@ class SyntheticCamera:
 
 def test_broadband_camera_calibration_uses_tls_pass_through() -> None:
     tls = FakePassThroughTLS()
-    camera = SyntheticCamera(lcd=None)
+    lcd = SyntheticLCD(shape=(80, 120))
+    camera = SyntheticCamera(lcd=lcd)
     plan = BroadbandCameraCalibrationPlan(
         camera_profile_id="broadband_scan_safe_v1",
         candidates=[
@@ -138,13 +139,17 @@ def test_broadband_camera_calibration_uses_tls_pass_through() -> None:
         full_scale=255.0,
     )
 
-    result = calibrate_broadband_camera_profile(plan, camera=camera, tls=tls)
+    result = calibrate_broadband_camera_profile(plan, camera=camera, lcd=lcd, tls=tls)
 
     assert tls.pass_through_calls == 1
+    assert lcd.last_mask_id == "broadband_camera_calibration_all_transmissive"
+    assert np.all(lcd.last_mask == 255)
     profile = result.camera_profile
     assert profile.profile_family == BROADBAND_PASSTHROUGH
     assert profile.illumination.tls_setpoint_nm == 0.0
     assert profile.illumination.wavelengths_nm == []
+    assert profile.lcd_state["mode"] == "all_transmissive"
+    assert profile.lcd_state["asserted_by_task"] is True
     assert profile.exposure_us is not None
 
 

@@ -121,11 +121,13 @@ monochromatic wavelength.
 `scan_range_xyxy: [10, 20, 90, 70]` scans x bars over `[10, 90)` and y bars
 over `[20, 70)`.
 
-No-hardware tests may construct a broadband pass-through profile with
-`tls=None`, in which case the profile records
-`tls_status.pass_through_requested=false`. Real hardware profile generation
-must provide TLS and must actually move the monochromator to zero-order
-pass-through.
+`calibrate_broadband_camera_profile` must receive an LCD adapter and must
+display an all-transmissive physical mask before exposure probing; only then
+may the resulting `CameraProfile` record `lcd_state.mode=all_transmissive`.
+No-hardware tests may use fake LCD/TLS adapters, and may pass `tls=None` to
+record `tls_status.pass_through_requested=false`. Real hardware profile
+generation must provide TLS and must actually move the monochromator to
+zero-order pass-through.
 
 ## Policy
 

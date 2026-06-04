@@ -319,13 +319,15 @@ Rules:
   selected monochromatic wavelength.
 * `PupilScanPlan.scan_range_xyxy` uses conventional physical LCD coordinate
   order: `x0, y0, x1, y1`.
+* Broadband camera calibration must receive an LCD adapter and must explicitly
+  display an all-transmissive physical mask before exposure probing.
 * Per-band camera profiles for PSF-producing tasks must be measured with the
   selected LCD pupil open.
 * Do not reuse full-LCD-open per-band exposure profiles as selected-pupil-open
   capture profiles.
-* No-hardware tests may use `tls=None` for synthetic broadband calibration,
-  but real hardware profile generation must provide TLS and actually enter
-  pass-through mode.
+* No-hardware tests may use fake LCD/TLS adapters and may use `tls=None` for
+  synthetic broadband calibration, but real hardware profile generation must
+  provide TLS and actually enter pass-through mode.
 * Bachelor-thesis branch tasks may be audited for algorithms, but their old
   workflow ordering must not be copied into mainline.
 

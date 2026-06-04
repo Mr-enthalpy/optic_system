@@ -9,6 +9,7 @@ from .camera_profile import (
 )
 from .calibrate_broadband_camera_profile import (
     BroadbandCalibrationError,
+    BroadbandCalibrationLCD,
     BroadbandCameraCalibrationPlan,
     BroadbandCameraCalibrationResult,
     calibrate_broadband_camera_profile,
@@ -38,6 +39,7 @@ from .scan_pupil_broadband import (
 __all__ = [
     "BROADBAND_PASSTHROUGH",
     "BroadbandCalibrationError",
+    "BroadbandCalibrationLCD",
     "MONOCHROMATIC",
     "PER_BAND_PUPIL_OPEN",
     "BroadbandCameraCalibrationPlan",

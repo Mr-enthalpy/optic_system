@@ -27,6 +27,14 @@ class PassThroughTLS(Protocol):
         ...
 
 
+class BroadbandCalibrationLCD(Protocol):
+    def show_physical_mask(self, mask: np.ndarray, *, mask_id: str | None = None) -> None:
+        ...
+
+    def physical_shape(self) -> tuple[int, int]:
+        ...
+
+
 @dataclass
 class BroadbandCameraCalibrationResult:
     camera_profile: CameraProfile
@@ -46,9 +54,12 @@ class BroadbandCameraCalibrationResult:
 class BroadbandCameraCalibrationPlan:
     camera_profile_id: str
     candidates: list[ExposureCandidate]
+    physical_shape: tuple[int, int] | None = None
     frames_per_capture: int = 5
     full_scale: float = 255.0
     source: str = "xenon"
+    transmissive_code: int = 255
+    all_transmissive_mask_id: str = "broadband_camera_calibration_all_transmissive"
     valid_for: list[str] = field(default_factory=lambda: ["pupil_scan_broadband"])
 
     @classmethod
@@ -56,9 +67,17 @@ class BroadbandCameraCalibrationPlan:
         return cls(
             camera_profile_id=str(data["camera_profile_id"]),
             candidates=[ExposureCandidate.from_dict(item) for item in data["candidates"]],
+            physical_shape=_optional_int_pair(data.get("physical_shape")),
             frames_per_capture=int(data.get("frames_per_capture", 5)),
             full_scale=float(data.get("full_scale", 255.0)),
             source=str(data.get("source", "xenon")),
+            transmissive_code=int(data.get("transmissive_code", 255)),
+            all_transmissive_mask_id=str(
+                data.get(
+                    "all_transmissive_mask_id",
+                    "broadband_camera_calibration_all_transmissive",
+                )
+            ),
             valid_for=[str(x) for x in data.get("valid_for", ["pupil_scan_broadband"])],
         )
 
@@ -67,9 +86,17 @@ def calibrate_broadband_camera_profile(
     plan: BroadbandCameraCalibrationPlan,
     *,
     camera: ExposureSearchCamera,
+    lcd: BroadbandCalibrationLCD,
     tls: PassThroughTLS | None = None,
     valid_pixel_mask: np.ndarray | None = None,
 ) -> BroadbandCameraCalibrationResult:
+    physical_shape = _physical_shape(plan, lcd)
+    all_transmissive = _solid_mask(physical_shape, plan.transmissive_code)
+    lcd.show_physical_mask(
+        all_transmissive,
+        mask_id=plan.all_transmissive_mask_id,
+    )
+
     if tls is not None:
         tls.set_pass_through(timeout_s=60.0)
     tls_status = _tls_status_dict(tls)
@@ -92,7 +119,13 @@ def calibrate_broadband_camera_profile(
             wavelengths_nm=[],
             source=plan.source,
         ),
-        lcd_state={"mode": "all_transmissive"},
+        lcd_state={
+            "mode": "all_transmissive",
+            "mask_id": plan.all_transmissive_mask_id,
+            "physical_shape": [int(physical_shape[0]), int(physical_shape[1])],
+            "transmissive_code": int(plan.transmissive_code),
+            "asserted_by_task": True,
+        },
         valid_for=list(plan.valid_for),
         exposure_us=float(recommended.exposure_us),
         gain_db=float(recommended.gain_db),
@@ -140,3 +173,36 @@ def _read_attr(obj: Any, name: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
     return getattr(obj, name, default)
+
+
+def _physical_shape(
+    plan: BroadbandCameraCalibrationPlan,
+    lcd: BroadbandCalibrationLCD,
+) -> tuple[int, int]:
+    if plan.physical_shape is not None:
+        return _validate_shape(plan.physical_shape)
+    return _validate_shape(lcd.physical_shape())
+
+
+def _solid_mask(shape: tuple[int, int], code: int) -> np.ndarray:
+    if code < 0 or code > 255:
+        raise BroadbandCalibrationError("transmissive_code must be in [0,255]")
+    h, w = _validate_shape(shape)
+    return np.full((h, w), int(code), dtype=np.uint8)
+
+
+def _validate_shape(shape: tuple[int, int]) -> tuple[int, int]:
+    if len(shape) != 2:
+        raise BroadbandCalibrationError("physical_shape must be [H,W]")
+    h, w = int(shape[0]), int(shape[1])
+    if h <= 0 or w <= 0:
+        raise BroadbandCalibrationError("physical_shape must be positive")
+    return h, w
+
+
+def _optional_int_pair(value: Any) -> tuple[int, int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise BroadbandCalibrationError("physical_shape must contain two integers")
+    return (int(value[0]), int(value[1]))
