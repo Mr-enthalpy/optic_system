@@ -40,11 +40,17 @@ Those belong to `LCD_forward` or later experiment-specific layers.
 
 ## Current phase
 
-Current mainline phase:
+Current active tracks:
 
 ```text
+Phase 3A-H -- hardware validation of the profile-driven calibration chain.
 Phase 3.5C -- real-data operationalization and support stability audit.
 ```
+
+Profile-chain hardware validation is about camera/LCD/TLS tasks and persisted
+profile artifacts. Support-stability work is about measured PSF
+survey/support/peak-cluster artifacts. Do not mix the two concerns in one PR
+unless explicitly requested.
 
 Completed:
 
@@ -55,6 +61,9 @@ Completed:
 
 Active:
 
+- Phase 3A-H validation of broadband pass-through `CameraProfile`, broadband
+  LCD pupil scan, `PupilProfile`, and selected-pupil-open per-band
+  `CameraProfile`.
 - scipy / streaming / energy-only support analysis.
 - real-data presets for 2048 x 2448 full-frame data.
 - `SupportCandidateStabilityReport`.
@@ -65,8 +74,8 @@ Current meaning:
 - ``app/main_gui.py`` is the manual/debug control GUI and may control hardware.
 - ``scripts/monitor_run_status.py`` is the only supported read-only monitor.
   It reads task-published run-status files and must remain hardware-free.
-- The bachelor-thesis experimental branch is separate and owns its own task
-  workflow.
+- The bachelor-thesis experimental branch is historical reference, not a
+  source of mainline workflow structure.
 - The active mainline path is measured-artifact construction and diagnostics,
   not learning-side modelling.
 
@@ -110,40 +119,20 @@ diagnostics, and metadata-rich exports.
 
 ## Mainline / thesis branch relationship
 
-The bachelor-thesis branch starts from the post-Phase-2B baseline and uses a
-distilled experimental workflow for thesis delivery.
+The bachelor-thesis branch is historical reference.
 
-Mainline and thesis branch have different responsibilities:
+Mainline may absorb:
 
-Mainline provides reusable infrastructure:
+- audited algorithms;
+- reusable artifact abstractions;
+- hardware-free diagnostics.
 
-- camera / LCD / TLS services
-- capture task foundations
-- raw HDF5 conventions
-- run-status diagnostics
-- read-only monitor
-- profile / survey / support / dictionary artifacts
-- GUI and architecture foundations
+Mainline must not absorb:
 
-The thesis branch consumes this infrastructure and implements thesis-specific
-task workflows:
-
-- exposure safety sweep
-- effective LCD pupil scan
-- PSF repeatability and alignment
-- dOTF diagnostic
-- measured PSF dictionary
-- minimal linear reconstruction demo
-- thesis figures
-
-Synchronization rule:
-
-- mainline architecture fixes may be periodically merged or rebased into the
-  thesis branch.
-- thesis-specific task code should not be moved into mainline unless explicitly
-  promoted as reusable infrastructure.
-- mainline documentation should not replace its Phase 3 / 3.5 / 3.6 measured
-  artifact roadmap with the thesis workflow.
+- thesis phase numbering;
+- thesis workflow ordering;
+- ROI-centered data contracts;
+- thesis-specific reconstruction or figure scripts.
 
 ## Architecture rules
 
@@ -303,69 +292,21 @@ Do not silently revive legacy task logic.
 
 ### Profile task chain
 
-The mainline profile chain is:
+Detailed operational rules for the profile-driven calibration chain live in
+`docs/profile_task_chain.md`.
 
-```text
-broadband pass-through camera calibration
-  -> broadband LCD pupil scan
-  -> PupilProfile
-  -> selected-pupil-open per-band camera calibration
-  -> downstream PSF / dOTF / mask-family capture tasks
-```
+Hard rules:
 
-Rules:
-
-* Each scan stage must be independently restartable from the previous persisted
-  artifact. Do not require rerunning broadband camera calibration after a
-  completed `CameraProfile`, or rerunning pupil scan after a completed
-  `PupilProfile`.
-* Camera exposure calibration is a gain-outer, exposure-binary-search process:
-  record configured gain candidates, sort them ascending for execution, and
-  for each gain binary-search the largest shutter/exposure that keeps
-  valid-domain peak pixels below the configured full-scale safety limit.
-  Higher-gain failure may stop later higher-gain probes; this must be recorded
-  in metadata rather than hidden. Only explicit lower-bound-unsafe failures may
-  be converted into this stop condition. Configuration errors, frame-shape
-  errors, and backend exceptions must propagate as task failures.
-* `max_exposure_us` is a hard no-extrapolation bound. Hardware profile plans
-  should set it from the camera API's real shutter upper limit. If that upper
-  bound remains safe, artifacts must record that the search reached the
-  configured maximum without finding saturation.
-* Camera profiles should publish all completed gain options with their maximum
-  verified safe exposure. The default selected profile should still prefer low
-  gain, then stronger signal, then longer exposure.
-* In selected-pupil-open per-band camera calibration, TLS wavelength traversal
-  must be the outermost loop. Move the spectrometer once per wavelength, then
-  perform all camera exposure/gain probes for that wavelength before moving TLS
-  again.
-* Any task that uses TLS hardware should order loops to minimize TLS motion;
-  TLS is slow and expensive compared with camera exposure changes.
-* Broadband camera profiles are valid for LCD pupil scanning only.
-* LCD pupil scanning must use TLS pass-through / broadband light, not one
-  selected monochromatic wavelength.
-* `PupilScanPlan.scan_range_xyxy` uses conventional physical LCD coordinate
-  order: `x0, y0, x1, y1`.
-* Broadband pupil scanning must use bar profiles followed by radius scan and
-  ellipse/circle overlap fitting; the effective circular radius is a factor of
-  the fitted ellipse semi-minor axis.
-* Broadband camera calibration must receive an LCD adapter and must explicitly
-  display an all-transmissive physical mask before exposure probing.
-* After setting any LCD mask, wait at least 20 ms before capture or the next
-  hardware-dependent action; the LCD refresh rate is 50 Hz.
-* A below-refresh LCD settle value is allowed only as an explicit no-hardware
-  unit-test override. Hardware plans and CLIs must clearly distinguish this
-  test override from real timing defaults.
-* After changing camera exposure or gain, discard more than 40 frames before
-  using frames for measurement. The mainline profile search default is 80.
-* Per-band camera profiles for PSF-producing tasks must be measured with the
-  selected LCD pupil open.
-* Do not reuse full-LCD-open per-band exposure profiles as selected-pupil-open
-  capture profiles.
-* No-hardware tests may use fake LCD/TLS adapters and may use `tls=None` for
-  synthetic broadband calibration, but real hardware profile generation must
-  provide TLS and actually enter pass-through mode.
-* Bachelor-thesis branch tasks may be audited for algorithms, but their old
-  workflow ordering must not be copied into mainline.
+* Pass-through uses `TLSService.set_pass_through()` /
+  `tls_c1.set_pass_through()`, not `set_wavelength(0)`.
+* PSF-producing tasks need a `PupilProfile` and a per-band pupil-open
+  `CameraProfile`.
+* Broadband `CameraProfile` artifacts are only for broadband pupil scan.
+* Full-LCD-open per-band profiles must not be used for PSF-producing tasks.
+* Hardware tests must remain opt-in.
+* Do not introduce hidden `LCD_forward` training or validation.
+* `SensorEnergyCenterProfile` is a coordinate-origin artifact, not a crop
+  artifact.
 
 ## Peak-cluster artifact rules
 
@@ -640,9 +581,10 @@ Completed:
 
 Current mainline priority:
 
-1. Accelerate `PeakSupportAnalysisReport` on real full-frame data.
-2. Add streaming / energy-only support analysis for large surveys.
-3. Define real-data presets for support analysis.
-4. Build `SupportCandidateStabilityReport`.
-5. Promote only stable support candidates into `AdaptivePeakLayoutProfile`.
-6. Build `AdaptivePeakClusterPSFDictionary`.
+1. Validate the Phase 3A-H profile-driven calibration chain on real hardware.
+2. Accelerate `PeakSupportAnalysisReport` on real full-frame data.
+3. Add streaming / energy-only support analysis for large surveys.
+4. Define real-data presets for support analysis.
+5. Build `SupportCandidateStabilityReport`.
+6. Promote only stable support candidates into `AdaptivePeakLayoutProfile`.
+7. Build `AdaptivePeakClusterPSFDictionary`.
