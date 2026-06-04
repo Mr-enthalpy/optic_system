@@ -277,6 +277,11 @@ zero-order position, where it passes broadband light through the optical path.
 
 Historical files under `tasks/` must not be assumed to define the current architecture.
 
+`tasks/artifacts/` contains hardware-free shared artifact IO, frame-source, and
+coordinate-frame helpers. New measured-artifact modules should use this layer
+instead of reimplementing frame-source parsing, manifest JSON handling, or
+coordinate validation.
+
 Before reusing any old task:
 
 1. audit whether it uses `control -> devices`

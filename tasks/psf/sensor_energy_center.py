@@ -8,6 +8,14 @@ from typing import Any
 import h5py
 import numpy as np
 
+from tasks.artifacts.coordinate_frame import (
+    CoordinateFrameDescriptor,
+    camera_frame_extent_from_dict,
+    validate_coordinate_frame_descriptor,
+)
+from tasks.artifacts.errors import ArtifactIOError
+from tasks.artifacts.frame_source import open_survey_or_raw_frame_source
+
 
 class SensorEnergyCenterError(ValueError):
     pass
@@ -218,9 +226,17 @@ def derive_sensor_energy_center_profile(
         center_profile_id = output_path.stem
 
     with h5py.File(str(source_path), "r") as f:
-        source = _open_frame_source(f, allow_raw_fallback=allow_raw_fallback)
+        try:
+            source = open_survey_or_raw_frame_source(
+                f,
+                source_path,
+                allow_raw_fallback=allow_raw_fallback,
+            )
+        except ArtifactIOError as exc:
+            raise SensorEnergyCenterError(str(exc)) from exc
+        descriptor = source.descriptor
         resolved_valid_mask = _valid_mask_from_domain(
-            source.frame_shape,
+            descriptor.frame_shape,
             valid_pixel_domain,
             valid_pixel_mask,
         )
@@ -228,8 +244,8 @@ def derive_sensor_energy_center_profile(
         background_values: list[float] = []
         total_energy: list[float] = []
         fallback_used: list[bool] = []
-        for entry_index in range(source.frame_count):
-            frame = _read_frame_entry(source.frames, entry_index)
+        for entry_index in range(descriptor.frame_count):
+            frame = source.read_frame(entry_index)
             estimate = estimate_frame_energy_center(
                 frame,
                 valid_pixel_mask=resolved_valid_mask,
@@ -248,9 +264,9 @@ def derive_sensor_energy_center_profile(
     deviations = np.linalg.norm(center_arr - np.asarray(global_center)[None, :], axis=1)
     per_wavelength_mean: dict[str, tuple[float, float]] = {}
     per_wavelength_std: dict[str, tuple[float, float]] = {}
-    for wavelength in _unique_preserve_order(source.wavelengths_nm):
+    for wavelength in _unique_preserve_order(list(descriptor.wavelengths_nm)):
         key = _wavelength_key(wavelength)
-        idx = [i for i, value in enumerate(source.wavelengths_nm) if float(value) == float(wavelength)]
+        idx = [i for i, value in enumerate(descriptor.wavelengths_nm) if float(value) == float(wavelength)]
         values = center_arr[idx, :]
         per_wavelength_mean[key] = tuple(float(v) for v in np.mean(values, axis=0))
         per_wavelength_std[key] = tuple(float(v) for v in np.std(values, axis=0))
@@ -258,9 +274,9 @@ def derive_sensor_energy_center_profile(
     profile = SensorEnergyCenterProfile(
         center_profile_id=str(center_profile_id),
         source_survey_h5=str(source_path),
-        coordinate_frame=source.coordinate_frame,
-        camera_frame_extent=source.camera_frame_extent,
-        camera_frame_shape=source.frame_shape,
+        coordinate_frame=descriptor.coordinate_frame,
+        camera_frame_extent=descriptor.camera_frame_extent_dict(),
+        camera_frame_shape=descriptor.frame_shape,
         center_xy=(float(global_center[0]), float(global_center[1])),
         estimator_name="full_frame_energy_weighted_centroid",
         bg_policy={
@@ -284,8 +300,8 @@ def derive_sensor_energy_center_profile(
             "outlier_rejection": None,
         },
         per_entry_center_xy=[(float(x), float(y)) for x, y in centers],
-        per_entry_mask_ids=list(source.mask_ids),
-        per_entry_wavelengths_nm=[float(v) for v in source.wavelengths_nm],
+        per_entry_mask_ids=list(descriptor.mask_ids),
+        per_entry_wavelengths_nm=[float(v) for v in descriptor.wavelengths_nm],
         per_entry_background_value=[float(v) for v in background_values],
         per_entry_total_corr_energy=[float(v) for v in total_energy],
         per_entry_fallback_used=[bool(v) for v in fallback_used],
@@ -306,154 +322,41 @@ def validate_center_profile_for_frame_source(
     camera_frame_extent: dict[str, Any],
     frame_shape: tuple[int, int] | None = None,
 ) -> None:
-    if profile.coordinate_frame != str(coordinate_frame):
-        raise SensorEnergyCenterError(
-            "center profile coordinate_frame does not match frame source"
-        )
-    if _canonical_json(profile.camera_frame_extent) != _canonical_json(camera_frame_extent):
-        raise SensorEnergyCenterError(
-            "center profile camera_frame_extent does not match frame source"
-        )
-    if frame_shape is not None and profile.camera_frame_shape is not None:
-        if tuple(int(v) for v in profile.camera_frame_shape) != tuple(int(v) for v in frame_shape):
-            raise SensorEnergyCenterError(
-                "center profile camera_frame_shape does not match frame source"
-            )
-
-
-@dataclass
-class _FrameSource:
-    frames: h5py.Dataset
-    mask_ids: list[str]
-    wavelengths_nm: list[float]
-    frame_shape: tuple[int, int]
-    coordinate_frame: str
-    camera_frame_extent: dict[str, Any]
-    frame_count: int
-
-
-def _open_frame_source(
-    f: h5py.File,
-    *,
-    allow_raw_fallback: bool,
-) -> _FrameSource:
-    if "full_frame_survey/frames_avg" in f:
-        frames = f["full_frame_survey/frames_avg"]
-        group = f["full_frame_survey"]
-        frame_count, frame_shape = _frame_dataset_count_and_shape(frames)
-        manifest = _read_json_dataset_or_attr(group, "manifest_json")
-        extent = _read_json_dataset_or_attr(group, "camera_frame_extent_json")
-        if not extent and isinstance(manifest.get("camera_frame_extent"), dict):
-            extent = dict(manifest["camera_frame_extent"])
-        coordinate_frame = _coordinate_frame_from_manifest_or_extent(manifest, extent)
-        return _FrameSource(
-            frames=frames,
-            mask_ids=_read_survey_mask_ids(f, group, frame_count),
-            wavelengths_nm=_read_survey_wavelengths(f, group, frame_count),
-            frame_shape=frame_shape,
-            coordinate_frame=coordinate_frame,
-            camera_frame_extent=_fallback_extent(extent, frame_shape),
-            frame_count=frame_count,
-        )
-    if allow_raw_fallback and "raw/frames_avg" in f:
-        frames = f["raw/frames_avg"]
-        frame_count, frame_shape = _frame_dataset_count_and_shape(frames)
-        return _FrameSource(
-            frames=frames,
-            mask_ids=_read_dataset_strings(f, "raw/mask_id", frame_count, "entry"),
-            wavelengths_nm=_read_raw_wavelengths(f, frame_count),
-            frame_shape=frame_shape,
-            coordinate_frame="acquired_frame",
-            camera_frame_extent=_fallback_extent({}, frame_shape),
-            frame_count=frame_count,
-        )
-    raise SensorEnergyCenterError(
-        "sensor energy center requires full_frame_survey/frames_avg; pass "
-        "allow_raw_fallback=True only for legacy/dev raw/frames_avg inputs"
+    actual_shape = (
+        tuple(int(v) for v in frame_shape)
+        if frame_shape is not None else tuple(int(v) for v in (profile.camera_frame_shape or (0, 0)))
     )
-
-
-def _frame_dataset_count_and_shape(frames: h5py.Dataset) -> tuple[int, tuple[int, int]]:
-    if frames.ndim == 2:
-        return 1, (int(frames.shape[0]), int(frames.shape[1]))
-    if frames.ndim == 3:
-        return int(frames.shape[0]), (int(frames.shape[1]), int(frames.shape[2]))
-    raise SensorEnergyCenterError(f"frames must be 2D or 3D, got {frames.shape}")
-
-
-def _read_frame_entry(frames: h5py.Dataset, entry_index: int) -> np.ndarray:
-    if frames.ndim == 2:
-        if int(entry_index) != 0:
-            raise SensorEnergyCenterError("2D frame source has only one entry")
-        return np.asarray(frames[()], dtype=np.float64)
-    return np.asarray(frames[int(entry_index), :, :], dtype=np.float64)
-
-
-def _read_survey_mask_ids(f: h5py.File, group: h5py.Group, n: int) -> list[str]:
-    for path in ("full_frame_survey/entry_mask_id", "full_frame_survey/entry_mask_ids", "full_frame_survey/mask_id"):
-        if path in f:
-            return _read_dataset_strings(f, path, n, "entry")
-    manifest = _read_json_dataset_or_attr(group, "manifest_json")
-    if isinstance(manifest.get("entry_mask_ids"), list):
-        return [str(x) for x in manifest["entry_mask_ids"][:n]]
-    return [f"entry_{i:04d}" for i in range(n)]
-
-
-def _read_survey_wavelengths(f: h5py.File, group: h5py.Group, n: int) -> list[float]:
-    for name in ("entry_wavelength_nm", "entry_wavelengths_nm", "wavelength_nm"):
-        if name in group:
-            arr = np.asarray(group[name], dtype=np.float64)
-            return [float(x) for x in arr[:n]]
-    manifest = _read_json_dataset_or_attr(group, "manifest_json")
-    if isinstance(manifest.get("entry_wavelengths_nm"), list):
-        return [float(x) for x in manifest["entry_wavelengths_nm"][:n]]
-    return [float("nan") for _ in range(n)]
-
-
-def _read_raw_wavelengths(f: h5py.File, n: int) -> list[float]:
-    if "raw/wavelength_nm" in f:
-        return [float(x) for x in np.asarray(f["raw/wavelength_nm"], dtype=np.float64)[:n]]
-    return [float("nan") for _ in range(n)]
-
-
-def _read_dataset_strings(f: h5py.File, path: str, n: int, fallback_prefix: str) -> list[str]:
-    if path not in f:
-        return [f"{fallback_prefix}_{i:04d}" for i in range(n)]
-    values = f[path][()]
-    return [_decode(x) for x in values[:n]]
-
-
-def _read_json_dataset_or_attr(group: h5py.Group, name: str) -> dict[str, Any]:
-    if name in group:
-        text = _decode(group[name][()])
-        return json.loads(text) if text else {}
-    if name in group.attrs:
-        text = _decode(group.attrs[name])
-        return json.loads(text) if text else {}
-    return {}
-
-
-def _coordinate_frame_from_manifest_or_extent(
-    manifest: dict[str, Any],
-    extent: dict[str, Any],
-) -> str:
-    value = manifest.get("coordinate_frame")
-    if isinstance(value, str) and value in {"sensor_full_frame", "acquired_frame"}:
-        return value
-    if extent.get("mode") == "full_sensor":
-        return "sensor_full_frame"
-    return "acquired_frame"
-
-
-def _fallback_extent(extent: dict[str, Any], frame_shape: tuple[int, int]) -> dict[str, Any]:
-    if extent:
-        return dict(extent)
-    return {
-        "mode": "unknown",
-        "origin_xy": [0, 0],
-        "shape_hw": [int(frame_shape[0]), int(frame_shape[1])],
-        "sensor_shape_hw": None,
-    }
+    expected_shape = (
+        tuple(int(v) for v in profile.camera_frame_shape)
+        if profile.camera_frame_shape is not None else actual_shape
+    )
+    try:
+        actual = CoordinateFrameDescriptor(
+            coordinate_frame=str(coordinate_frame),
+            camera_frame_extent=camera_frame_extent_from_dict(
+                camera_frame_extent,
+                fallback_shape=actual_shape,
+            ),
+            frame_shape=actual_shape,
+        )
+        expected = CoordinateFrameDescriptor(
+            coordinate_frame=str(profile.coordinate_frame),
+            camera_frame_extent=camera_frame_extent_from_dict(
+                profile.camera_frame_extent,
+                fallback_shape=expected_shape,
+            ),
+            frame_shape=expected_shape,
+        )
+        validate_coordinate_frame_descriptor(
+            actual,
+            expected,
+            require_same_frame_shape=frame_shape is not None
+            and profile.camera_frame_shape is not None,
+        )
+    except ValueError as exc:
+        raise SensorEnergyCenterError(
+            f"center profile {str(exc)}"
+        ) from exc
 
 
 def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> np.ndarray:
@@ -535,18 +438,6 @@ def _unique_preserve_order(values: list[float]) -> list[float]:
         if not any(float(value) == float(existing) for existing in out):
             out.append(float(value))
     return out
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
-
-
-def _decode(value: Any) -> str:
-    if isinstance(value, bytes):
-        return value.decode("utf-8")
-    if isinstance(value, np.bytes_):
-        return value.tobytes().decode("utf-8")
-    return str(value)
 
 
 def _require_str(data: dict[str, Any], key: str) -> str:

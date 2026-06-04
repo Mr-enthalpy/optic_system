@@ -8,7 +8,13 @@ from typing import Any
 import h5py
 import numpy as np
 
-from ._artifact_utils import PSFArtifactError, read_scalar_string
+from tasks.artifacts.coordinate_frame import (
+    camera_frame_extent_from_dict,
+    resolve_coordinate_frame,
+)
+from tasks.artifacts.json_io import read_json_dataset_or_attr
+
+from ._artifact_utils import PSFArtifactError
 from .sensor_energy_center import (
     SensorEnergyCenterError,
     SensorEnergyCenterProfile,
@@ -356,20 +362,19 @@ def _read_camera_frame_extent(src: h5py.File) -> dict[str, Any]:
         raise PeakLayoutProfileError(
             "survey missing full_frame_survey/camera_frame_extent_json"
         )
-    text = read_scalar_string(src["full_frame_survey/camera_frame_extent_json"])
     try:
-        extent = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise PeakLayoutProfileError("camera_frame_extent_json is invalid JSON") from exc
-    if not isinstance(extent, dict):
-        raise PeakLayoutProfileError("camera_frame_extent_json must decode to a mapping")
+        extent = read_json_dataset_or_attr(src["full_frame_survey"], "camera_frame_extent_json")
+    except ValueError as exc:
+        raise PeakLayoutProfileError(str(exc)) from exc
     return extent
 
 
 def _coordinate_frame(camera_frame_extent: dict[str, Any]) -> str:
-    if camera_frame_extent.get("mode") == "full_sensor":
-        return "sensor_full_frame"
-    return "acquired_frame"
+    try:
+        extent = camera_frame_extent_from_dict(camera_frame_extent)
+        return resolve_coordinate_frame(extent)
+    except ValueError:
+        return "acquired_frame"
 
 
 def _load_center_profile(

@@ -76,6 +76,18 @@ Profile-chain hardware rules are centralized in
 | `tasks/psf/export_peak_patch_dictionary_to_lcd_forward.py` | **active** | Peak-patch dictionary export with LCD_forward-readable metadata. |
 | `tasks/psf/compact_dense_export.py` | **active** | Diagnostic dense canvas rendering from peak patches and recorded coordinates. |
 
+## Active Shared Artifact Helpers
+
+| File | Status | Purpose |
+|------|--------|---------|
+| `tasks/artifacts/json_io.py` | **active** | Hardware-free JSON and HDF5 string helpers for measured artifacts. |
+| `tasks/artifacts/coordinate_frame.py` | **active** | Shared camera frame extent and coordinate-frame descriptors / validation. |
+| `tasks/artifacts/frame_source.py` | **active** | Shared HDF5 frame-source descriptors for full-frame survey and explicit raw fallback inputs. |
+| `tasks/artifacts/manifest.py` | **active** | Minimal manifest reference dataclasses and JSON helpers. |
+
+New measured-artifact modules should use `tasks/artifacts/` instead of
+reimplementing frame-source parsing or coordinate validation.
+
 ## Active Tests
 
 | File | Status |
