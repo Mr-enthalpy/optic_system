@@ -14,6 +14,7 @@ from tasks.profiles import (
     CameraProfile,
     ExposureCandidate,
     ExposureGainSearchConfig,
+    ExposureLowerBoundUnsafeError,
     ExposureSearchError,
     PerBandPupilOpenCalibrationPlan,
     PerBandCalibrationError,
@@ -267,6 +268,28 @@ def test_gain_binary_search_stops_only_on_lower_bound_unsafe() -> None:
     assert {row.gain_db for row in rows} == {0.0}
     assert all(row.metadata["gain_search_stopped_after_gain_db"] == 40.0 for row in rows)
     assert all(row.metadata["gain_search_stop_reason"] == "min_exposure_unsafe_at_higher_gain" for row in rows)
+
+
+def test_exposure_binary_search_does_not_probe_upper_when_lower_unsafe() -> None:
+    camera = SyntheticCamera(lcd=None)
+
+    with pytest.raises(ExposureLowerBoundUnsafeError):
+        evaluate_gain_binary_search(
+            camera,
+            ExposureGainSearchConfig(
+                min_exposure_us=1000.0,
+                max_exposure_us=10000.0,
+                gains_db=[40.0],
+                iterations=3,
+                safety_fraction=0.95,
+                camera_param_settle_ms=0.0,
+                discard_frames_after_param_change=0,
+            ),
+            frames_per_capture=2,
+            full_scale=255.0,
+        )
+
+    assert camera.applied_params == [(1000.0, 40.0)]
 
 
 def test_gain_binary_search_does_not_swallow_non_lower_bound_errors() -> None:

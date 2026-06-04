@@ -339,16 +339,16 @@ def evaluate_exposure_binary_search(
     low = float(config.min_exposure_us)
     high = float(config.max_exposure_us)
     low_row = probe(low, "lower_bound")
+    if not bool(low_row.metadata["binary_search_safe"]):
+        raise ExposureLowerBoundUnsafeError(
+            "minimum exposure is not safe under binary search policy"
+        )
     high_row = probe(high, "upper_bound")
     if bool(high_row.metadata["binary_search_safe"]):
         for row in rows:
             row.metadata["binary_search_termination"] = "max_exposure_safe_no_extrapolation"
             row.metadata["max_exposure_safe_without_saturation"] = True
         return rows
-    if not bool(low_row.metadata["binary_search_safe"]):
-        raise ExposureLowerBoundUnsafeError(
-            "minimum exposure is not safe under binary search policy"
-        )
 
     safe_low = low
     unsafe_high = high
