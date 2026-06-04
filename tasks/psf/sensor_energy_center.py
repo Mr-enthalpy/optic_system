@@ -27,6 +27,9 @@ class SensorEnergyCenterProfile:
     per_entry_center_xy: list[tuple[float, float]]
     per_entry_mask_ids: list[str]
     per_entry_wavelengths_nm: list[float]
+    per_entry_background_value: list[float]
+    per_entry_total_corr_energy: list[float]
+    per_entry_fallback_used: list[bool]
     per_wavelength_mean_center_xy: dict[str, tuple[float, float]]
     per_wavelength_center_std_xy: dict[str, tuple[float, float]]
     global_center_std_xy: tuple[float, float]
@@ -53,6 +56,27 @@ class SensorEnergyCenterProfile:
             per_entry_mask_ids=[str(x) for x in _require_list(data, "per_entry_mask_ids")],
             per_entry_wavelengths_nm=[
                 float(x) for x in _require_list(data, "per_entry_wavelengths_nm")
+            ],
+            per_entry_background_value=[
+                float(x)
+                for x in data.get(
+                    "per_entry_background_value",
+                    [float("nan")] * len(data.get("per_entry_center_xy", [])),
+                )
+            ],
+            per_entry_total_corr_energy=[
+                float(x)
+                for x in data.get(
+                    "per_entry_total_corr_energy",
+                    [float("nan")] * len(data.get("per_entry_center_xy", [])),
+                )
+            ],
+            per_entry_fallback_used=[
+                bool(x)
+                for x in data.get(
+                    "per_entry_fallback_used",
+                    [False] * len(data.get("per_entry_center_xy", [])),
+                )
             ],
             per_wavelength_mean_center_xy={
                 str(k): _float_pair(v, f"per_wavelength_mean_center_xy[{k!r}]")
@@ -81,6 +105,15 @@ class SensorEnergyCenterProfile:
         data["center_xy"] = [float(self.center_xy[0]), float(self.center_xy[1])]
         data["per_entry_center_xy"] = [
             [float(x), float(y)] for x, y in self.per_entry_center_xy
+        ]
+        data["per_entry_background_value"] = [
+            float(x) for x in self.per_entry_background_value
+        ]
+        data["per_entry_total_corr_energy"] = [
+            float(x) for x in self.per_entry_total_corr_energy
+        ]
+        data["per_entry_fallback_used"] = [
+            bool(x) for x in self.per_entry_fallback_used
         ]
         data["per_wavelength_mean_center_xy"] = {
             str(k): [float(v[0]), float(v[1])]
@@ -125,6 +158,7 @@ class EnergyCenterEstimate:
     center_xy: tuple[float, float]
     background_value: float
     total_corr_energy: float
+    fallback_used: bool
     peak_xy: tuple[int, int]
     peak_value: float
 
@@ -147,6 +181,7 @@ def estimate_frame_energy_center(
     peak_eval = np.where(mask, corr, -np.inf)
     peak_y, peak_x = np.unravel_index(int(np.argmax(peak_eval)), arr.shape)
     total = float(np.sum(corr_valid))
+    fallback_used = bool(total <= 0.0)
     if total <= 0.0:
         center = (float(peak_x), float(peak_y))
     else:
@@ -159,6 +194,7 @@ def estimate_frame_energy_center(
         center_xy=center,
         background_value=bg,
         total_corr_energy=total,
+        fallback_used=fallback_used,
         peak_xy=(int(peak_x), int(peak_y)),
         peak_value=float(arr[peak_y, peak_x]),
     )
@@ -170,6 +206,8 @@ def derive_sensor_energy_center_profile(
     *,
     center_profile_id: str | None = None,
     bg_percentile: float = 5.0,
+    valid_pixel_domain: dict[str, Any] | None = None,
+    valid_pixel_mask: np.ndarray | None = None,
     allow_raw_fallback: bool = False,
     notes: str | None = None,
 ) -> SensorEnergyCenterProfile:
@@ -181,19 +219,26 @@ def derive_sensor_energy_center_profile(
 
     with h5py.File(str(source_path), "r") as f:
         source = _open_frame_source(f, allow_raw_fallback=allow_raw_fallback)
+        resolved_valid_mask = _valid_mask_from_domain(
+            source.frame_shape,
+            valid_pixel_domain,
+            valid_pixel_mask,
+        )
         centers: list[tuple[float, float]] = []
         background_values: list[float] = []
         total_energy: list[float] = []
+        fallback_used: list[bool] = []
         for entry_index in range(source.frame_count):
             frame = _read_frame_entry(source.frames, entry_index)
             estimate = estimate_frame_energy_center(
                 frame,
-                valid_pixel_mask=None,
+                valid_pixel_mask=resolved_valid_mask,
                 bg_percentile=bg_percentile,
             )
             centers.append(estimate.center_xy)
             background_values.append(float(estimate.background_value))
             total_energy.append(float(estimate.total_corr_energy))
+            fallback_used.append(bool(estimate.fallback_used))
 
     center_arr = np.asarray(centers, dtype=np.float64)
     if center_arr.ndim != 2 or center_arr.shape[0] < 1:
@@ -222,6 +267,7 @@ def derive_sensor_energy_center_profile(
             "method": "percentile",
             "percentile": float(bg_percentile),
             "domain": "valid_pixels",
+            "valid_pixel_domain": _valid_pixel_domain_record(valid_pixel_domain, valid_pixel_mask),
             "thesis_algorithm_source": "audited_thesis_energy_center_algorithm",
         },
         corr_policy={
@@ -240,6 +286,9 @@ def derive_sensor_energy_center_profile(
         per_entry_center_xy=[(float(x), float(y)) for x, y in centers],
         per_entry_mask_ids=list(source.mask_ids),
         per_entry_wavelengths_nm=[float(v) for v in source.wavelengths_nm],
+        per_entry_background_value=[float(v) for v in background_values],
+        per_entry_total_corr_energy=[float(v) for v in total_energy],
+        per_entry_fallback_used=[bool(v) for v in fallback_used],
         per_wavelength_mean_center_xy=per_wavelength_mean,
         per_wavelength_center_std_xy=per_wavelength_std,
         global_center_std_xy=(float(std_xy[0]), float(std_xy[1])),
@@ -420,6 +469,61 @@ def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> 
     return mask
 
 
+def _valid_mask_from_domain(
+    shape: tuple[int, int],
+    valid_pixel_domain: dict[str, Any] | None,
+    valid_pixel_mask: np.ndarray | None,
+) -> np.ndarray:
+    if valid_pixel_domain is not None and valid_pixel_mask is not None:
+        raise SensorEnergyCenterError(
+            "pass either valid_pixel_domain or valid_pixel_mask, not both"
+        )
+    if valid_pixel_mask is not None:
+        return _valid_mask(shape, valid_pixel_mask)
+    mask = np.ones((int(shape[0]), int(shape[1])), dtype=bool)
+    if not valid_pixel_domain:
+        return mask
+    policy_type = str(valid_pixel_domain.get("type") or "full_frame")
+    if policy_type == "full_frame":
+        return mask
+    if policy_type == "exclude_top_rows":
+        top_rows = int(valid_pixel_domain.get("top_rows", 0))
+        if top_rows < 0:
+            raise SensorEnergyCenterError("valid_pixel_domain.top_rows must be non-negative")
+        if top_rows > 0:
+            mask[:top_rows, :] = False
+        if not np.any(mask):
+            raise SensorEnergyCenterError("valid_pixel_domain leaves zero valid pixels")
+        return mask
+    if policy_type == "exclude_xyxy":
+        x0, y0, x1, y1 = _int_quad(valid_pixel_domain.get("xyxy"), "valid_pixel_domain.xyxy")
+        h, w = int(shape[0]), int(shape[1])
+        x0 = max(0, min(w, x0))
+        x1 = max(0, min(w, x1))
+        y0 = max(0, min(h, y0))
+        y1 = max(0, min(h, y1))
+        if x1 > x0 and y1 > y0:
+            mask[y0:y1, x0:x1] = False
+        if not np.any(mask):
+            raise SensorEnergyCenterError("valid_pixel_domain leaves zero valid pixels")
+        return mask
+    raise SensorEnergyCenterError(f"unsupported valid_pixel_domain.type: {policy_type}")
+
+
+def _valid_pixel_domain_record(
+    valid_pixel_domain: dict[str, Any] | None,
+    valid_pixel_mask: np.ndarray | None,
+) -> dict[str, Any]:
+    if valid_pixel_domain is not None:
+        return dict(valid_pixel_domain)
+    if valid_pixel_mask is not None:
+        return {
+            "type": "explicit_mask",
+            "shape_hw": [int(valid_pixel_mask.shape[0]), int(valid_pixel_mask.shape[1])],
+        }
+    return {"type": "full_frame"}
+
+
 def _wavelength_key(value: float) -> str:
     v = float(value)
     return str(int(v)) if v.is_integer() else str(v)
@@ -485,3 +589,9 @@ def _int_pair(value: Any, name: str) -> tuple[int, int]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise SensorEnergyCenterError(f"{name} must contain two integers")
     return (int(value[0]), int(value[1]))
+
+
+def _int_quad(value: Any, name: str) -> tuple[int, int, int, int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise SensorEnergyCenterError(f"{name} must contain four integers")
+    return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))

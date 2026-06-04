@@ -117,6 +117,9 @@ def _center_profile(
         per_entry_center_xy=[center_xy],
         per_entry_mask_ids=["mask_a"],
         per_entry_wavelengths_nm=[550.0],
+        per_entry_background_value=[0.0],
+        per_entry_total_corr_energy=[1.0],
+        per_entry_fallback_used=[False],
         per_wavelength_mean_center_xy={"550": center_xy},
         per_wavelength_center_std_xy={"550": (0.0, 0.0)},
         global_center_std_xy=(0.0, 0.0),
@@ -170,7 +173,49 @@ def test_derives_one_global_center_with_per_wavelength_diagnostics(tmp_path: Pat
     assert set(profile.per_wavelength_mean_center_xy) == {"450", "550"}
     assert profile.aggregation_policy["single_global_origin"] is True
     assert profile.aggregation_policy["per_wavelength_origins"] is False
+    assert len(profile.per_entry_background_value) == 3
+    assert len(profile.per_entry_total_corr_energy) == 3
+    assert profile.per_entry_fallback_used == [False, False, False]
+    assert all(value > 0.0 for value in profile.per_entry_total_corr_energy)
     assert output_json.exists()
+
+
+def test_flat_frame_records_peak_fallback_marker(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    output_json = tmp_path / "sensor_energy_center_profile.json"
+    _write_survey(survey_h5, np.full((16, 20), 5.0, dtype=np.float64))
+
+    profile = derive_sensor_energy_center_profile(survey_h5, output_json)
+
+    assert profile.per_entry_total_corr_energy == [0.0]
+    assert profile.per_entry_fallback_used == [True]
+    assert profile.center_xy == (0.0, 0.0)
+
+
+def test_valid_pixel_domain_excludes_contaminating_region(tmp_path: Path) -> None:
+    frame = _gaussian_frame((64, 80), center_xy=(40.0, 32.0), amplitude=40.0)
+    frame[0:6, 0:6] += 5000.0
+    survey_h5 = tmp_path / "survey.h5"
+    output_json = tmp_path / "sensor_energy_center_profile.json"
+    _write_survey(survey_h5, frame)
+
+    contaminated = derive_sensor_energy_center_profile(
+        survey_h5,
+        tmp_path / "contaminated_center.json",
+    )
+    filtered = derive_sensor_energy_center_profile(
+        survey_h5,
+        output_json,
+        valid_pixel_domain={"type": "exclude_top_rows", "top_rows": 8},
+    )
+
+    assert contaminated.center_xy[0] < 10.0
+    assert abs(filtered.center_xy[0] - 40.0) < 0.1
+    assert abs(filtered.center_xy[1] - 32.0) < 0.1
+    assert filtered.bg_policy["valid_pixel_domain"] == {
+        "type": "exclude_top_rows",
+        "top_rows": 8,
+    }
 
 
 def test_raw_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:

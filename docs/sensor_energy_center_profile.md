@@ -23,6 +23,7 @@ The profile records:
 - `coordinate_frame`: `sensor_full_frame` or `acquired_frame`.
 - `camera_frame_extent`: the camera extent where the center is valid.
 - per-entry center diagnostics.
+- per-entry `background_value`, `total_corr_energy`, and fallback markers.
 - per-wavelength diagnostic mean/std centers.
 
 Per-wavelength centers are diagnostic only. They must not become separate
@@ -38,12 +39,30 @@ corr = max(frame - bg, 0)
 center_xy = weighted centroid of corr
 ```
 
+If `total_corr_energy <= 0`, the estimator falls back to the valid-domain peak
+pixel and records `per_entry_fallback_used: true` for that entry.
+
 The implementation was audited from the bachelor-thesis energy-center logic,
 but mainline absorbs only the center-location algorithm. It does not absorb the
 thesis crop workflow or task naming.
 
 Display-tail normalization, such as `p=0.99`, is not used for center
 estimation.
+
+## Valid Pixel Domain
+
+Derivation may receive an explicit valid pixel domain or explicit valid pixel
+mask. This prevents known bad pixels, obscured rows, or invalid camera regions
+from biasing the global center.
+
+The CLI accepts a JSON policy:
+
+```bash
+python scripts/derive_sensor_energy_center_profile.py survey.h5 center.json \
+  --valid-pixel-domain-json '{"type":"exclude_top_rows","top_rows":16}'
+```
+
+The selected policy is recorded in `bg_policy.valid_pixel_domain`.
 
 ## Downstream Validation
 

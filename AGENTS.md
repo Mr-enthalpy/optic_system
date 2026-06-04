@@ -511,6 +511,10 @@ Rules:
 * `SensorEnergyCenterProfile` is not a crop-window artifact. Do not introduce
   ROI extraction, ROI size selection, or ROI-centered exports through this
   profile.
+* `SensorEnergyCenterProfile` should record per-entry background, corrected
+  energy, and fallback diagnostics. If a valid pixel domain is known, derive
+  the profile with that domain rather than allowing invalid sensor regions to
+  bias the center.
 * Downstream center-relative coordinates must be traceable to
   `SensorEnergyCenterProfile.center_xy`, and downstream tasks must reject the
   profile if its coordinate frame or camera frame extent does not match the
