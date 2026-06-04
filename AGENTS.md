@@ -314,13 +314,34 @@ broadband pass-through camera calibration
 
 Rules:
 
+* Each scan stage must be independently restartable from the previous persisted
+  artifact. Do not require rerunning broadband camera calibration after a
+  completed `CameraProfile`, or rerunning pupil scan after a completed
+  `PupilProfile`.
+* Camera exposure calibration is a gain-outer, exposure-binary-search process:
+  enumerate gain candidates, and for each gain binary-search the largest
+  shutter/exposure that keeps valid-domain peak pixels below the configured
+  full-scale safety limit.
+* In selected-pupil-open per-band camera calibration, TLS wavelength traversal
+  must be the outermost loop. Move the spectrometer once per wavelength, then
+  perform all camera exposure/gain probes for that wavelength before moving TLS
+  again.
+* Any task that uses TLS hardware should order loops to minimize TLS motion;
+  TLS is slow and expensive compared with camera exposure changes.
 * Broadband camera profiles are valid for LCD pupil scanning only.
 * LCD pupil scanning must use TLS pass-through / broadband light, not one
   selected monochromatic wavelength.
 * `PupilScanPlan.scan_range_xyxy` uses conventional physical LCD coordinate
   order: `x0, y0, x1, y1`.
+* Broadband pupil scanning must use bar profiles followed by radius scan and
+  ellipse/circle overlap fitting; the effective circular radius is a factor of
+  the fitted ellipse semi-minor axis.
 * Broadband camera calibration must receive an LCD adapter and must explicitly
   display an all-transmissive physical mask before exposure probing.
+* After setting any LCD mask, wait at least 20 ms before capture or the next
+  hardware-dependent action; the LCD refresh rate is 50 Hz.
+* After changing camera exposure or gain, discard more than 40 frames before
+  using frames for measurement. The mainline profile search default is 80.
 * Per-band camera profiles for PSF-producing tasks must be measured with the
   selected LCD pupil open.
 * Do not reuse full-LCD-open per-band exposure profiles as selected-pupil-open

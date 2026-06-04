@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
@@ -8,9 +11,10 @@ import numpy as np
 from .camera_profile import MONOCHROMATIC, PER_BAND_PUPIL_OPEN, CameraProfile, IlluminationSpec, PerWavelengthCameraSettings
 from .exposure_search import (
     ExposureCandidate,
+    ExposureGainSearchConfig,
     ExposureProbeResult,
     ExposureSearchCamera,
-    evaluate_exposure_candidates,
+    evaluate_gain_binary_search,
     select_recommended_probe,
 )
 from .pupil_profile import PupilProfile
@@ -46,14 +50,19 @@ class PerBandTLS(Protocol):
 @dataclass
 class WavelengthCalibrationSpec:
     wavelength_nm: float
-    candidates: list[ExposureCandidate]
+    candidates: list[ExposureCandidate] = field(default_factory=list)
+    exposure_search: ExposureGainSearchConfig | None = None
     grating: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "WavelengthCalibrationSpec":
         return cls(
             wavelength_nm=float(data["wavelength_nm"]),
-            candidates=[ExposureCandidate.from_dict(item) for item in data["candidates"]],
+            candidates=[ExposureCandidate.from_dict(item) for item in data.get("candidates", [])],
+            exposure_search=(
+                ExposureGainSearchConfig.from_dict(data["exposure_search"])
+                if data.get("exposure_search") is not None else None
+            ),
             grating=int(data["grating"]) if data.get("grating") is not None else None,
         )
 
@@ -65,6 +74,7 @@ class PerBandPupilOpenCalibrationPlan:
     wavelengths: list[WavelengthCalibrationSpec]
     frames_per_capture: int = 5
     full_scale: float = 255.0
+    lcd_settle_ms: float = 20.0
     valid_for: list[str] = field(default_factory=lambda: [
         "psf_dictionary_capture",
         "dotf_capture",
@@ -80,6 +90,7 @@ class PerBandPupilOpenCalibrationPlan:
             wavelengths=[WavelengthCalibrationSpec.from_dict(item) for item in data["wavelengths"]],
             frames_per_capture=int(data.get("frames_per_capture", 5)),
             full_scale=float(data.get("full_scale", 255.0)),
+            lcd_settle_ms=float(data.get("lcd_settle_ms", 20.0)),
             valid_for=[str(x) for x in data.get("valid_for", [
                 "psf_dictionary_capture",
                 "dotf_capture",
@@ -103,6 +114,12 @@ class PerBandPupilOpenCalibrationResult:
                 for key, rows in sorted(self.probe_results_by_wavelength.items())
             },
         }
+
+    def write_json(self, path: str | Path) -> None:
+        Path(path).write_text(
+            json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 def calibrate_per_band_pupil_open_camera_profile(
@@ -129,6 +146,7 @@ def calibrate_per_band_pupil_open_camera_profile(
         aperture_code=255,
     )
     lcd.show_physical_mask(pupil_mask, mask_id=f"selected_pupil_open:{pupil_profile.pupil_profile_id}")
+    _settle_lcd(plan.lcd_settle_ms)
 
     per_wavelength: dict[str, PerWavelengthCameraSettings] = {}
     probe_results: dict[str, list[ExposureProbeResult]] = {}
@@ -143,13 +161,16 @@ def calibrate_per_band_pupil_open_camera_profile(
             tls.set_wavelength_nm(float(spec.wavelength_nm))
             tls.move(timeout_s=60.0)
             tls.wait_until_idle(timeout_s=60.0)
-        rows = evaluate_exposure_candidates(
+        exposure_search = spec.exposure_search or ExposureGainSearchConfig.from_candidates(spec.candidates)
+        rows = evaluate_gain_binary_search(
             camera,
-            spec.candidates,
+            exposure_search,
             frames_per_capture=plan.frames_per_capture,
             full_scale=plan.full_scale,
             valid_pixel_mask=valid_pixel_mask,
         )
+        for row in rows:
+            row.metadata["tls_outer_loop_wavelength_nm"] = float(spec.wavelength_nm)
         selected = select_recommended_probe(rows)
         key = _wavelength_key(spec.wavelength_nm)
         probe_results[key] = rows
@@ -176,8 +197,9 @@ def calibrate_per_band_pupil_open_camera_profile(
         per_wavelength=per_wavelength,
         depends_on_pupil_profile_id=pupil_profile.pupil_profile_id,
         extra={
-            "selection_policy": "selected_pupil_open_per_wavelength_safe_low_gain_high_signal",
+            "selection_policy": "selected_pupil_open_tls_outer_gain_outer_binary_exposure_inner",
             "full_scale": float(plan.full_scale),
+            "tls_iteration_order": "outermost_by_wavelength",
         },
     )
     profile.validate()
@@ -202,3 +224,9 @@ def _physical_shape_from_pupil(pupil_profile: PupilProfile) -> tuple[int, int]:
 def _wavelength_key(wavelength_nm: float) -> str:
     value = float(wavelength_nm)
     return str(int(value)) if value.is_integer() else str(value)
+
+
+def _settle_lcd(settle_ms: float) -> None:
+    if float(settle_ms) < 20.0:
+        raise PerBandCalibrationError("lcd_settle_ms must be at least 20 ms")
+    time.sleep(float(settle_ms) / 1000.0)

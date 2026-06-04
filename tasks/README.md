@@ -81,7 +81,7 @@ separate compatibility-preserving move is explicitly planned.
 | `tasks/profiles/pupil_profile.py` | **active** | Effective LCD pupil profile artifact |
 | `tasks/profiles/camera_profile.py` | **active** | Camera safety profile artifact |
 | `tasks/profiles/calibrate_broadband_camera_profile.py` | **active** | Broadband pass-through exposure calibration for LCD pupil scanning |
-| `tasks/profiles/scan_pupil_broadband.py` | **active** | Broadband pass-through LCD pupil scan and `PupilProfile` generation |
+| `tasks/profiles/scan_pupil_broadband.py` | **active** | Broadband pass-through LCD pupil scan: bar profiles, radius scan, ellipse fit, and `PupilProfile` generation |
 | `tasks/profiles/calibrate_per_band_pupil_open_camera_profile.py` | **active** | Per-band exposure calibration under selected-pupil-open LCD state |
 | `tasks/psf/profile_requirements.py` | **active** | Explicit profile dependency validation for broadband pupil scan and PSF-producing tasks |
 | `tasks/psf/build_full_frame_psf_survey.py` | **active** | Small full-frame scout artifact for peak layout discovery |
@@ -109,6 +109,39 @@ calibrate_broadband_camera_profile
   -> downstream PSF / dOTF / mask-family capture tasks
 ```
 
+Each stage must be restartable from the previous stage's persisted artifact.
+Do not design profile scans as one monolithic run that must restart from the
+first exposure scan after an intermediate failure:
+
+```text
+broadband pass-through camera exposure scan
+  -> save broadband CameraProfile
+  -> bar scan + radius scan + PupilProfile
+  -> save PupilProfile
+  -> selected-pupil-open per-band camera exposure scan
+  -> save per-band CameraProfile
+  -> downstream capture tasks load PupilProfile + per-band CameraProfile
+```
+
+Camera exposure scans use gain-outer binary search:
+
+```text
+for gain_db in configured gains:
+  binary-search exposure_us / shutter upper bound
+  after every camera parameter change:
+    wait camera_param_settle_ms
+    discard discard_frames_after_param_change frames
+```
+
+The default profile-search discard count is 80 frames. Do not set it below 40
+for measured hardware data. For selected-pupil-open per-band calibration, TLS
+wavelength is the outermost loop: move TLS once, then run all camera exposure
+probes for that wavelength before moving TLS again. Future TLS-using tasks
+should preserve the same loop ordering because spectrometer motion is expensive.
+
+Every physical LCD mask update in these profile tasks enforces at least 20 ms
+settle time before capture, matching the 50 Hz LCD refresh period.
+
 This deliberately differs from the bachelor-thesis branch workflow. Mainline
 does not use full-LCD-open per-band exposure profiles for downstream
 PSF-producing tasks. Pupil scanning uses TLS zero-order pass-through
@@ -120,6 +153,16 @@ monochromatic wavelength.
 `x0, y0, x1, y1` in LCD physical pixels. For example,
 `scan_range_xyxy: [10, 20, 90, 70]` scans x bars over `[10, 90)` and y bars
 over `[20, 70)`.
+
+`scan_pupil_broadband` uses the `bar_profiles_plus_radius_scan` strategy:
+
+```text
+dark-bar x/y profiles
+  -> first-pass center and radius estimate
+  -> circular-window radius scan around the estimated center
+  -> ellipse/circle overlap fit
+  -> effective circular pupil radius = radius_factor * ellipse_semi_minor
+```
 
 `calibrate_broadband_camera_profile` must receive an LCD adapter and must
 display an all-transmissive physical mask before exposure probing; only then

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -12,6 +13,7 @@ from tasks.profiles import (
     BroadbandCameraCalibrationPlan,
     CameraProfile,
     ExposureCandidate,
+    ExposureGainSearchConfig,
     PerBandPupilOpenCalibrationPlan,
     PerBandCalibrationError,
     PupilProfile,
@@ -19,9 +21,14 @@ from tasks.profiles import (
     WavelengthCalibrationSpec,
     calibrate_broadband_camera_profile,
     calibrate_per_band_pupil_open_camera_profile,
+    evaluate_gain_binary_search,
     run_broadband_pupil_scan,
 )
 from tasks.profiles.scan_pupil_broadband import _bar_starts
+from tasks.profiles.scan_pupil_broadband import (
+    estimate_ellipse_parameters,
+    fit_radius_overlap_function,
+)
 
 
 @dataclass
@@ -94,6 +101,7 @@ class SyntheticCamera:
         frame_shape: tuple[int, int] = (24, 32),
         pupil_center: tuple[float, float] = (62.0, 37.0),
         pupil_radius: float = 18.0,
+        pupil_axes: tuple[float, float] | None = None,
         full_scale: float = 255.0,
     ):
         self.lcd = lcd
@@ -101,17 +109,29 @@ class SyntheticCamera:
         self.exposure_us = 100.0
         self.gain_db = 0.0
         self.full_scale = full_scale
+        self.applied_params: list[tuple[float | None, float | None]] = []
+        self.acquire_counts: list[int] = []
         h, w = (lcd.physical_shape() if lcd is not None else (80, 120))
         yy, xx = np.mgrid[:h, :w]
-        self.pupil = ((xx - pupil_center[0]) ** 2 + (yy - pupil_center[1]) ** 2 <= pupil_radius ** 2).astype(np.float64)
+        if pupil_axes is None:
+            self.pupil = ((xx - pupil_center[0]) ** 2 + (yy - pupil_center[1]) ** 2 <= pupil_radius ** 2).astype(np.float64)
+        else:
+            a, b = (float(v) for v in pupil_axes)
+            self.pupil = (
+                ((xx - pupil_center[0]) ** 2) / max(a ** 2, 1e-12)
+                + ((yy - pupil_center[1]) ** 2) / max(b ** 2, 1e-12)
+                <= 1.0
+            ).astype(np.float64)
 
     def apply_camera_params(self, exposure_us=None, gain_db=None):
         if exposure_us is not None:
             self.exposure_us = float(exposure_us)
         if gain_db is not None:
             self.gain_db = float(gain_db)
+        self.applied_params.append((self.exposure_us, self.gain_db))
 
     def acquire_burst(self, k: int) -> CaptureFrames:
+        self.acquire_counts.append(int(k))
         if self.lcd is None:
             visible_fraction = 1.0
         else:
@@ -122,6 +142,18 @@ class SyntheticCamera:
         frame = np.full(self.frame_shape, signal, dtype=np.float64)
         burst = np.repeat(frame[None, :, :], int(k), axis=0)
         return CaptureFrames(burst=burst, frames_avg=frame, metadata={"frame_dtype_full_scale": self.full_scale})
+
+
+def _fast_search(*, min_exposure_us: float, max_exposure_us: float, gains_db: list[float] | None = None) -> ExposureGainSearchConfig:
+    return ExposureGainSearchConfig(
+        min_exposure_us=min_exposure_us,
+        max_exposure_us=max_exposure_us,
+        gains_db=gains_db or [0.0],
+        iterations=4,
+        safety_fraction=0.95,
+        camera_param_settle_ms=0.0,
+        discard_frames_after_param_change=0,
+    )
 
 
 def test_broadband_camera_calibration_uses_tls_pass_through() -> None:
@@ -135,6 +167,7 @@ def test_broadband_camera_calibration_uses_tls_pass_through() -> None:
             ExposureCandidate(exposure_us=6000.0, gain_db=0.0),
             ExposureCandidate(exposure_us=1200.0, gain_db=0.0),
         ],
+        exposure_search=_fast_search(min_exposure_us=200.0, max_exposure_us=6000.0),
         frames_per_capture=2,
         full_scale=255.0,
     )
@@ -153,9 +186,34 @@ def test_broadband_camera_calibration_uses_tls_pass_through() -> None:
     assert profile.exposure_us is not None
 
 
+def test_gain_binary_search_discards_frames_after_each_param_change() -> None:
+    camera = SyntheticCamera(lcd=None)
+
+    rows = evaluate_gain_binary_search(
+        camera,
+        ExposureGainSearchConfig(
+            min_exposure_us=200.0,
+            max_exposure_us=12000.0,
+            gains_db=[0.0, 6.0],
+            iterations=3,
+            safety_fraction=0.95,
+            camera_param_settle_ms=0.0,
+            discard_frames_after_param_change=41,
+        ),
+        frames_per_capture=2,
+        full_scale=255.0,
+    )
+
+    assert {row.gain_db for row in rows} == {0.0, 6.0}
+    assert all(row.metadata["gain_search_method"] == "gain_outer_binary_exposure_inner" for row in rows)
+    assert all(row.metadata["search_method"] == "binary" for row in rows)
+    assert camera.acquire_counts[0::2] == [41] * len(rows)
+    assert camera.acquire_counts[1::2] == [2] * len(rows)
+
+
 def test_broadband_pupil_scan_outputs_pupil_profile() -> None:
     lcd = SyntheticLCD(shape=(80, 120))
-    camera = SyntheticCamera(lcd, pupil_center=(62.0, 37.0), pupil_radius=18.0)
+    camera = SyntheticCamera(lcd, pupil_center=(62.0, 37.0), pupil_axes=(24.0, 16.0))
     camera_profile = CameraProfile.from_dict({
         "camera_profile_id": "broadband_scan_safe_v1",
         "profile_family": BROADBAND_PASSTHROUGH,
@@ -177,6 +235,7 @@ def test_broadband_pupil_scan_outputs_pupil_profile() -> None:
         frames_per_capture=2,
         bar_width=6,
         scan_step=4,
+        radius_scan_steps=40,
         radius_factor=0.9,
     )
     tls = FakePassThroughTLS()
@@ -189,7 +248,22 @@ def test_broadband_pupil_scan_outputs_pupil_profile() -> None:
     assert abs(pupil.lcd_physical_center[0] - 62.0) < 5.0
     assert abs(pupil.lcd_physical_center[1] - 37.0) < 5.0
     assert pupil.lcd_physical_radius is not None
+    assert abs(pupil.lcd_physical_radius - 0.9 * report.fit_quality["ellipse_semi_minor"]) < 1e-9
+    assert report.fit_quality["ellipse_semi_major"] >= report.fit_quality["ellipse_semi_minor"] > 0.0
+    assert len(report.radii) == 40
     assert pupil.extra["illumination_mode"] == BROADBAND_PASSTHROUGH
+
+
+def test_ellipse_overlap_fit_recovers_synthetic_axes() -> None:
+    radii = np.linspace(0.0, 80.0, 120)
+    energies = fit_radius_overlap_function(radii, scale=0.04, semi_major=48.0, semi_minor=28.0)
+
+    fit = estimate_ellipse_parameters(energies, radii)
+
+    assert abs(fit.semi_major - 48.0) < 2.0
+    assert abs(fit.semi_minor - 28.0) < 2.0
+    assert fit.r_squared > 0.99
+    assert fit.pearson > 0.99
 
 
 def test_pupil_scan_range_xyxy_uses_x0_y0_x1_y1_order() -> None:
@@ -231,10 +305,26 @@ def test_per_band_pupil_open_calibration_outputs_profile() -> None:
             {
                 "wavelength_nm": 450,
                 "candidates": [{"exposure_us": 600}, {"exposure_us": 1200}],
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 4,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
             },
             {
                 "wavelength_nm": 550,
                 "candidates": [{"exposure_us": 500}, {"exposure_us": 1000}],
+                "exposure_search": {
+                    "min_exposure_us": 500,
+                    "max_exposure_us": 1000,
+                    "gains_db": [0.0],
+                    "iterations": 4,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
             },
         ],
     })
@@ -252,7 +342,96 @@ def test_per_band_pupil_open_calibration_outputs_profile() -> None:
     assert profile.depends_on_pupil_profile_id == "pupil_profile_scan_v1"
     assert set(profile.per_wavelength) == {"450", "550"}
     assert tls.wavelengths == [450.0, 550.0]
+    assert len(tls.wavelengths) == len(plan.wavelengths)
     assert lcd.last_mask_id == "selected_pupil_open:pupil_profile_scan_v1"
+
+
+def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None:
+    broadband_lcd = SyntheticLCD(shape=(80, 120))
+    broadband_camera = SyntheticCamera(broadband_lcd)
+    broadband_tls = FakePassThroughTLS()
+    broadband_result = calibrate_broadband_camera_profile(
+        BroadbandCameraCalibrationPlan(
+            camera_profile_id="broadband_scan_safe_v1",
+            candidates=[
+                ExposureCandidate(exposure_us=1200.0),
+                ExposureCandidate(exposure_us=6000.0),
+            ],
+            exposure_search=_fast_search(min_exposure_us=1200.0, max_exposure_us=6000.0),
+            frames_per_capture=2,
+        ),
+        camera=broadband_camera,
+        lcd=broadband_lcd,
+        tls=broadband_tls,
+    )
+    broadband_result.write_json(tmp_path / "broadband_result.json")
+    broadband_profile_path = tmp_path / "broadband_camera_profile.json"
+    broadband_result.camera_profile.to_json(broadband_profile_path)
+
+    scan_lcd = SyntheticLCD(shape=(80, 120))
+    scan_camera = SyntheticCamera(scan_lcd, pupil_center=(62.0, 37.0), pupil_axes=(24.0, 16.0))
+    loaded_broadband_profile = CameraProfile.load_json(broadband_profile_path)
+    scan_report = run_broadband_pupil_scan(
+        PupilScanPlan(
+            pupil_profile_id="pupil_profile_scan_v1",
+            camera_profile_id="broadband_scan_safe_v1",
+            physical_shape=(80, 120),
+            lcd_display_index=1,
+            subpixel_axis=1,
+            frames_per_capture=2,
+            bar_width=6,
+            scan_step=4,
+            radius_scan_steps=40,
+            radius_factor=0.9,
+        ),
+        camera_profile=loaded_broadband_profile,
+        camera=scan_camera,
+        lcd=scan_lcd,
+        tls=None,
+    )
+    scan_report.write_json(tmp_path / "pupil_scan_report.json")
+    pupil_profile_path = tmp_path / "pupil_profile.json"
+    scan_report.pupil_profile.to_json(pupil_profile_path)
+
+    per_band_lcd = SyntheticLCD(shape=(80, 120))
+    per_band_camera = SyntheticCamera(per_band_lcd)
+    per_band_tls = FakePassThroughTLS()
+    loaded_pupil_profile = PupilProfile.load_json(pupil_profile_path)
+    per_band_result = calibrate_per_band_pupil_open_camera_profile(
+        PerBandPupilOpenCalibrationPlan.from_dict({
+            "camera_profile_id": "per_band_pupil_open_v1",
+            "pupil_profile_id": "pupil_profile_scan_v1",
+            "frames_per_capture": 2,
+            "full_scale": 255,
+            "wavelengths": [
+                {
+                    "wavelength_nm": 550,
+                    "candidates": [{"exposure_us": 500}, {"exposure_us": 1000}],
+                    "exposure_search": {
+                        "min_exposure_us": 500,
+                        "max_exposure_us": 1000,
+                        "gains_db": [0.0],
+                        "iterations": 4,
+                        "camera_param_settle_ms": 0,
+                        "discard_frames_after_param_change": 0,
+                    },
+                },
+            ],
+        }),
+        pupil_profile=loaded_pupil_profile,
+        camera=per_band_camera,
+        lcd=per_band_lcd,
+        tls=per_band_tls,
+    )
+    per_band_result.write_json(tmp_path / "per_band_result.json")
+
+    assert broadband_tls.pass_through_calls == 1
+    assert per_band_tls.pass_through_calls == 0
+    assert per_band_tls.wavelengths == [550.0]
+    assert per_band_result.camera_profile.depends_on_pupil_profile_id == "pupil_profile_scan_v1"
+    assert (tmp_path / "broadband_result.json").exists()
+    assert (tmp_path / "pupil_scan_report.json").exists()
+    assert (tmp_path / "per_band_result.json").exists()
 
 
 def test_per_band_calibration_rejects_zero_wavelength() -> None:
