@@ -19,6 +19,7 @@ Its downstream learning repository is `LCD_forward`.
 - raw capture HDF5 export
 - profile artifacts
 - `FullFramePSFSurvey`
+- `SensorEnergyCenterProfile`
 - `PeakSupportAnalysisReport`
 - `SupportCandidateStabilityReport`
 - `PeakLayoutProfile` and future `AdaptivePeakLayoutProfile`
@@ -494,6 +495,7 @@ FullFramePSFSurvey
   -> PeakPatchPSFDictionary baseline export
 
 FullFramePSFSurvey
+  -> SensorEnergyCenterProfile
   -> PeakSupportAnalysisReport
   -> SupportCandidateStabilityReport
   -> AdaptivePeakLayoutProfile
@@ -504,6 +506,19 @@ Rules:
 
 * `optic_system` may export dense-kernel baselines when useful.
 * `optic_system` may export peak-patch and adaptive peak-cluster artifacts.
+* `SensorEnergyCenterProfile` defines one global sensor energy center as the
+  camera-coordinate origin for support and peak-cluster analysis.
+* `SensorEnergyCenterProfile` is not a crop-window artifact. Do not introduce
+  ROI extraction, ROI size selection, or ROI-centered exports through this
+  profile.
+* `SensorEnergyCenterProfile` should record per-entry background, corrected
+  energy, and fallback diagnostics. If a valid pixel domain is known, derive
+  the profile with that domain rather than allowing invalid sensor regions to
+  bias the center.
+* Downstream center-relative coordinates must be traceable to
+  `SensorEnergyCenterProfile.center_xy`, and downstream tasks must reject the
+  profile if its coordinate frame or camera frame extent does not match the
+  analyzed data.
 * `optic_system` must not implement `LCD_forward` models.
 * `optic_system` must not train forward surrogates.
 * `optic_system` must not train reconstruction networks.

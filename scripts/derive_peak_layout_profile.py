@@ -26,6 +26,7 @@ def main() -> int:
     parser.add_argument("--threshold-sigma", type=float, default=3.0)
     parser.add_argument("--min-area", type=int, default=1)
     parser.add_argument("--max-peaks", type=int)
+    parser.add_argument("--center-profile", help="Optional SensorEnergyCenterProfile JSON")
     parser.add_argument("--notes")
     args = parser.parse_args()
 
@@ -40,6 +41,7 @@ def main() -> int:
         threshold_sigma=args.threshold_sigma,
         min_area=args.min_area,
         max_peaks=args.max_peaks,
+        center_profile=args.center_profile,
         notes=args.notes,
     )
     return 0

@@ -32,6 +32,13 @@ from .profile_requirements import (
     validate_broadband_pupil_scan_dependencies,
     validate_psf_profile_dependencies,
 )
+from .sensor_energy_center import (
+    SensorEnergyCenterError,
+    SensorEnergyCenterProfile,
+    derive_sensor_energy_center_profile,
+    estimate_frame_energy_center,
+    validate_center_profile_for_frame_source,
+)
 
 __all__ = [
     "CompactDenseExportError",
@@ -45,13 +52,18 @@ __all__ = [
     "PeakPatchPSFDictionaryManifest",
     "PeakSupportAnalysisManifest",
     "ProfileDependencyError",
+    "SensorEnergyCenterError",
+    "SensorEnergyCenterProfile",
     "analyze_diffraction_support",
     "build_full_frame_psf_survey",
     "build_peak_patch_psf_dictionary",
     "derive_peak_layout_profile",
+    "derive_sensor_energy_center_profile",
+    "estimate_frame_energy_center",
     "export_peak_patch_dictionary_to_lcd_forward",
     "propose_peak_supports_from_report",
     "render_peak_patch_dense_view",
     "validate_broadband_pupil_scan_dependencies",
+    "validate_center_profile_for_frame_source",
     "validate_psf_profile_dependencies",
 ]

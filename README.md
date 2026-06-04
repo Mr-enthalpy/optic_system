@@ -37,6 +37,7 @@ The active responsibilities are:
 * raw capture HDF5 export
 * profile artifacts
 * `FullFramePSFSurvey`
+* `SensorEnergyCenterProfile`
 * `PeakSupportAnalysisReport`
 * `PeakPatchPSFDictionary`
 * future `AdaptivePeakClusterPSFDictionary`
@@ -192,11 +193,20 @@ FullFramePSFSurvey
   -> fixed-size PeakPatchPSFDictionary
 
 FullFramePSFSurvey
+  -> SensorEnergyCenterProfile
   -> PeakSupportAnalysisReport
   -> future SupportCandidateStabilityReport
   -> future AdaptivePeakLayoutProfile
   -> future AdaptivePeakClusterPSFDictionary
 ```
+
+`SensorEnergyCenterProfile` records one global sensor energy center as a camera
+coordinate origin for support analysis and future peak-cluster modelling. It is
+not a crop-window artifact and must not introduce ROI extraction, ROI size
+selection, or ROI-centered exports. The profile also records per-entry
+background, corrected energy, and fallback diagnostics, and may be derived with
+an explicit valid pixel domain when known invalid sensor regions must be
+excluded.
 
 The broadband pass-through profile is only valid for pupil scanning. It must
 not be reused as the exposure profile for PSF-producing captures. Those tasks
