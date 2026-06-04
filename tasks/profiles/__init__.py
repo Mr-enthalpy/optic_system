@@ -30,6 +30,7 @@ from .exposure_search import (
     evaluate_exposure_binary_search,
     evaluate_gain_binary_search,
     evaluate_exposure_candidates,
+    safe_exposure_profiles_by_gain,
     select_recommended_probe,
 )
 from .pupil_profile import PupilProfile
@@ -79,5 +80,6 @@ __all__ = [
     "evaluate_gain_binary_search",
     "fit_radius_overlap_function",
     "run_broadband_pupil_scan",
+    "safe_exposure_profiles_by_gain",
     "select_recommended_probe",
 ]

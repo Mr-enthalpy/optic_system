@@ -319,9 +319,18 @@ Rules:
   completed `CameraProfile`, or rerunning pupil scan after a completed
   `PupilProfile`.
 * Camera exposure calibration is a gain-outer, exposure-binary-search process:
-  enumerate gain candidates, and for each gain binary-search the largest
-  shutter/exposure that keeps valid-domain peak pixels below the configured
-  full-scale safety limit.
+  record configured gain candidates, sort them ascending for execution, and
+  for each gain binary-search the largest shutter/exposure that keeps
+  valid-domain peak pixels below the configured full-scale safety limit.
+  Higher-gain failure may stop later higher-gain probes; this must be recorded
+  in metadata rather than hidden.
+* `max_exposure_us` is a hard no-extrapolation bound. Hardware profile plans
+  should set it from the camera API's real shutter upper limit. If that upper
+  bound remains safe, artifacts must record that the search reached the
+  configured maximum without finding saturation.
+* Camera profiles should publish all completed gain options with their maximum
+  verified safe exposure. The default selected profile should still prefer low
+  gain, then stronger signal, then longer exposure.
 * In selected-pupil-open per-band camera calibration, TLS wavelength traversal
   must be the outermost loop. Move the spectrometer once per wavelength, then
   perform all camera exposure/gain probes for that wavelength before moving TLS
@@ -340,6 +349,9 @@ Rules:
   display an all-transmissive physical mask before exposure probing.
 * After setting any LCD mask, wait at least 20 ms before capture or the next
   hardware-dependent action; the LCD refresh rate is 50 Hz.
+* A below-refresh LCD settle value is allowed only as an explicit no-hardware
+  unit-test override. Hardware plans and CLIs must clearly distinguish this
+  test override from real timing defaults.
 * After changing camera exposure or gain, discard more than 40 frames before
   using frames for measurement. The mainline profile search default is 80.
 * Per-band camera profiles for PSF-producing tasks must be measured with the

@@ -126,12 +126,35 @@ broadband pass-through camera exposure scan
 Camera exposure scans use gain-outer binary search:
 
 ```text
-for gain_db in configured gains:
+for gain_db in sorted(configured gains ascending):
   binary-search exposure_us / shutter upper bound
   after every camera parameter change:
     wait camera_param_settle_ms
     discard discard_frames_after_param_change frames
 ```
+
+`gains_db` is recorded as configured, but execution sorts it ascending before
+probing. If a non-first higher gain is already unsafe at the minimum exposure,
+later higher gains are skipped and this stop condition is recorded in probe
+metadata. Profile artifacts publish a safe exposure table for every completed
+gain, not just the single default setting.
+
+`max_exposure_us` is a hard search bound. The binary search never extrapolates
+past it. Hardware plans should set it from the camera API's actual shutter
+upper bound; when the configured upper bound is still safe, probe metadata
+records `max_exposure_safe_no_extrapolation`.
+
+The default profile selection policy is:
+
+```text
+lowest safe gain
+  -> strongest signal
+  -> longest exposure
+```
+
+The per-gain published table records the maximum verified safe exposure for
+each completed gain. Downstream tasks should use the selected default unless a
+plan explicitly chooses another published safe profile.
 
 The default profile-search discard count is 80 frames. Do not set it below 40
 for measured hardware data. For selected-pupil-open per-band calibration, TLS
@@ -140,7 +163,10 @@ probes for that wavelength before moving TLS again. Future TLS-using tasks
 should preserve the same loop ordering because spectrometer motion is expensive.
 
 Every physical LCD mask update in these profile tasks enforces at least 20 ms
-settle time before capture, matching the 50 Hz LCD refresh period.
+settle time before capture, matching the 50 Hz LCD refresh period. Unit tests
+may set `lcd_settle_ms: 0` only with the explicit
+`allow_test_lcd_settle_below_refresh: true` override. Hardware plans and future
+CLIs must not silently apply that test override.
 
 This deliberately differs from the bachelor-thesis branch workflow. Mainline
 does not use full-LCD-open per-band exposure profiles for downstream

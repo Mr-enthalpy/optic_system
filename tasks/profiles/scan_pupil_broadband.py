@@ -67,6 +67,7 @@ class PupilScanPlan:
     subpixel_axis: int
     frames_per_capture: int = 5
     lcd_settle_ms: float = 20.0
+    allow_test_lcd_settle_below_refresh: bool = False
     bar_width: int = 16
     scan_step: int = 8
     # Conventional image/detection order: x0, y0, x1, y1 in LCD physical pixels.
@@ -93,6 +94,9 @@ class PupilScanPlan:
             subpixel_axis=int(data["subpixel_axis"]),
             frames_per_capture=int(data.get("frames_per_capture", 5)),
             lcd_settle_ms=float(data.get("lcd_settle_ms", 20.0)),
+            allow_test_lcd_settle_below_refresh=bool(
+                data.get("allow_test_lcd_settle_below_refresh", False)
+            ),
             bar_width=int(data.get("bar_width", 16)),
             scan_step=int(data.get("scan_step", 8)),
             scan_range_xyxy=_optional_int_quad(data.get("scan_range_xyxy")),
@@ -150,6 +154,9 @@ class PupilScanReport:
                 "subpixel_axis": int(self.plan.subpixel_axis),
                 "frames_per_capture": int(self.plan.frames_per_capture),
                 "lcd_settle_ms": float(self.plan.lcd_settle_ms),
+                "allow_test_lcd_settle_below_refresh": bool(
+                    self.plan.allow_test_lcd_settle_below_refresh
+                ),
                 "bar_width": int(self.plan.bar_width),
                 "scan_step": int(self.plan.scan_step),
                 "scan_range_xyxy": (
@@ -191,7 +198,15 @@ def run_broadband_pupil_scan(
         gain_db=camera_profile.gain_db,
     )
     physical_shape = tuple(int(v) for v in plan.physical_shape)
-    bright = _capture_mask(camera, lcd, solid_mask(physical_shape, plan.bg_code), "pupil_scan_bright", plan.frames_per_capture, plan.lcd_settle_ms)
+    bright = _capture_mask(
+        camera,
+        lcd,
+        solid_mask(physical_shape, plan.bg_code),
+        "pupil_scan_bright",
+        plan.frames_per_capture,
+        plan.lcd_settle_ms,
+        plan.allow_test_lcd_settle_below_refresh,
+    )
     bright_sum = float(np.sum(bright))
 
     x_positions, x_energies = _scan_axis(
@@ -217,6 +232,7 @@ def run_broadband_pupil_scan(
         "pupil_scan_dark",
         plan.frames_per_capture,
         plan.lcd_settle_ms,
+        plan.allow_test_lcd_settle_below_refresh,
     )
     dark_sum = float(np.sum(dark))
     radii, radius_energies = _run_radius_scan(
@@ -452,7 +468,15 @@ def _scan_axis(
             mask = vertical_bar_mask(plan.physical_shape, x0=start, width=plan.bar_width, bg_code=plan.bg_code, bar_code=plan.bar_code)
         else:
             mask = horizontal_bar_mask(plan.physical_shape, y0=start, width=plan.bar_width, bg_code=plan.bg_code, bar_code=plan.bar_code)
-        frame = _capture_mask(camera, lcd, mask, f"pupil_scan_bar_{axis}_{start:04d}", plan.frames_per_capture, plan.lcd_settle_ms)
+        frame = _capture_mask(
+            camera,
+            lcd,
+            mask,
+            f"pupil_scan_bar_{axis}_{start:04d}",
+            plan.frames_per_capture,
+            plan.lcd_settle_ms,
+            plan.allow_test_lcd_settle_below_refresh,
+        )
         positions.append(position)
         energies.append(float(abs(bright_sum - np.sum(frame))))
     return np.asarray(positions, dtype=np.float64), np.asarray(energies, dtype=np.float64)
@@ -495,6 +519,7 @@ def _run_radius_scan(
             f"pupil_scan_radius_{index:04d}",
             frames_per_capture,
             plan.lcd_settle_ms,
+            plan.allow_test_lcd_settle_below_refresh,
         )
         energies.append(float(abs(np.sum(frame) - dark_sum)))
     return radii, np.asarray(energies, dtype=np.float64)
@@ -507,9 +532,13 @@ def _capture_mask(
     mask_id: str,
     frames_per_capture: int,
     lcd_settle_ms: float,
+    allow_test_lcd_settle_below_refresh: bool,
 ) -> np.ndarray:
     lcd.show_physical_mask(mask, mask_id=mask_id)
-    _settle_lcd(lcd_settle_ms)
+    _settle_lcd(
+        lcd_settle_ms,
+        allow_test_below_refresh=allow_test_lcd_settle_below_refresh,
+    )
     capture = camera.acquire_burst(int(frames_per_capture))
     return np.asarray(capture.frames_avg, dtype=np.float64)
 
@@ -701,10 +730,13 @@ def _code(value: int) -> int:
     return code
 
 
-def _settle_lcd(settle_ms: float) -> None:
-    if float(settle_ms) < 20.0:
+def _settle_lcd(settle_ms: float, *, allow_test_below_refresh: bool = False) -> None:
+    if float(settle_ms) < 0.0:
+        raise PupilScanError("lcd_settle_ms must be non-negative")
+    if float(settle_ms) < 20.0 and not allow_test_below_refresh:
         raise PupilScanError("lcd_settle_ms must be at least 20 ms")
-    time.sleep(float(settle_ms) / 1000.0)
+    if float(settle_ms) > 0.0:
+        time.sleep(float(settle_ms) / 1000.0)
 
 
 def _int_pair(value: Any, name: str) -> tuple[int, int]:

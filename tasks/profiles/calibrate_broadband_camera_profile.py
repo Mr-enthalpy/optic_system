@@ -15,6 +15,7 @@ from .exposure_search import (
     ExposureProbeResult,
     ExposureSearchCamera,
     evaluate_gain_binary_search,
+    safe_exposure_profiles_by_gain,
     select_recommended_probe,
 )
 
@@ -72,6 +73,7 @@ class BroadbandCameraCalibrationPlan:
     transmissive_code: int = 255
     all_transmissive_mask_id: str = "broadband_camera_calibration_all_transmissive"
     lcd_settle_ms: float = 20.0
+    allow_test_lcd_settle_below_refresh: bool = False
     valid_for: list[str] = field(default_factory=lambda: ["pupil_scan_broadband"])
 
     @classmethod
@@ -95,6 +97,9 @@ class BroadbandCameraCalibrationPlan:
                 )
             ),
             lcd_settle_ms=float(data.get("lcd_settle_ms", 20.0)),
+            allow_test_lcd_settle_below_refresh=bool(
+                data.get("allow_test_lcd_settle_below_refresh", False)
+            ),
             valid_for=[str(x) for x in data.get("valid_for", ["pupil_scan_broadband"])],
         )
 
@@ -113,7 +118,10 @@ def calibrate_broadband_camera_profile(
         all_transmissive,
         mask_id=plan.all_transmissive_mask_id,
     )
-    _settle_lcd(plan.lcd_settle_ms)
+    _settle_lcd(
+        plan.lcd_settle_ms,
+        allow_test_below_refresh=plan.allow_test_lcd_settle_below_refresh,
+    )
 
     if tls is not None:
         tls.set_pass_through(timeout_s=60.0)
@@ -153,8 +161,18 @@ def calibrate_broadband_camera_profile(
         frames_per_capture=int(plan.frames_per_capture),
         extra={
             "selection_policy": "pass_through_gain_outer_binary_exposure_inner",
+            "default_selection_policy": "low_gain_then_strong_signal_then_long_exposure",
             "full_scale": float(plan.full_scale),
             "exposure_search": exposure_search.to_dict(),
+            "safe_profiles_by_gain": safe_exposure_profiles_by_gain(rows),
+            "timing_policy": {
+                "lcd_settle_ms": float(plan.lcd_settle_ms),
+                "allow_test_lcd_settle_below_refresh": bool(
+                    plan.allow_test_lcd_settle_below_refresh
+                ),
+                "hardware_default_camera_param_settle_ms": 300.0,
+                "hardware_default_discard_frames_after_param_change": 80,
+            },
         },
     )
     profile.validate()
@@ -228,7 +246,10 @@ def _optional_int_pair(value: Any) -> tuple[int, int] | None:
     return (int(value[0]), int(value[1]))
 
 
-def _settle_lcd(settle_ms: float) -> None:
-    if float(settle_ms) < 20.0:
+def _settle_lcd(settle_ms: float, *, allow_test_below_refresh: bool = False) -> None:
+    if float(settle_ms) < 0.0:
+        raise BroadbandCalibrationError("lcd_settle_ms must be non-negative")
+    if float(settle_ms) < 20.0 and not allow_test_below_refresh:
         raise BroadbandCalibrationError("lcd_settle_ms must be at least 20 ms")
-    time.sleep(float(settle_ms) / 1000.0)
+    if float(settle_ms) > 0.0:
+        time.sleep(float(settle_ms) / 1000.0)

@@ -170,6 +170,8 @@ def test_broadband_camera_calibration_uses_tls_pass_through() -> None:
         exposure_search=_fast_search(min_exposure_us=200.0, max_exposure_us=6000.0),
         frames_per_capture=2,
         full_scale=255.0,
+        lcd_settle_ms=0.0,
+        allow_test_lcd_settle_below_refresh=True,
     )
 
     result = calibrate_broadband_camera_profile(plan, camera=camera, lcd=lcd, tls=tls)
@@ -184,6 +186,9 @@ def test_broadband_camera_calibration_uses_tls_pass_through() -> None:
     assert profile.lcd_state["mode"] == "all_transmissive"
     assert profile.lcd_state["asserted_by_task"] is True
     assert profile.exposure_us is not None
+    assert profile.extra["default_selection_policy"] == "low_gain_then_strong_signal_then_long_exposure"
+    assert profile.extra["safe_profiles_by_gain"][0]["gain_db"] == 0.0
+    assert profile.extra["timing_policy"]["allow_test_lcd_settle_below_refresh"] is True
 
 
 def test_gain_binary_search_discards_frames_after_each_param_change() -> None:
@@ -211,6 +216,35 @@ def test_gain_binary_search_discards_frames_after_each_param_change() -> None:
     assert camera.acquire_counts[1::2] == [2] * len(rows)
 
 
+def test_gain_binary_search_records_sorted_order_and_upper_bound_policy() -> None:
+    camera = SyntheticCamera(lcd=None)
+
+    rows = evaluate_gain_binary_search(
+        camera,
+        ExposureGainSearchConfig(
+            min_exposure_us=100.0,
+            max_exposure_us=1000.0,
+            gains_db=[6.0, 0.0],
+            iterations=3,
+            safety_fraction=0.95,
+            camera_param_settle_ms=0.0,
+            discard_frames_after_param_change=0,
+        ),
+        frames_per_capture=2,
+        full_scale=255.0,
+    )
+
+    assert [params[1] for params in camera.applied_params] == [0.0, 0.0, 6.0, 6.0]
+    assert all(row.metadata["configured_gains_db"] == [6.0, 0.0] for row in rows)
+    assert all(row.metadata["sorted_gains_db"] == [0.0, 6.0] for row in rows)
+    assert all(row.metadata["gain_iteration_order"] == "ascending" for row in rows)
+    assert all(
+        row.metadata["binary_search_termination"] == "max_exposure_safe_no_extrapolation"
+        for row in rows
+    )
+    assert all(row.metadata["max_exposure_source"] == "config_expected_camera_api_upper_bound" for row in rows)
+
+
 def test_broadband_pupil_scan_outputs_pupil_profile() -> None:
     lcd = SyntheticLCD(shape=(80, 120))
     camera = SyntheticCamera(lcd, pupil_center=(62.0, 37.0), pupil_axes=(24.0, 16.0))
@@ -233,6 +267,8 @@ def test_broadband_pupil_scan_outputs_pupil_profile() -> None:
         lcd_display_index=1,
         subpixel_axis=1,
         frames_per_capture=2,
+        lcd_settle_ms=0.0,
+        allow_test_lcd_settle_below_refresh=True,
         bar_width=6,
         scan_step=4,
         radius_scan_steps=40,
@@ -276,6 +312,8 @@ def test_pupil_scan_range_xyxy_uses_x0_y0_x1_y1_order() -> None:
         bar_width=6,
         scan_step=20,
         scan_range_xyxy=(10, 20, 90, 70),
+        lcd_settle_ms=0.0,
+        allow_test_lcd_settle_below_refresh=True,
     )
 
     assert _bar_starts("x", plan) == [10, 30, 50, 70]
@@ -301,6 +339,8 @@ def test_per_band_pupil_open_calibration_outputs_profile() -> None:
         "pupil_profile_id": "pupil_profile_scan_v1",
         "frames_per_capture": 2,
         "full_scale": 255,
+        "lcd_settle_ms": 0,
+        "allow_test_lcd_settle_below_refresh": True,
         "wavelengths": [
             {
                 "wavelength_nm": 450,
@@ -344,6 +384,10 @@ def test_per_band_pupil_open_calibration_outputs_profile() -> None:
     assert tls.wavelengths == [450.0, 550.0]
     assert len(tls.wavelengths) == len(plan.wavelengths)
     assert lcd.last_mask_id == "selected_pupil_open:pupil_profile_scan_v1"
+    assert profile.extra["default_selection_policy"] == "low_gain_then_strong_signal_then_long_exposure"
+    assert set(profile.extra["safe_profiles_by_wavelength"]) == {"450", "550"}
+    assert profile.extra["safe_profiles_by_wavelength"]["450"][0]["gain_db"] == 0.0
+    assert profile.extra["timing_policy"]["allow_test_lcd_settle_below_refresh"] is True
 
 
 def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None:
@@ -359,6 +403,8 @@ def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None
             ],
             exposure_search=_fast_search(min_exposure_us=1200.0, max_exposure_us=6000.0),
             frames_per_capture=2,
+            lcd_settle_ms=0.0,
+            allow_test_lcd_settle_below_refresh=True,
         ),
         camera=broadband_camera,
         lcd=broadband_lcd,
@@ -379,6 +425,8 @@ def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None
             lcd_display_index=1,
             subpixel_axis=1,
             frames_per_capture=2,
+            lcd_settle_ms=0.0,
+            allow_test_lcd_settle_below_refresh=True,
             bar_width=6,
             scan_step=4,
             radius_scan_steps=40,
@@ -403,6 +451,8 @@ def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None
             "pupil_profile_id": "pupil_profile_scan_v1",
             "frames_per_capture": 2,
             "full_scale": 255,
+            "lcd_settle_ms": 0,
+            "allow_test_lcd_settle_below_refresh": True,
             "wavelengths": [
                 {
                     "wavelength_nm": 550,

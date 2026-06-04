@@ -15,6 +15,7 @@ from .exposure_search import (
     ExposureProbeResult,
     ExposureSearchCamera,
     evaluate_gain_binary_search,
+    safe_exposure_profiles_by_gain,
     select_recommended_probe,
 )
 from .pupil_profile import PupilProfile
@@ -75,6 +76,7 @@ class PerBandPupilOpenCalibrationPlan:
     frames_per_capture: int = 5
     full_scale: float = 255.0
     lcd_settle_ms: float = 20.0
+    allow_test_lcd_settle_below_refresh: bool = False
     valid_for: list[str] = field(default_factory=lambda: [
         "psf_dictionary_capture",
         "dotf_capture",
@@ -91,6 +93,9 @@ class PerBandPupilOpenCalibrationPlan:
             frames_per_capture=int(data.get("frames_per_capture", 5)),
             full_scale=float(data.get("full_scale", 255.0)),
             lcd_settle_ms=float(data.get("lcd_settle_ms", 20.0)),
+            allow_test_lcd_settle_below_refresh=bool(
+                data.get("allow_test_lcd_settle_below_refresh", False)
+            ),
             valid_for=[str(x) for x in data.get("valid_for", [
                 "psf_dictionary_capture",
                 "dotf_capture",
@@ -146,9 +151,13 @@ def calibrate_per_band_pupil_open_camera_profile(
         aperture_code=255,
     )
     lcd.show_physical_mask(pupil_mask, mask_id=f"selected_pupil_open:{pupil_profile.pupil_profile_id}")
-    _settle_lcd(plan.lcd_settle_ms)
+    _settle_lcd(
+        plan.lcd_settle_ms,
+        allow_test_below_refresh=plan.allow_test_lcd_settle_below_refresh,
+    )
 
     per_wavelength: dict[str, PerWavelengthCameraSettings] = {}
+    safe_profiles_by_wavelength: dict[str, list[dict[str, Any]]] = {}
     probe_results: dict[str, list[ExposureProbeResult]] = {}
     wavelengths_nm: list[float] = []
     for spec in plan.wavelengths:
@@ -174,6 +183,7 @@ def calibrate_per_band_pupil_open_camera_profile(
         selected = select_recommended_probe(rows)
         key = _wavelength_key(spec.wavelength_nm)
         probe_results[key] = rows
+        safe_profiles_by_wavelength[key] = safe_exposure_profiles_by_gain(rows)
         per_wavelength[key] = PerWavelengthCameraSettings(
             exposure_us=float(selected.exposure_us),
             gain_db=float(selected.gain_db),
@@ -198,8 +208,18 @@ def calibrate_per_band_pupil_open_camera_profile(
         depends_on_pupil_profile_id=pupil_profile.pupil_profile_id,
         extra={
             "selection_policy": "selected_pupil_open_tls_outer_gain_outer_binary_exposure_inner",
+            "default_selection_policy": "low_gain_then_strong_signal_then_long_exposure",
             "full_scale": float(plan.full_scale),
             "tls_iteration_order": "outermost_by_wavelength",
+            "safe_profiles_by_wavelength": safe_profiles_by_wavelength,
+            "timing_policy": {
+                "lcd_settle_ms": float(plan.lcd_settle_ms),
+                "allow_test_lcd_settle_below_refresh": bool(
+                    plan.allow_test_lcd_settle_below_refresh
+                ),
+                "hardware_default_camera_param_settle_ms": 300.0,
+                "hardware_default_discard_frames_after_param_change": 80,
+            },
         },
     )
     profile.validate()
@@ -226,7 +246,10 @@ def _wavelength_key(wavelength_nm: float) -> str:
     return str(int(value)) if value.is_integer() else str(value)
 
 
-def _settle_lcd(settle_ms: float) -> None:
-    if float(settle_ms) < 20.0:
+def _settle_lcd(settle_ms: float, *, allow_test_below_refresh: bool = False) -> None:
+    if float(settle_ms) < 0.0:
+        raise PerBandCalibrationError("lcd_settle_ms must be non-negative")
+    if float(settle_ms) < 20.0 and not allow_test_below_refresh:
         raise PerBandCalibrationError("lcd_settle_ms must be at least 20 ms")
-    time.sleep(float(settle_ms) / 1000.0)
+    if float(settle_ms) > 0.0:
+        time.sleep(float(settle_ms) / 1000.0)

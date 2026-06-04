@@ -210,11 +210,16 @@ The broadband pupil-scan task selects its effective circular pupil radius as a
 configured factor of the fitted ellipse semi-minor axis from the radius scan.
 Each profile stage is an artifact boundary: later stages should load the saved
 `CameraProfile` or `PupilProfile` rather than rerunning earlier scans.
-Camera exposure profile scans enumerate gain settings and binary-search the
-maximum safe exposure for each gain. In per-band scans, TLS wavelength is the
-outermost loop because spectrometer motion is slow and expensive. Profile tasks
-also enforce LCD mask settle time of at least 20 ms and default to discarding
-80 frames after camera exposure/gain changes.
+Camera exposure profile scans record configured gain settings, execute them in
+ascending gain order, and binary-search the maximum safe exposure for each
+completed gain. `max_exposure_us` is a hard no-extrapolation bound and should
+come from the camera API's real shutter upper limit for hardware plans. Profile
+artifacts publish the per-gain safe exposure table; the default selected profile
+prefers low gain, then stronger signal, then longer exposure. In per-band scans,
+TLS wavelength is the outermost loop because spectrometer motion is slow and
+expensive. Profile tasks also enforce LCD mask settle time of at least 20 ms and
+default to discarding 80 frames after camera exposure/gain changes. Tests may
+use a below-refresh LCD settle only through an explicit test override.
 
 The fixed-size `PeakPatchPSFDictionary` is a v1 compatibility baseline. The
 medium-term representation target is an adaptive peak-cluster dictionary where

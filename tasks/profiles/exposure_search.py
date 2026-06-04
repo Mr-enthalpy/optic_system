@@ -234,7 +234,8 @@ def evaluate_gain_binary_search(
     if not config.gains_db:
         raise ExposureSearchError("at least one gain is required")
     rows: list[ExposureProbeResult] = []
-    gains = sorted(float(g) for g in config.gains_db)
+    configured_gains = [float(g) for g in config.gains_db]
+    gains = sorted(configured_gains)
     for gain_index, gain_db in enumerate(gains):
         try:
             gain_rows = evaluate_exposure_binary_search(
@@ -258,9 +259,16 @@ def evaluate_gain_binary_search(
         except ExposureSearchError:
             if gain_index == 0:
                 raise
+            for row in rows:
+                row.metadata["gain_search_stopped_after_gain_db"] = float(gain_db)
+                row.metadata["gain_search_stop_reason"] = "min_exposure_unsafe_at_higher_gain"
             break
         for row in gain_rows:
             row.metadata["gain_search_method"] = "gain_outer_binary_exposure_inner"
+            row.metadata["configured_gains_db"] = list(configured_gains)
+            row.metadata["sorted_gains_db"] = list(gains)
+            row.metadata["gain_iteration_order"] = "ascending"
+            row.metadata["gain_index"] = int(gain_index)
         rows.extend(gain_rows)
     if not rows:
         raise ExposureSearchError("no gain/exposure probes were completed")
@@ -313,6 +321,10 @@ def evaluate_exposure_binary_search(
         row.metadata.update({
             "search_method": "binary",
             "search_stage": stage,
+            "min_exposure_us": float(config.min_exposure_us),
+            "max_exposure_us": float(config.max_exposure_us),
+            "max_exposure_source": "config_expected_camera_api_upper_bound",
+            "upper_bound_policy": "no_extrapolation_past_config_max",
             "safety_fraction": float(config.safety_fraction),
             "safety_limit": safety_limit,
             "binary_search_safe": bool(row.peak_pixel_burst < safety_limit),
@@ -325,6 +337,9 @@ def evaluate_exposure_binary_search(
     low_row = probe(low, "lower_bound")
     high_row = probe(high, "upper_bound")
     if bool(high_row.metadata["binary_search_safe"]):
+        for row in rows:
+            row.metadata["binary_search_termination"] = "max_exposure_safe_no_extrapolation"
+            row.metadata["max_exposure_safe_without_saturation"] = True
         return rows
     if not bool(low_row.metadata["binary_search_safe"]):
         raise ExposureSearchError("minimum exposure is not safe under binary search policy")
@@ -338,6 +353,9 @@ def evaluate_exposure_binary_search(
             safe_low = mid
         else:
             unsafe_high = mid
+    for row in rows:
+        row.metadata["binary_search_termination"] = "bracketed_unsafe_upper_bound"
+        row.metadata["max_exposure_safe_without_saturation"] = False
     return rows
 
 
@@ -408,6 +426,43 @@ def select_recommended_probe(rows: list[ExposureProbeResult]) -> ExposureProbeRe
     pool = usable or safe
     # Prefer lower gain, then strongest usable signal without saturation.
     return sorted(pool, key=lambda r: (float(r.gain_db), -float(r.p_signal), -float(r.exposure_us)))[0]
+
+
+def safe_exposure_profiles_by_gain(rows: list[ExposureProbeResult]) -> list[dict[str, Any]]:
+    """Publish the maximum verified safe exposure for each enumerated gain."""
+    safe = [
+        row for row in rows
+        if row.psf_safe and bool(row.metadata.get("binary_search_safe", True))
+    ]
+    by_gain: dict[float, list[ExposureProbeResult]] = {}
+    for row in safe:
+        by_gain.setdefault(float(row.gain_db), []).append(row)
+
+    profiles: list[dict[str, Any]] = []
+    for gain_db in sorted(by_gain):
+        gain_rows = by_gain[gain_db]
+        selected = sorted(
+            gain_rows,
+            key=lambda r: (-float(r.exposure_us), -float(r.p_signal)),
+        )[0]
+        profiles.append({
+            "gain_db": float(selected.gain_db),
+            "max_safe_exposure_us": float(selected.exposure_us),
+            "exposure_us": float(selected.exposure_us),
+            "peak_pixel_burst": float(selected.peak_pixel_burst),
+            "peak_pixel_avg": float(selected.peak_pixel_avg),
+            "peak_pixel_fraction_burst": float(selected.peak_pixel_fraction_burst),
+            "saturation_margin": float(selected.peak_margin_to_full_scale),
+            "p_signal": float(selected.p_signal),
+            "dynamic_range": float(selected.dynamic_range),
+            "usable_signal": bool(selected.usable_signal),
+            "selection": "max_verified_safe_exposure_for_gain",
+            "binary_search_termination": selected.metadata.get("binary_search_termination"),
+            "max_exposure_safe_without_saturation": bool(
+                selected.metadata.get("max_exposure_safe_without_saturation", False)
+            ),
+        })
+    return profiles
 
 
 def _probe_candidate(
