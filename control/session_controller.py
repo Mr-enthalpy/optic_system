@@ -21,6 +21,7 @@ from .commands import (
     SetLCDAllOpaque,
     SetLCDAllTransmissive,
     SetTLSGrating,
+    SetTLSPassThrough,
     SetTLSWavelength,
     ShowLCDDebugPattern,
     ShowLCDMonoMask,
@@ -44,6 +45,7 @@ from .events import (
     TLSError,
     TLSMoveFinished,
     TLSMoveStarted,
+    TLSPassThroughSet,
     TLSStatusUpdated,
     TLSWavelengthTargetSet,
 )
@@ -162,6 +164,8 @@ class SessionController:
                 self._set_tls_grating(command.grating)
             elif isinstance(command, SetTLSWavelength):
                 self._set_tls_wavelength(command.wavelength_nm)
+            elif isinstance(command, SetTLSPassThrough):
+                self._set_tls_pass_through(command.timeout_s)
             elif isinstance(command, MoveTLS):
                 self._move_tls(command.timeout_s)
             elif isinstance(command, RefreshTLSStatus):
@@ -250,6 +254,14 @@ class SessionController:
         self.bus.publish(TLSWavelengthTargetSet(target_wavelength_nm=float(wavelength_nm)))
         self._publish_tls_status_updated()
         self.bus.publish(StatusMessage("info", f"TLS target wavelength set to {float(wavelength_nm):.3f} nm"))
+
+    def _set_tls_pass_through(self, timeout_s: float) -> None:
+        service = self._require_tls_service()
+        status = service.set_pass_through(timeout_s=timeout_s)
+        self._apply_tls_status(status)
+        self.bus.publish(TLSPassThroughSet())
+        self._publish_tls_status_updated()
+        self.bus.publish(StatusMessage("success", "TLS set to zero-order pass-through"))
 
     def _move_tls(self, timeout_s: float) -> None:
         service = self._require_tls_service()

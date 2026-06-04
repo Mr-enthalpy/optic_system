@@ -117,6 +117,11 @@ GUI / task intent
 Hardware tests for TLS must remain opt-in.
 The default test suite should run without TLS hardware and without vendor DLLs.
 
+TLS zero-order pass-through is represented in capture plans as
+`wavelength_nm: 0.0`, but task code must not call `set_wavelength(0)`.
+It must call `TLSService.set_pass_through()`, which uses the high-level
+`tls_c1.set_pass_through()` API.
+
 ## Relationship with LCD_forward
 
 `optic_system` should produce experimental data.
@@ -176,6 +181,12 @@ Phase 3.5B -- first-pass diffraction support analysis report.
 The current mainline data-artifact paths are:
 
 ```text
+Broadband pass-through CameraProfile
+  -> broadband LCD pupil scan
+  -> PupilProfile
+  -> selected-pupil-open per-band CameraProfile
+  -> downstream PSF / dOTF / mask-family captures
+
 FullFramePSFSurvey
   -> first-pass PeakLayoutProfile
   -> fixed-size PeakPatchPSFDictionary
@@ -186,6 +197,15 @@ FullFramePSFSurvey
   -> future AdaptivePeakLayoutProfile
   -> future AdaptivePeakClusterPSFDictionary
 ```
+
+The broadband pass-through profile is only valid for pupil scanning. It must
+not be reused as the exposure profile for PSF-producing captures. Those tasks
+must depend on a `PupilProfile` and a per-band `CameraProfile` measured with
+the selected LCD pupil open.
+
+The broadband camera-profile task explicitly displays an all-transmissive
+physical LCD mask before exposure probing. It should not claim
+`lcd_state.mode=all_transmissive` based on an unverified external LCD state.
 
 The fixed-size `PeakPatchPSFDictionary` is a v1 compatibility baseline. The
 medium-term representation target is an adaptive peak-cluster dictionary where

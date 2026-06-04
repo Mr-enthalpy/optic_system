@@ -267,6 +267,22 @@ RefreshTLSStatus:
 
 Preserve this separation. Setting a target wavelength and moving the hardware are not the same operation.
 
+### TLS zero-order pass-through mode
+
+Setting the TLS wavelength to ``0 nm`` places the monochromator grating in
+zero-order position, where it passes broadband light through the optical path.
+
+* Use ``TLSService.set_pass_through()`` / ``tls_c1.set_pass_through()`` for
+  zero-order mode.
+* Do not call ``set_wavelength_nm(0)``. The `tls_c1` high-level parser rejects
+  non-positive wavelengths and exposes pass-through as a separate API.
+* Capture plans may use ``wavelength_nm: 0.0`` to request pass-through. Capture
+  task code must detect this value and call pass-through instead of the normal
+  set-wavelength / move sequence.
+* Wavelength labels without TLS are not equivalent to pass-through mode; they
+  skip TLS movement, while pass-through explicitly moves the grating to
+  zero-order.
+
 ## Task-layer rules
 
 Historical files under `tasks/` must not be assumed to define the current architecture.
@@ -283,6 +299,37 @@ Before reusing any old task:
 New minimal capture tasks should be implemented cleanly and separately.
 
 Do not silently revive legacy task logic.
+
+### Profile task chain
+
+The mainline profile chain is:
+
+```text
+broadband pass-through camera calibration
+  -> broadband LCD pupil scan
+  -> PupilProfile
+  -> selected-pupil-open per-band camera calibration
+  -> downstream PSF / dOTF / mask-family capture tasks
+```
+
+Rules:
+
+* Broadband camera profiles are valid for LCD pupil scanning only.
+* LCD pupil scanning must use TLS pass-through / broadband light, not one
+  selected monochromatic wavelength.
+* `PupilScanPlan.scan_range_xyxy` uses conventional physical LCD coordinate
+  order: `x0, y0, x1, y1`.
+* Broadband camera calibration must receive an LCD adapter and must explicitly
+  display an all-transmissive physical mask before exposure probing.
+* Per-band camera profiles for PSF-producing tasks must be measured with the
+  selected LCD pupil open.
+* Do not reuse full-LCD-open per-band exposure profiles as selected-pupil-open
+  capture profiles.
+* No-hardware tests may use fake LCD/TLS adapters and may use `tls=None` for
+  synthetic broadband calibration, but real hardware profile generation must
+  provide TLS and actually enter pass-through mode.
+* Bachelor-thesis branch tasks may be audited for algorithms, but their old
+  workflow ordering must not be copied into mainline.
 
 ## Peak-cluster artifact rules
 

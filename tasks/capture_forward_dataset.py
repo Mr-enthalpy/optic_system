@@ -100,6 +100,9 @@ class TLSControlProtocol(_Protocol):
     def set_wavelength(self, wavelength_nm: float) -> None:
         ...
 
+    def set_pass_through(self, timeout_s: float) -> None:
+        ...
+
     def move_and_wait(self, timeout_s: float) -> None:
         ...
 
@@ -202,6 +205,10 @@ class FakeTLS:
 
     def set_wavelength(self, wavelength_nm: float) -> None:
         self._target_nm = float(wavelength_nm)
+
+    def set_pass_through(self, timeout_s: float) -> None:
+        self._target_nm = 0.0
+        self._current_nm = 0.0
 
     def move_and_wait(self, timeout_s: float) -> None:
         self._current_nm = self._target_nm
@@ -329,6 +336,9 @@ class TLSAdapter:
     def set_wavelength(self, wavelength_nm: float) -> None:
         self._service.set_wavelength_nm(wavelength_nm)
 
+    def set_pass_through(self, timeout_s: float) -> None:
+        self._service.set_pass_through(timeout_s=timeout_s)
+
     def move_and_wait(self, timeout_s: float) -> None:
         self._service.move(timeout_s=timeout_s)
         self._service.wait_until_idle(timeout_s=timeout_s)
@@ -410,8 +420,11 @@ def run_capture_forward_dataset(
                 tls = devices.tls
                 if wl_entry.grating is not None:
                     tls.set_grating(wl_entry.grating)
-                tls.set_wavelength(wl_entry.wavelength_nm)
-                tls.move_and_wait(timeout_s=60.0)
+                if float(wl_entry.wavelength_nm) == 0.0:
+                    tls.set_pass_through(timeout_s=60.0)
+                else:
+                    tls.set_wavelength(wl_entry.wavelength_nm)
+                    tls.move_and_wait(timeout_s=60.0)
                 if wl_entry.settle_ms > 0 and not dry_run:
                     time.sleep(wl_entry.settle_ms / 1000.0)
                 tls_status = tls.status()

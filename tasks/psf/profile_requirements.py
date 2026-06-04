@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from tasks.profiles import (
+from tasks.profiles.camera_profile import (
     BROADBAND_PASSTHROUGH,
     PER_BAND_PUPIL_OPEN,
     CameraProfile,
+)
+from tasks.profiles.pupil_profile import (
     PupilProfile,
 )
 

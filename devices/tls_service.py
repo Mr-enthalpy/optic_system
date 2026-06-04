@@ -152,6 +152,36 @@ class TLSService:
         except Exception as exc:
             raise self._wrap_exception("set_wavelength", exc) from exc
 
+    def set_pass_through(self, timeout_s: float = 60.0) -> TLSStatus:
+        try:
+            device = self._require_device()
+            self._last_status = TLSStatus(
+                connected=self._last_status.connected,
+                device_id=self._last_status.device_id,
+                mono=self._last_status.mono,
+                port_type=self._last_status.port_type,
+                serial_number=self._last_status.serial_number,
+                current_wavelength_nm=self._last_status.current_wavelength_nm,
+                target_wavelength_nm=0.0,
+                grating=self._last_status.grating,
+                moving=True,
+                last_error=None,
+            )
+            self._publish_tls_state()
+
+            device.set_pass_through(timeout=float(timeout_s))
+
+            status = self._refresh_status(
+                self._safe_get_status(),
+                target_wavelength_nm=0.0,
+                moving=False,
+                last_error=None,
+            )
+            self._publish_tls_state()
+            return status
+        except Exception as exc:
+            raise self._wrap_exception("set_pass_through", exc) from exc
+
     def move(self, timeout_s: float = 60.0) -> TLSStatus:
         try:
             device = self._require_device()
