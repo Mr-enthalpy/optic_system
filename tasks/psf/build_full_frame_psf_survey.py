@@ -110,9 +110,16 @@ def build_full_frame_psf_survey(
     normalization_policy: str = "none",
     allow_acquired_frame_only: bool = False,
     allow_profile_id_only: bool = False,
+    max_entries: int = 100,
+    max_total_pixels: int = 1_000_000,
+    allow_large_survey: bool = False,
     notes: str | None = None,
 ) -> FullFramePSFSurveyManifest:
-    """Build a small full-frame scout artifact from raw capture HDF5."""
+    """Build a small full-frame scout artifact from raw capture HDF5.
+
+    By default rejects surveys larger than 100 entries or 1M total pixels.
+    Pass allow_large_survey=True to override.
+    """
 
     try:
         validate_policy_none(background_policy, "background_policy")
@@ -161,6 +168,13 @@ def build_full_frame_psf_survey(
                     f"raw frames_avg entries must be 2D, got shape {first_frame.shape}"
                 )
             frame_shape = (int(first_frame.shape[0]), int(first_frame.shape[1]))
+            _check_survey_size(
+                n_entries=len(valid_rows),
+                frame_shape=frame_shape,
+                max_entries=max_entries,
+                max_total_pixels=max_total_pixels,
+                allow_large_survey=allow_large_survey,
+            )
             extent = camera_frame_extent(src, frame_shape=frame_shape)
             require_full_sensor_extent(
                 extent,
@@ -218,6 +232,9 @@ def build_full_frame_psf_survey(
                     "role": "full_frame_scout_capture",
                     "applied_background_policy": background_policy,
                     "applied_normalization_policy": normalization_policy,
+                    "max_entries": max_entries,
+                    "max_total_pixels": max_total_pixels,
+                    "allow_large_survey": allow_large_survey,
                 },
                 notes=notes,
             )
@@ -381,3 +398,26 @@ def _wavelength_from_illumination_json(illumination_str: str) -> float:
     if label is not None:
         return float(label)
     return float("nan")
+
+
+def _check_survey_size(
+    *,
+    n_entries: int,
+    frame_shape: tuple[int, int],
+    max_entries: int,
+    max_total_pixels: int,
+    allow_large_survey: bool,
+) -> None:
+    if allow_large_survey:
+        return
+    total_pixels = n_entries * frame_shape[0] * frame_shape[1]
+    if n_entries > max_entries:
+        raise FullFramePSFSurveyError(
+            f"survey has {n_entries} entries (max {max_entries}); "
+            "pass allow_large_survey=True to override"
+        )
+    if total_pixels > max_total_pixels:
+        raise FullFramePSFSurveyError(
+            f"survey total pixels {total_pixels} exceeds max {max_total_pixels}; "
+            "pass allow_large_survey=True to override"
+        )
