@@ -70,6 +70,12 @@ def main() -> int:
         help="SensorEnergyCenterProfile JSON. Implies center-policy=sensor_energy_center_profile.",
     )
     parser.add_argument("--notes", default=None)
+    parser.add_argument(
+        "--runtime-mode",
+        choices=("hardware", "no_hardware", "synthetic", "diagnostic"),
+        default="diagnostic",
+        help="runtime validation mode; diagnostic is the default for analysis scripts",
+    )
     args = parser.parse_args()
 
     manifest = analyze_diffraction_support(
@@ -89,6 +95,7 @@ def main() -> int:
         energy_only=bool(args.energy_only),
         preset_name=args.preset,
         notes=args.notes,
+        runtime_policy=args.runtime_mode,
     )
     print(manifest.to_json_text())
     return 0

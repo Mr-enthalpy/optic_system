@@ -4,11 +4,20 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Protocol
 
 import numpy as np
 
 from tasks.illumination import illumination_from_legacy_wavelength_nm
+from tasks.runtime_mode import (
+    RuntimePolicy,
+    RuntimeModeError,
+    normalize_runtime_policy,
+    validate_lcd_settle_policy,
+    validate_no_fake_devices,
+    validate_required_devices,
+)
 
 from .camera_profile import BROADBAND_PASSTHROUGH, CameraProfile
 from .pupil_profile import PupilProfile
@@ -133,9 +142,10 @@ class PupilScanReport:
     radius_fit_adjusted_energy: np.ndarray
     fit_quality: dict[str, Any]
     tls_status: dict[str, Any]
+    runtime_policy: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "artifact_type": "broadband_pupil_scan_report",
             "pupil_profile": self.pupil_profile.to_dict(),
             "x_positions": self.x_positions.astype(float).tolist(),
@@ -176,6 +186,10 @@ class PupilScanReport:
                 "radius_factor_reference": "ellipse_semi_minor",
             },
         }
+        if self.runtime_policy is not None:
+            result["runtime_policy"] = dict(self.runtime_policy)
+            result["runtime_mode"] = self.runtime_policy.get("mode")
+        return result
 
     def write_json(self, path: str | Path) -> None:
         Path(path).write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -188,7 +202,23 @@ def run_broadband_pupil_scan(
     camera: PupilScanCamera,
     lcd: PupilScanLCD,
     tls: PupilScanTLS | None = None,
+    runtime_policy: RuntimePolicy | str | None = None,
 ) -> PupilScanReport:
+    policy = normalize_runtime_policy(runtime_policy)
+    devices = SimpleNamespace(camera=camera, lcd=lcd, tls=tls)
+    validate_required_devices(
+        devices,
+        policy=policy,
+        require_camera=True,
+        require_lcd=True,
+        require_tls=True,
+    )
+    validate_no_fake_devices(devices, policy=policy)
+    _validate_test_settle_override(
+        allow_test_override=plan.allow_test_lcd_settle_below_refresh,
+        lcd_settle_ms=plan.lcd_settle_ms,
+        policy=policy,
+    )
     _validate_broadband_camera_profile(plan, camera_profile)
     if camera_profile.camera_profile_id != plan.camera_profile_id:
         raise PupilScanError("plan camera_profile_id does not match camera_profile")
@@ -293,6 +323,7 @@ def run_broadband_pupil_scan(
         radius_fit_adjusted_energy=ellipse.adjusted_energy,
         fit_quality=fit_quality,
         tls_status=_tls_status_dict(tls),
+        runtime_policy=policy.to_dict(),
     )
 
 
@@ -748,6 +779,23 @@ def _settle_lcd(settle_ms: float, *, allow_test_below_refresh: bool = False) -> 
         raise PupilScanError("lcd_settle_ms must be at least 20 ms")
     if float(settle_ms) > 0.0:
         time.sleep(float(settle_ms) / 1000.0)
+
+
+def _validate_test_settle_override(
+    *,
+    allow_test_override: bool,
+    lcd_settle_ms: float,
+    policy: RuntimePolicy,
+) -> None:
+    if allow_test_override and not policy.allow_test_settle_override:
+        raise RuntimeModeError(
+            "allow_test_lcd_settle_below_refresh requires explicit non-hardware runtime mode"
+        )
+    validate_lcd_settle_policy(
+        lcd_settle_ms=lcd_settle_ms,
+        expected_min_settle_ms=20,
+        policy=policy,
+    )
 
 
 def _int_pair(value: Any, name: str) -> tuple[int, int]:

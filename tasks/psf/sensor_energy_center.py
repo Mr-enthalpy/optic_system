@@ -15,6 +15,11 @@ from tasks.artifacts.coordinate_frame import (
 )
 from tasks.artifacts.errors import ArtifactIOError
 from tasks.artifacts.frame_source import open_survey_or_raw_frame_source
+from tasks.runtime_mode import (
+    RuntimePolicy,
+    normalize_runtime_policy,
+    validate_raw_fallback_allowed,
+)
 
 
 class SensorEnergyCenterError(ValueError):
@@ -218,7 +223,13 @@ def derive_sensor_energy_center_profile(
     valid_pixel_mask: np.ndarray | None = None,
     allow_raw_fallback: bool = False,
     notes: str | None = None,
+    runtime_policy: RuntimePolicy | str | None = None,
 ) -> SensorEnergyCenterProfile:
+    policy = normalize_runtime_policy(runtime_policy)
+    validate_raw_fallback_allowed(
+        allow_raw_fallback=allow_raw_fallback,
+        policy=policy,
+    )
     source_path = Path(survey_h5)
     output_path = Path(output_json)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -299,6 +310,7 @@ def derive_sensor_energy_center_profile(
             "per_wavelength_origins": False,
             "outlier_rejection": None,
         },
+        notes=notes,
         per_entry_center_xy=[(float(x), float(y)) for x, y in centers],
         per_entry_mask_ids=list(descriptor.mask_ids),
         per_entry_wavelengths_nm=[float(v) for v in descriptor.wavelengths_nm],
@@ -309,7 +321,6 @@ def derive_sensor_energy_center_profile(
         per_wavelength_center_std_xy=per_wavelength_std,
         global_center_std_xy=(float(std_xy[0]), float(std_xy[1])),
         max_center_deviation_px=float(np.max(deviations)) if deviations.size else 0.0,
-        notes=notes,
     )
     profile.to_json(output_path)
     return profile

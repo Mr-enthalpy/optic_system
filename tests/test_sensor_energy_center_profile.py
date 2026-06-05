@@ -230,6 +230,7 @@ def test_raw_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:
         raw_h5,
         tmp_path / "center.json",
         allow_raw_fallback=True,
+        runtime_policy="diagnostic",
     )
     assert profile.coordinate_frame == "acquired_frame"
 

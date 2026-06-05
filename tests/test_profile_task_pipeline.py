@@ -176,7 +176,13 @@ def test_broadband_camera_calibration_uses_tls_pass_through() -> None:
         allow_test_lcd_settle_below_refresh=True,
     )
 
-    result = calibrate_broadband_camera_profile(plan, camera=camera, lcd=lcd, tls=tls)
+    result = calibrate_broadband_camera_profile(
+        plan,
+        camera=camera,
+        lcd=lcd,
+        tls=tls,
+        runtime_policy="no_hardware",
+    )
 
     assert tls.pass_through_calls == 1
     assert lcd.last_mask_id == "broadband_camera_calibration_all_transmissive"
@@ -354,7 +360,14 @@ def test_broadband_pupil_scan_outputs_pupil_profile() -> None:
     )
     tls = FakePassThroughTLS()
 
-    report = run_broadband_pupil_scan(plan, camera_profile=camera_profile, camera=camera, lcd=lcd, tls=tls)
+    report = run_broadband_pupil_scan(
+        plan,
+        camera_profile=camera_profile,
+        camera=camera,
+        lcd=lcd,
+        tls=tls,
+        runtime_policy="no_hardware",
+    )
 
     assert tls.pass_through_calls == 1
     pupil = report.pupil_profile
@@ -453,6 +466,7 @@ def test_per_band_pupil_open_calibration_outputs_profile() -> None:
         camera=camera,
         lcd=lcd,
         tls=tls,
+        runtime_policy="no_hardware",
     )
 
     profile = result.camera_profile
@@ -487,6 +501,7 @@ def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None
         camera=broadband_camera,
         lcd=broadband_lcd,
         tls=broadband_tls,
+        runtime_policy="no_hardware",
     )
     broadband_result.write_json(tmp_path / "broadband_result.json")
     broadband_profile_path = tmp_path / "broadband_camera_profile.json"
@@ -514,6 +529,7 @@ def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None
         camera=scan_camera,
         lcd=scan_lcd,
         tls=None,
+        runtime_policy="no_hardware",
     )
     scan_report.write_json(tmp_path / "pupil_scan_report.json")
     pupil_profile_path = tmp_path / "pupil_profile.json"
@@ -550,6 +566,7 @@ def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None
         camera=per_band_camera,
         lcd=per_band_lcd,
         tls=per_band_tls,
+        runtime_policy="no_hardware",
     )
     per_band_result.write_json(tmp_path / "per_band_result.json")
 
@@ -592,4 +609,5 @@ def test_per_band_calibration_rejects_zero_wavelength() -> None:
             camera=camera,
             lcd=lcd,
             tls=None,
+            runtime_policy="no_hardware",
         )
