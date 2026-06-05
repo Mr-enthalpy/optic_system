@@ -266,9 +266,10 @@ zero-order position, where it passes broadband light through the optical path.
   zero-order mode.
 * Do not call ``set_wavelength_nm(0)``. The `tls_c1` high-level parser rejects
   non-positive wavelengths and exposes pass-through as a separate API.
-* Capture plans may use ``wavelength_nm: 0.0`` to request pass-through. Capture
-  task code must detect this value and call pass-through instead of the normal
-  set-wavelength / move sequence.
+* Capture plans may use ``wavelength_nm: 0.0`` as a compatibility encoding for
+  pass-through. Task internals must normalize wavelength entries to
+  `IlluminationSpec` and must not scatter ``wavelength_nm == 0.0`` checks.
+* Pass-through is a device-control mode, not a physical wavelength.
 * Wavelength labels without TLS are not equivalent to pass-through mode; they
   skip TLS movement, while pass-through explicitly moves the grating to
   zero-order.
@@ -304,6 +305,8 @@ Hard rules:
 
 * Pass-through uses `TLSService.set_pass_through()` /
   `tls_c1.set_pass_through()`, not `set_wavelength(0)`.
+* Capture tasks should use `tasks.illumination.IlluminationSpec` rather than
+  raw `wavelength_nm == 0.0` sentinel checks.
 * PSF-producing tasks need a `PupilProfile` and a per-band pupil-open
   `CameraProfile`.
 * Broadband `CameraProfile` artifacts are only for broadband pupil scan.

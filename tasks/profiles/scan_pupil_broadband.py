@@ -8,6 +8,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from tasks.illumination import illumination_from_legacy_wavelength_nm
+
 from .camera_profile import BROADBAND_PASSTHROUGH, CameraProfile
 from .pupil_profile import PupilProfile
 
@@ -695,8 +697,15 @@ def _aperture_window(center: tuple[float, float], radius: float, shape: tuple[in
 
 
 def _tls_status_dict(tls: PupilScanTLS | None) -> dict[str, Any]:
+    illumination = illumination_from_legacy_wavelength_nm(0.0).to_dict()
     if tls is None:
-        return {"connected": False, "target_wavelength_nm": 0.0, "pass_through_requested": False}
+        return {
+            "connected": False,
+            "target_wavelength_nm": 0.0,
+            "pass_through_requested": False,
+            "illumination": illumination,
+            "tls_action": "none",
+        }
     status = tls.get_status()
     return {
         "connected": bool(_read_attr(status, "connected", True)),
@@ -705,6 +714,8 @@ def _tls_status_dict(tls: PupilScanTLS | None) -> dict[str, Any]:
         "grating": _read_attr(status, "grating", None),
         "moving": bool(_read_attr(status, "moving", False)),
         "pass_through_requested": True,
+        "illumination": illumination,
+        "tls_action": "set_pass_through",
     }
 
 

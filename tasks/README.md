@@ -88,6 +88,17 @@ Profile-chain hardware rules are centralized in
 New measured-artifact modules should use `tasks/artifacts/` instead of
 reimplementing frame-source parsing or coordinate validation.
 
+## Active Illumination Helpers
+
+| File | Status | Purpose |
+|------|--------|---------|
+| `tasks/illumination.py` | **active** | Typed `IlluminationSpec` normalization for monochromatic, broadband pass-through, and label-only illumination semantics. |
+
+Capture plans may still use `wavelength_nm: 0.0` as a compatibility encoding
+for TLS zero-order broadband pass-through. Task internals should use
+`IlluminationSpec`, not scattered `wavelength_nm == 0.0` checks. Wavelength
+labels without TLS are not equivalent to pass-through.
+
 ## Active Tests
 
 | File | Status |

@@ -29,6 +29,11 @@ import numpy as np
 from diagnostics.run_status import RunStatusPublisher
 
 from .capture_plan import CapturePlan, CapturePlanError
+from .illumination import (
+    IlluminationSpec,
+    apply_illumination_to_tls,
+    illumination_status_without_tls,
+)
 from .raw_capture_h5 import RawCaptureWriter, RawCaptureWriteError
 
 
@@ -416,27 +421,24 @@ def run_capture_forward_dataset(
 
         capture_idx = 0
         for wi, wl_entry in enumerate(plan.wavelengths):
+            illumination = wl_entry.resolved_illumination()
             if enable_tls and devices.tls is not None:
                 tls = devices.tls
                 if wl_entry.grating is not None:
                     tls.set_grating(wl_entry.grating)
-                if float(wl_entry.wavelength_nm) == 0.0:
-                    tls.set_pass_through(timeout_s=60.0)
-                else:
-                    tls.set_wavelength(wl_entry.wavelength_nm)
-                    tls.move_and_wait(timeout_s=60.0)
+                tls_status = apply_illumination_to_tls(
+                    tls,
+                    illumination,
+                    timeout_s=60.0,
+                )
                 if wl_entry.settle_ms > 0 and not dry_run:
                     time.sleep(wl_entry.settle_ms / 1000.0)
-                tls_status = tls.status()
             else:
-                tls_status = {
-                    "connected": False,
-                    "current_wavelength_nm": wl_entry.wavelength_nm,
-                    "target_wavelength_nm": wl_entry.wavelength_nm,
-                    "grating": wl_entry.grating,
-                    "moving": False,
-                    "timestamp_ns": time.monotonic_ns(),
-                }
+                tls_status = illumination_status_without_tls(
+                    _no_tls_illumination(illumination)
+                )
+                tls_status["grating"] = wl_entry.grating
+                tls_status["timestamp_ns"] = time.monotonic_ns()
 
             _safe_status_update(
                 status,
@@ -521,6 +523,19 @@ def run_capture_forward_dataset(
         raise
 
     return output_path
+
+
+def _no_tls_illumination(spec: IlluminationSpec) -> IlluminationSpec:
+    if spec.is_monochromatic:
+        label = spec.wavelength_label_nm or spec.effective_wavelength_nm
+        return IlluminationSpec(
+            mode="label_only",
+            effective_wavelength_nm=spec.effective_wavelength_nm,
+            tls_setpoint_nm=None,
+            wavelength_label_nm=label,
+            source_encoding=spec.source_encoding,
+        )
+    return spec
 
 
 def _validate_mask_shape(
