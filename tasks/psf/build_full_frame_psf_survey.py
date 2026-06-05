@@ -139,7 +139,7 @@ def build_full_frame_psf_survey(
                     "capture/mask_index",
                     "capture/capture_index",
                     "capture/plan_json",
-                    "tls/wavelength_nm",
+                    "illumination/nominal_wavelength_nm",
                     "masks/mask_id",
                 ],
             )
@@ -168,7 +168,7 @@ def build_full_frame_psf_survey(
                 artifact_name="full-frame PSF survey",
             )
 
-            wavelengths_by_index = np.asarray(src["tls/wavelength_nm"], dtype=np.float64)
+            wavelengths_by_index = np.asarray(src["illumination/nominal_wavelength_nm"], dtype=np.float64)
             illumination_by_index = _read_raw_illumination_json_by_index(src, plan=None)
             mask_ids_by_index = read_string_array(src["masks/mask_id"])
             entry_mask_ids = [
@@ -312,10 +312,10 @@ def _read_raw_illumination_json_by_index(
     *,
     plan: dict[str, Any] | None,
 ) -> list[str]:
-    if "tls/illumination_json" in src:
+    if "illumination/illumination_json" in src:
         return [
             value.decode("utf-8") if isinstance(value, bytes) else str(value)
-            for value in src["tls/illumination_json"][()]
+            for value in src["illumination/illumination_json"][()]
         ]
     if isinstance(plan, dict) and isinstance(plan.get("wavelengths"), list):
         result: list[str] = []

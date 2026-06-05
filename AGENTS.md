@@ -74,8 +74,6 @@ Current meaning:
 - ``app/main_gui.py`` is the manual/debug control GUI and may control hardware.
 - ``scripts/monitor_run_status.py`` is the only supported read-only monitor.
   It reads task-published run-status files and must remain hardware-free.
-- The bachelor-thesis experimental branch is historical reference, not a
-  source of mainline workflow structure.
 - The active mainline path is measured-artifact construction and diagnostics,
   not learning-side modelling.
 
@@ -108,7 +106,6 @@ diagnostics, and metadata-rich exports.
 - support-candidate stability reports;
 - peak layout and adaptive peak layout artifacts;
 - fixed-size peak-patch and future adaptive peak-cluster dictionaries;
-- dense-kernel compatibility exports and peak-cluster exports.
 
 `optic_system` must not build:
 
@@ -116,23 +113,6 @@ diagnostics, and metadata-rich exports.
 - reconstruction models;
 - differentiable mask optimization loops;
 - hidden `LCD_forward` training or validation invocations.
-
-## Mainline / thesis branch relationship
-
-The bachelor-thesis branch is historical reference.
-
-Mainline may absorb:
-
-- audited algorithms;
-- reusable artifact abstractions;
-- hardware-free diagnostics.
-
-Mainline must not absorb:
-
-- thesis phase numbering;
-- thesis workflow ordering;
-- ROI-centered data contracts;
-- thesis-specific reconstruction or figure scripts.
 
 ## Architecture rules
 
@@ -291,24 +271,10 @@ before current measured-artifact analysis.
 Runtime mode is explicit for capture, profile, and diagnostic task entry
 points. Real hardware tasks default to hardware runtime mode. Fake devices,
 missing required hardware, diagnostic-only shortcuts, and test-settle overrides
-must be explicit non-hardware/diagnostic choices. No-TLS positive wavelength
-labels are allowed only in non-hardware contexts. TLS zero-order pass-through
-requires a real TLS adapter in hardware mode.
+must be explicit non-hardware/diagnostic choices.
 
-Before reusing any old task:
-
-1. audit whether it uses `control -> devices`
-2. check whether it bypasses `SessionController`
-3. check whether it depends on old pywinauto TLS logic
-4. check whether it preserves metadata
-5. check whether it is compatible with current LCD physical mask convention
-6. mark it as active, legacy, experimental, or deprecated
-
-New minimal capture tasks should be implemented cleanly and separately.
-
-Do not silently revive legacy task logic.
-
-### Profile task chain
+No historical task revival is planned. The active module list in
+`tasks/README.md` defines the implementation surface.
 
 Detailed operational rules for the profile-driven calibration chain live in
 `docs/profile_task_chain.md`.
@@ -367,10 +333,6 @@ status.append_log(...)
 If a task only writes `state.json` and `current_mask_preview`, the monitor must
 continue to work and show only those available fields.  Missing frame previews,
 frame stats, or logs are not monitor failures.
-
-Reusable monitor/diagnostics improvements discovered on the thesis branch
-may be selectively backported to master when they remain hardware-free
-and task-agnostic.
 
 
 ## Capture data rules
@@ -478,7 +440,6 @@ FullFramePSFSurvey
 
 Rules:
 
-* `optic_system` may export dense-kernel baselines when useful.
 * `optic_system` may export peak-patch and adaptive peak-cluster artifacts.
 * `SensorEnergyCenterProfile` defines one global sensor energy center as the
   camera-coordinate origin for support and peak-cluster analysis.

@@ -63,10 +63,9 @@ def _mono_entry(wavelength_nm: float, **extra) -> dict:
 def _label_entry(wavelength_nm: float, **extra) -> dict:
     return {
         "illumination": {
-            "mode": "label_only",
+            "mode": "monochromatic",
             "effective_wavelength_nm": float(wavelength_nm),
             "tls_setpoint_nm": None,
-            "wavelength_label_nm": float(wavelength_nm),
         },
         **extra,
     }
@@ -120,12 +119,11 @@ def test_invalid_explicit_broadband_passthrough_rejects_effective_wavelength():
         )
 
 
-def test_label_only_does_not_request_tls_movement():
+def test_monochromatic_without_setpoint_does_not_request_tls():
     spec = IlluminationSpec(
-        mode="label_only",
+        mode="monochromatic",
         effective_wavelength_nm=550.0,
         tls_setpoint_nm=None,
-        wavelength_label_nm=550.0,
     )
 
     assert spec.requires_tls_pass_through is False
@@ -177,7 +175,7 @@ def test_explicit_illumination_plan_entry_parses_without_wavelength_nm():
         "masks": [{"mask_id": "m1"}],
     })
 
-    assert plan.wavelengths[0].wavelength_nm == 650.0
+    assert plan.wavelengths[0].nominal_wavelength_nm == 650.0
     assert "wavelength_nm" not in plan.to_dict()["wavelengths"][0]
     assert plan.resolved_illumination_specs()[0].mode == "monochromatic"
 
@@ -217,9 +215,9 @@ def test_raw_status_metadata_records_illumination_mode(tmp_path: Path):
     assert status["tls_action"] == "set_pass_through"
 
 
-def test_explicit_label_only_without_tls_records_label_only(tmp_path: Path):
+def test_monochromatic_without_tls_records_illumination(tmp_path: Path):
     plan = CapturePlan.from_dict({
-        "plan_id": "metadata_label_only",
+        "plan_id": "metadata_monochromatic",
         "wavelengths": [_label_entry(550.0)],
         "masks": [{"mask_id": "m1"}],
         "camera": {"frames_per_capture": 1},
@@ -229,7 +227,7 @@ def test_explicit_label_only_without_tls_records_label_only(tmp_path: Path):
         lcd=FakeLCD(height=60, width_phys=180),
         tls=None,
     )
-    output = tmp_path / "label_only.h5"
+    output = tmp_path / "mono_no_tls.h5"
 
     run_capture_forward_dataset(
         plan=plan,
@@ -245,7 +243,7 @@ def test_explicit_label_only_without_tls_records_label_only(tmp_path: Path):
             status_raw.decode() if isinstance(status_raw, bytes) else str(status_raw)
         )
 
-    assert status["illumination"]["mode"] == "label_only"
+    assert status["illumination"]["mode"] == "monochromatic"
     assert status["illumination"]["effective_wavelength_nm"] == 550.0
     assert status["illumination"]["tls_setpoint_nm"] is None
-    assert status["tls_action"] == "none"
+    assert status["tls_action"] == "skipped_no_hardware"

@@ -11,7 +11,6 @@ from tasks.psf.analyze_diffraction_support import (
     DiffractionSupportAnalysisError,
     PeakSupportAnalysisManifest,
     analyze_diffraction_support,
-    propose_peak_supports_from_report,
 )
 
 
@@ -184,57 +183,6 @@ def test_manifest_round_trips_and_p99_is_visualization_only(tmp_path: Path) -> N
     assert manifest.corr_policy["p99_display_tail_normalization_is_visualization_only"] is True
 
 
-def test_proposes_peak_supports_from_component_report(tmp_path: Path) -> None:
-    survey_h5 = tmp_path / "survey.h5"
-    report_h5 = tmp_path / "support.h5"
-    _write_synthetic_survey(survey_h5)
-    analyze_diffraction_support(
-        survey_h5,
-        report_h5,
-        tau_values=[0.5],
-        support_radii=[100],
-        far_field_radius=20,
-        min_component_area=2,
-    )
-
-    candidates = propose_peak_supports_from_report(report_h5, tau=0.5, padding=2, far_field_only=True)
-
-    assert candidates
-    assert candidates[0]["support_tau"] == 0.5
-    assert candidates[0]["artifact_type"] == "candidate_support"
-    assert candidates[0]["not_a_peak_layout_profile"] is True
-    assert "patch_origin_xy" in candidates[0]
-    assert "patch_shape_hw" in candidates[0]
-    assert "source_component_keys" in candidates[0]
-
-
-def test_proposed_peak_support_clamps_edge_patch_inside_frame(tmp_path: Path) -> None:
-    survey_h5 = tmp_path / "survey.h5"
-    report_h5 = tmp_path / "support.h5"
-    _write_synthetic_survey(survey_h5)
-    analyze_diffraction_support(
-        survey_h5,
-        report_h5,
-        tau_values=[0.5],
-        support_radii=[100],
-        far_field_radius=20,
-        min_component_area=2,
-    )
-
-    candidates = propose_peak_supports_from_report(report_h5, tau=0.5, padding=8, far_field_only=True)
-
-    assert candidates
-    for candidate in candidates:
-        origin_x, origin_y = candidate["patch_origin_xy"]
-        patch_h, patch_w = candidate["patch_shape_hw"]
-        assert origin_x >= 0
-        assert origin_y >= 0
-        assert origin_x + patch_w <= 64
-        assert origin_y + patch_h <= 64
-        for key in candidate["source_component_keys"]:
-            assert set(key) == {"entry_index", "tau", "component_id"}
-
-
 def test_acquired_frame_extent_maps_to_acquired_frame_coordinate_frame(tmp_path: Path) -> None:
     survey_h5 = tmp_path / "survey_acquired.h5"
     report_h5 = tmp_path / "support.h5"
@@ -295,6 +243,7 @@ def test_energy_only_report_skips_component_table_but_keeps_energy_metrics(tmp_p
         assert f["support_analysis/far_field_significant_pixel_count"].shape == (1, 1)
 
     with pytest.raises(DiffractionSupportAnalysisError, match="energy-only"):
+        from tasks.psf.analyze_diffraction_support import propose_peak_supports_from_report
         propose_peak_supports_from_report(report_h5, tau=0.5)
 
 

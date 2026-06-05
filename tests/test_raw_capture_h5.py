@@ -80,10 +80,9 @@ class TestRawCaptureWriter:
             },
             "wavelengths": [{
                 "illumination": {
-                    "mode": "label_only",
+                    "mode": "monochromatic",
                     "effective_wavelength_nm": 550.0,
                     "tls_setpoint_nm": None,
-                    "wavelength_label_nm": 550.0,
                 }
             }],
             "masks": [{"mask_id": "m1"}],
@@ -196,16 +195,15 @@ class TestRawCaptureWriter:
             cam = f["camera"]
             assert float(cam["readback_exposure_us"][0]) == 10000.0
 
-            tls_ds = f["tls"]
-            assert float(tls_ds["wavelength_nm"][0]) == 532.0
-            assert tls_ds["wavelength_nm"].attrs["semantic_role"] == "nominal_table_label"
-            raw_illumination = tls_ds["illumination_json"][0]
+            illum_ds = f["illumination"]
+            assert float(illum_ds["nominal_wavelength_nm"][0]) == 532.0
+            raw_illumination = illum_ds["illumination_json"][0]
             illumination = json.loads(
                 raw_illumination.decode("utf-8")
                 if isinstance(raw_illumination, bytes)
                 else str(raw_illumination)
             )
-            assert illumination["mode"] == "label_only"
+            assert illumination["mode"] == "monochromatic"
             assert illumination["nominal_wavelength_nm"] == 532.0
 
     def test_writes_camera_frame_extent_without_legacy_alias(
@@ -302,10 +300,9 @@ class TestRawCaptureWriter:
             "plan_id": "burst_test",
             "wavelengths": [{
                 "illumination": {
-                    "mode": "label_only",
+                    "mode": "monochromatic",
                     "effective_wavelength_nm": 500.0,
                     "tls_setpoint_nm": None,
-                    "wavelength_label_nm": 500.0,
                 }
             }],
             "masks": [{"mask_id": "m1"}],

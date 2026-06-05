@@ -19,6 +19,7 @@ from tasks.psf import (
     render_peak_patch_dense_view,
 )
 from tasks.psf.derive_peak_layout_profile import PeakLayoutProfileError
+from tasks.psf.sensor_energy_center import SensorEnergyCenterProfile
 from tasks.raw_capture_h5 import RawCaptureWriter
 
 
@@ -27,6 +28,45 @@ def _h5_str(dset) -> str:
     if isinstance(val, bytes):
         return val.decode()
     return str(val)
+
+
+def _center_profile_path(
+    tmp_path: Path,
+    survey_path: Path,
+    center_xy: tuple[float, float] = (10.0, 10.0),
+    frame_shape: tuple[int, int] = (20, 20),
+) -> Path:
+    profile = SensorEnergyCenterProfile(
+        center_profile_id="center_v1",
+        source_survey_h5=str(survey_path),
+        coordinate_frame="sensor_full_frame",
+        camera_frame_extent={
+            "mode": "full_sensor",
+            "origin_xy": [0, 0],
+            "shape_hw": list(frame_shape),
+            "sensor_shape_hw": list(frame_shape),
+            "source": "camera_metadata",
+        },
+        camera_frame_shape=frame_shape,
+        center_xy=center_xy,
+        estimator_name="test",
+        bg_policy={"method": "percentile", "percentile": 5.0},
+        corr_policy={"formula": "corr = max(frame - bg, 0)"},
+        aggregation_policy={"method": "arithmetic_mean", "single_global_origin": True},
+        per_entry_center_xy=[center_xy],
+        per_entry_mask_ids=["mask_a"],
+        per_entry_wavelengths_nm=[550.0],
+        per_entry_background_value=[0.0],
+        per_entry_total_corr_energy=[1.0],
+        per_entry_fallback_used=[False],
+        per_wavelength_mean_center_xy={"550": center_xy},
+        per_wavelength_center_std_xy={"550": (0.0, 0.0)},
+        global_center_std_xy=(0.0, 0.0),
+        max_center_deviation_px=0.0,
+    )
+    path = tmp_path / "sensor_energy_center_profile.json"
+    profile.to_json(path)
+    return path
 
 
 def _raw_psf_capture(
@@ -151,6 +191,7 @@ def _survey_and_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
         camera_profile_manifest=camera_manifest,
     )
     layout_path = tmp_path / "peak_layout.json"
+    center_path = _center_profile_path(tmp_path, survey_path)
     derive_peak_layout_profile(
         survey_h5=survey_path,
         output_json=layout_path,
@@ -158,6 +199,7 @@ def _survey_and_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
         patch_shape_hw=(5, 5),
         threshold_sigma=1.0,
         min_area=1,
+        center_profile=center_path,
     )
     return raw_path, survey_path, layout_path
 
@@ -215,17 +257,20 @@ def test_full_frame_survey_defaults_to_confirmed_full_sensor(tmp_path: Path) -> 
 
 def test_peak_layout_rejects_raw_frames_avg_input(tmp_path: Path) -> None:
     raw_path = _raw_psf_capture(tmp_path, sensor_shape_hw=[20, 20])
+    center_path = _center_profile_path(tmp_path, raw_path)
 
     with pytest.raises(PeakLayoutProfileError, match="full_frame_survey/frames_avg"):
         derive_peak_layout_profile(
             survey_h5=raw_path,
             output_json=tmp_path / "peak_layout.json",
             peak_layout_id="peak_layout_v1",
+            center_profile=center_path,
         )
 
 
 def test_derives_peak_layout_profile_from_survey(tmp_path: Path) -> None:
     _, survey_path, layout_path = _survey_and_layout(tmp_path)
+    center_path = _center_profile_path(tmp_path, survey_path)
 
     layout = derive_peak_layout_profile(
         survey_h5=survey_path,
@@ -234,6 +279,7 @@ def test_derives_peak_layout_profile_from_survey(tmp_path: Path) -> None:
         patch_shape_hw=(5, 5),
         threshold_sigma=1.0,
         min_area=1,
+        center_profile=center_path,
     )
 
     assert layout.peak_layout_id == "peak_layout_v1"

@@ -94,10 +94,9 @@ def test_hardware_lcd_service_gets_status_dir(monkeypatch, tmp_path: Path):
         "plan_id": "wire_test",
         "wavelengths": [{
             "illumination": {
-                "mode": "label_only",
+                "mode": "monochromatic",
                 "effective_wavelength_nm": 550.0,
                 "tls_setpoint_nm": None,
-                "wavelength_label_nm": 550.0,
             }
         }],
         "masks": [{"mask_id": "m1"}],

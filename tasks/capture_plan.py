@@ -99,23 +99,20 @@ class LCDMaskEntry:
 
 
 @dataclass
-class TLSWavelengthEntry:
-    """
-    Historical capture-plan row type.
+class IlluminationEntry:
+    """Capture-plan row entry carrying an explicit illumination spec."""
 
-    New plan input must provide ``illumination``. ``wavelength_nm`` is retained
-    only as a nominal table label for HDF5 rows and legacy wavelength-indexed
-    arrays; it is not the semantic illumination object.
-    """
-
-    wavelength_nm: float
+    illumination: IlluminationSpec
     grating: int | None = None
     settle_ms: int = 2000
     extra: dict[str, Any] = field(default_factory=dict)
-    illumination: IlluminationSpec | None = None
+
+    @property
+    def nominal_wavelength_nm(self) -> float:
+        return illumination_nominal_wavelength_nm(self.illumination)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> TLSWavelengthEntry:
+    def from_dict(cls, d: dict[str, Any]) -> IlluminationEntry:
         if "wavelength_nm" in d:
             raise CapturePlanError(
                 "wavelength_nm compatibility input is no longer supported; use illumination"
@@ -125,17 +122,16 @@ class TLSWavelengthEntry:
         except IlluminationSpecError as exc:
             raise CapturePlanError(str(exc)) from exc
         return cls(
-            wavelength_nm=illumination_nominal_wavelength_nm(spec),
+            illumination=spec,
             grating=_optional_int(d.get("grating")),
             settle_ms=int(d.get("settle_ms", 2000)),
             extra=_optional_dict(d.get("extra")) or {},
-            illumination=spec,
         )
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "settle_ms": self.settle_ms,
-            "illumination": self.resolved_illumination().to_dict(),
+            "illumination": self.illumination.to_dict(),
         }
         if self.grating is not None:
             result["grating"] = self.grating
@@ -143,25 +139,12 @@ class TLSWavelengthEntry:
             result["extra"] = self.extra
         return result
 
-    def resolved_illumination(self) -> IlluminationSpec:
-        if self.illumination is not None:
-            return self.illumination
-        try:
-            return IlluminationSpec(
-                mode="label_only",
-                effective_wavelength_nm=float(self.wavelength_nm),
-                tls_setpoint_nm=None,
-                wavelength_label_nm=float(self.wavelength_nm),
-            )
-        except IlluminationSpecError as exc:
-            raise CapturePlanError(str(exc)) from exc
-
 
 @dataclass
 class CapturePlan:
     plan_id: str
     requires: dict[str, Any] = field(default_factory=dict)
-    wavelengths: list[TLSWavelengthEntry] = field(default_factory=list)
+    wavelengths: list[IlluminationEntry] = field(default_factory=list)
     masks: list[LCDMaskEntry] = field(default_factory=list)
     camera: CameraCaptureConfig = field(default_factory=CameraCaptureConfig)
     lcd_settle_ms: int = 500
@@ -175,7 +158,7 @@ class CapturePlan:
         plan_id = _require_str(d, "plan_id")
         requires = _optional_dict(d.get("requires")) or {}
         wavelengths = [
-            TLSWavelengthEntry.from_dict(w)
+            IlluminationEntry.from_dict(w)
             for w in _require_list(d, "wavelengths")
         ]
         masks = [
@@ -260,10 +243,6 @@ class CapturePlan:
             raise CapturePlanError("lcd_settle_ms must be >= 0")
 
         for i, w in enumerate(self.wavelengths):
-            try:
-                spec = w.resolved_illumination()
-            except IlluminationSpecError as exc:
-                raise CapturePlanError(f"wavelengths[{i}]: {exc}") from exc
             if w.settle_ms < 0:
                 raise CapturePlanError(
                     f"wavelengths[{i}].settle_ms must be >= 0, got {w.settle_ms}"
@@ -275,11 +254,11 @@ class CapturePlan:
 
         seen_wavelengths: set[float] = set()
         for w in self.wavelengths:
-            if w.wavelength_nm in seen_wavelengths:
+            if w.nominal_wavelength_nm in seen_wavelengths:
                 raise CapturePlanError(
-                    f"duplicate wavelength {w.wavelength_nm} in plan"
+                    f"duplicate wavelength {w.nominal_wavelength_nm} in plan"
                 )
-            seen_wavelengths.add(w.wavelength_nm)
+            seen_wavelengths.add(w.nominal_wavelength_nm)
 
         seen_mask_ids: set[str] = set()
         for m in self.masks:
@@ -302,7 +281,7 @@ class CapturePlan:
         return self.n_wavelengths * self.n_masks
 
     def resolved_illumination_specs(self) -> list[IlluminationSpec]:
-        return [entry.resolved_illumination() for entry in self.wavelengths]
+        return [entry.illumination for entry in self.wavelengths]
 
 
 def _require_key(d: dict[str, Any], key: str) -> Any:

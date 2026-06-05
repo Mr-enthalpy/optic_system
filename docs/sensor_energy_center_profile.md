@@ -46,10 +46,6 @@ center_xy = weighted centroid of corr
 If `total_corr_energy <= 0`, the estimator falls back to the valid-domain peak
 pixel and records `per_entry_fallback_used: true` for that entry.
 
-The implementation was audited from the bachelor-thesis energy-center logic,
-but mainline absorbs only the center-location algorithm. It does not absorb the
-thesis crop workflow or task naming.
-
 Display-tail normalization, such as `p=0.99`, is not used for center
 estimation.
 
@@ -104,5 +100,5 @@ energy_center_xy
 center_xy_rel
 ```
 
-The current PR treats the profile as optional but preferred for first-pass peak
-layout derivation. Later adaptive peak-cluster tasks should make it required.
+The profile is required for peak layout derivation, support-stability analysis,
+and adaptive peak-cluster tasks.

@@ -152,7 +152,7 @@ def build_peak_patch_psf_dictionary(
                     "capture/mask_index",
                     "capture/capture_index",
                     "capture/plan_json",
-                    "tls/wavelength_nm",
+                    "illumination/nominal_wavelength_nm",
                     "masks/mask_id",
                 ],
             )
@@ -195,7 +195,7 @@ def build_peak_patch_psf_dictionary(
                 key = (int(mask_indices[row]), int(wavelength_indices[row]))
                 groups.setdefault(key, []).append(row)
             sorted_keys = sorted(groups)
-            wavelengths_by_index = np.asarray(src["tls/wavelength_nm"], dtype=np.float64)
+            wavelengths_by_index = np.asarray(src["illumination/nominal_wavelength_nm"], dtype=np.float64)
             mask_ids_by_index = read_string_array(src["masks/mask_id"])
             entry_mask_ids = [
                 index_string(mask_ids_by_index, mask_idx) for mask_idx, _ in sorted_keys

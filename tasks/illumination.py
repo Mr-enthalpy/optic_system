@@ -151,7 +151,7 @@ def illumination_status_without_tls(spec: IlluminationSpec) -> dict[str, Any]:
             "moving": False,
         },
         spec=spec,
-        tls_action="none",
+        tls_action="skipped_no_hardware",
     )
 
 
@@ -182,18 +182,6 @@ def _validate_spec(
         if wavelength_label_nm is not None:
             raise IlluminationSpecError(
                 "broadband_passthrough wavelength_label_nm must be null"
-            )
-        return
-    if mode == "label_only":
-        if tls_setpoint_nm is not None:
-            raise IlluminationSpecError("label_only tls_setpoint_nm must be null")
-        if effective_wavelength_nm is not None and effective_wavelength_nm <= 0.0:
-            raise IlluminationSpecError(
-                "label_only effective_wavelength_nm must be > 0 when provided"
-            )
-        if wavelength_label_nm is not None and wavelength_label_nm <= 0.0:
-            raise IlluminationSpecError(
-                "label_only wavelength_label_nm must be > 0 when provided"
             )
         return
     raise IlluminationSpecError(f"unsupported illumination mode: {mode}")

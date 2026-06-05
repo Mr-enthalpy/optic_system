@@ -11,8 +11,8 @@ import pytest
 from tasks.capture_plan import (
     CameraCaptureConfig,
     CapturePlan,
+    IlluminationEntry,
     LCDMaskEntry,
-    TLSWavelengthEntry,
 )
 from tasks.capture_forward_dataset import (
     FakeCamera,
@@ -40,20 +40,18 @@ def sample_plan_dict() -> dict[str, Any]:
         "wavelengths": [
             {
                 "illumination": {
-                    "mode": "label_only",
+                    "mode": "monochromatic",
                     "effective_wavelength_nm": 532.0,
                     "tls_setpoint_nm": None,
-                    "wavelength_label_nm": 532.0,
                 },
                 "grating": 1,
                 "settle_ms": 3000,
             },
             {
                 "illumination": {
-                    "mode": "label_only",
+                    "mode": "monochromatic",
                     "effective_wavelength_nm": 633.0,
                     "tls_setpoint_nm": None,
-                    "wavelength_label_nm": 633.0,
                 },
                 "grating": 1,
                 "settle_ms": 2000,

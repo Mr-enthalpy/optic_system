@@ -142,27 +142,12 @@ The connection has two useful forms:
 ```text
 optic_system raw capture HDF5
   -> profile / survey / support / peak-cluster artifacts
-  -> dense-kernel compatibility exports
   -> peak-patch or adaptive peak-cluster exports
 
 LCD_forward
-  -> dense-kernel baselines
   -> peak-cluster forward models
   -> multi-frame rendering / reconstruction
   -> mask and GenerMask optimization
-```
-
-Dense-kernel HDF5 exports may still include tensors such as:
-
-```text
-Forward calibration:
-masks: [N, T, 1, Hm, Wm]
-psfs:  [N, T, L, Hp, Wp]
-
-Reconstruction:
-objects: [N, L, H, W]
-frames:  [N, T, 1, H, W]
-masks:   [N, T, 1, Hm, Wm]
 ```
 
 `optic_system` should not directly train these models.
@@ -254,8 +239,10 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 /masks/family_id             [N_mask] str
 /masks/family_params_json    [N_mask] str
 /masks/has_mask_array        [N_mask] bool
-/tls/illumination_json       [N_wavelengths] str  (primary illumination semantics)
-/tls/wavelength_nm           [N_wavelengths] float64  (nominal table label)
+/illumination/illumination_json           [N_wavelengths] str
+/illumination/nominal_wavelength_nm      [N_wavelengths] float64
+/illumination/tls_setpoint_nm            [N_wavelengths] float64
+/illumination/effective_wavelength_nm    [N_wavelengths] float64
 /tls/grating                 [N_wavelengths] int64
 /tls/settle_ms               [N_wavelengths] int64
 /tls/timestamp_ns            [N_wavelengths] int64
@@ -349,9 +336,8 @@ Phase 3.6 -- adaptive peak-cluster PSF dictionary
 Phase 4+  -- LCD_forward-side modelling, reconstruction, and optimization
 ```
 
-Historical Phase 0/1/2 details are preserved in
-[`docs/completed_phases.md`](docs/completed_phases.md). Thesis-branch phase
-numbers are experimental history and do not define the mainline roadmap.
+Completed Phase 0/1/2 implementation details are preserved in
+[`docs/completed_phases.md`](docs/completed_phases.md).
 
 ## Core Infrastructure Scope
 
@@ -379,23 +365,6 @@ Do not add to the core path:
 * direct GUI ownership of hardware lifecycle
 * hidden global hardware state
 * default hardware-dependent tests
-
-## Legacy task policy
-
-Some files under `tasks/` may come from earlier experimental directions.
-
-They should not be assumed to define the current architecture.
-
-Before reusing any old task:
-
-1. audit its dependency path
-2. confirm it uses `control -> devices` boundaries
-3. confirm it does not bypass `SessionController`
-4. confirm it does not depend on pywinauto TLS automation
-5. confirm it emits sufficient metadata
-6. document whether it is active, legacy, or deprecated
-
-New minimal capture tasks should be implemented cleanly and separately.
 
 ## Control architecture
 
