@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -20,6 +21,57 @@ class RawCaptureWriteError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class RawFrameStoragePolicy:
+    """
+    Storage policy for raw camera frame datasets.
+
+    ``burst_stored_dtype=None`` means preserve the first burst input dtype.
+    ``average_compute_dtype`` documents the intended averaging accumulator
+    precision even when the caller provides pre-averaged frames.
+    """
+
+    raw_input_dtype: str = "preserve"
+    average_compute_dtype: str = "float64"
+    frames_avg_stored_dtype: str = "float32"
+    burst_stored_dtype: str | None = None
+    compression: str | None = "gzip"
+    compression_opts: int | None = 4
+    frames_avg_chunk_shape: tuple[int, int, int] = (1, 240, 240)
+    burst_chunk_shape_hw: tuple[int, int] = (240, 240)
+
+    def frames_avg_dtype(self) -> np.dtype:
+        return np.dtype(self.frames_avg_stored_dtype)
+
+    def burst_dtype(self, input_dtype: np.dtype) -> np.dtype:
+        if self.burst_stored_dtype is None:
+            return np.dtype(input_dtype)
+        return np.dtype(self.burst_stored_dtype)
+
+    def compression_kwargs(self) -> dict[str, Any]:
+        if self.compression is None:
+            return {}
+        result: dict[str, Any] = {"compression": self.compression}
+        if self.compression_opts is not None:
+            result["compression_opts"] = self.compression_opts
+        return result
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "raw_input_dtype": self.raw_input_dtype,
+            "average_compute_dtype": self.average_compute_dtype,
+            "frames_avg_stored_dtype": str(np.dtype(self.frames_avg_stored_dtype)),
+            "burst_stored_dtype": (
+                None if self.burst_stored_dtype is None
+                else str(np.dtype(self.burst_stored_dtype))
+            ),
+            "compression": self.compression,
+            "compression_opts": self.compression_opts,
+            "frames_avg_chunk_shape": [int(v) for v in self.frames_avg_chunk_shape],
+            "burst_chunk_shape_hw": [int(v) for v in self.burst_chunk_shape_hw],
+        }
+
+
 def _now_ns() -> int:
     return time.monotonic_ns()
 
@@ -33,15 +85,22 @@ class RawCaptureWriter:
     Incremental raw capture HDF5 writer.
 
     Creates resizable datasets pre-allocated to ``plan.n_captures`` rows and
-    appends one row per completed capture (wavelength × mask).
+    appends one row per completed capture (wavelength x mask).
     """
 
-    def __init__(self, output_path: str | Path, plan: CapturePlan):
+    def __init__(
+        self,
+        output_path: str | Path,
+        plan: CapturePlan,
+        *,
+        storage_policy: RawFrameStoragePolicy | None = None,
+    ):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._path = output_path
         self._plan = plan
+        self._storage_policy = storage_policy or RawFrameStoragePolicy()
         self._file: h5py.File | None = None
         self._n_written: int = 0
         self._mask_arrays_written: bool = False
@@ -72,26 +131,23 @@ class RawCaptureWriter:
         raw = f.require_group("raw")
         raw.attrs["store_burst"] = store_burst
         raw.attrs["frames_per_capture"] = k
+        raw.attrs["storage_policy_json"] = _json_str(self._storage_policy.to_dict())
+        raw.attrs["average_compute_dtype"] = self._storage_policy.average_compute_dtype
+        raw.attrs["frames_avg_stored_dtype"] = str(self._storage_policy.frames_avg_dtype())
+        raw.attrs["burst_stored_dtype"] = (
+            "preserve_input"
+            if self._storage_policy.burst_stored_dtype is None
+            else str(np.dtype(self._storage_policy.burst_stored_dtype))
+        )
 
         raw.create_dataset(
             "frames_avg",
             shape=(n_cap, 1, 1),
             maxshape=(n_cap, None, None),
-            dtype=np.float64,
-            chunks=(1, 240, 240),
-            compression="gzip",
-            compression_opts=4,
+            dtype=self._storage_policy.frames_avg_dtype(),
+            chunks=self._storage_policy.frames_avg_chunk_shape,
+            **self._storage_policy.compression_kwargs(),
         )
-        if store_burst:
-            raw.create_dataset(
-                "frames",
-                shape=(n_cap, k, 1, 1),
-                maxshape=(n_cap, k, None, None),
-                dtype=np.float64,
-                chunks=(1, k, 240, 240),
-                compression="gzip",
-                compression_opts=4,
-            )
 
         masks_grp = f.require_group("masks")
         masks_grp.create_dataset(
@@ -249,7 +305,8 @@ class RawCaptureWriter:
         row = self._n_written
         store_burst = self._plan.store_burst
 
-        avg = np.asarray(frames_avg, dtype=np.float64)
+        avg_input = np.asarray(frames_avg)
+        avg = avg_input.astype(self._storage_policy.frames_avg_dtype(), copy=False)
         if avg.ndim != 2:
             raise RawCaptureWriteError(
                 f"frames_avg must be 2D [H, W], got {avg.ndim}D shape {avg.shape}"
@@ -265,12 +322,14 @@ class RawCaptureWriter:
                 raise RawCaptureWriteError(
                     "frames is required when plan.store_burst=True"
                 )
-            burst = np.asarray(frames, dtype=np.float64)
-            if burst.ndim != 3:
+            burst_input = np.asarray(frames)
+            if burst_input.ndim != 3:
                 raise RawCaptureWriteError(
-                    f"frames burst must be 3D [K, H, W], got {burst.ndim}D shape {burst.shape}"
+                    "frames burst must be 3D [K, H, W], got "
+                    f"{burst_input.ndim}D shape {burst_input.shape}"
                 )
-            dset = f["raw/frames"]
+            dset = self._require_burst_dataset(burst_input.dtype)
+            burst = burst_input.astype(dset.dtype, copy=False)
             if dset.shape[2:] != burst.shape[1:]:
                 dset.resize((self._plan.n_captures, burst.shape[0], burst.shape[1], burst.shape[2]))
             dset[row] = burst
@@ -278,6 +337,9 @@ class RawCaptureWriter:
         raw_grp = f["raw"]
         raw_grp.attrs["frame_height"] = avg.shape[0]
         raw_grp.attrs["frame_width"] = avg.shape[1]
+        raw_grp.attrs["frames_avg_input_dtype"] = str(avg_input.dtype)
+        if store_burst and frames is not None:
+            raw_grp.attrs["burst_input_dtype"] = str(np.asarray(frames).dtype)
 
         cap_grp = f["capture"]
         cap_grp["capture_index"][row] = capture_index
@@ -394,6 +456,23 @@ class RawCaptureWriter:
     @property
     def path(self) -> Path:
         return self._path
+
+    def _require_burst_dataset(self, input_dtype: np.dtype) -> h5py.Dataset:
+        assert self._file is not None
+        raw = self._file["raw"]
+        if "frames" in raw:
+            return raw["frames"]
+
+        k = self._plan.camera.frames_per_capture
+        chunk_h, chunk_w = self._storage_policy.burst_chunk_shape_hw
+        return raw.create_dataset(
+            "frames",
+            shape=(self._plan.n_captures, k, 1, 1),
+            maxshape=(self._plan.n_captures, k, None, None),
+            dtype=self._storage_policy.burst_dtype(np.dtype(input_dtype)),
+            chunks=(1, k, int(chunk_h), int(chunk_w)),
+            **self._storage_policy.compression_kwargs(),
+        )
 
 
 def _ensure_open(file: h5py.File | None) -> h5py.File:

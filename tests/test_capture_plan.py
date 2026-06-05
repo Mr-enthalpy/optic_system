@@ -27,13 +27,35 @@ class TestCameraCaptureConfig:
             "average_burst": False,
             "exposure_us": 15000.0,
             "gain_db": 3.5,
-            "roi": [0, 0, 640, 480],
+            "frame_extent": {
+                "mode": "acquired_frame",
+                "origin_xy": [0, 0],
+                "shape_hw": [480, 640],
+            },
         })
         assert cfg.frames_per_capture == 10
         assert cfg.average_burst is False
         assert cfg.exposure_us == 15000.0
         assert cfg.gain_db == 3.5
+        assert cfg.frame_extent == {
+            "mode": "acquired_frame",
+            "origin_xy": [0, 0],
+            "shape_hw": [480, 640],
+            "sensor_shape_hw": None,
+        }
         assert cfg.roi == (0, 0, 640, 480)
+
+    def test_legacy_roi_input_normalizes_to_frame_extent(self) -> None:
+        cfg = CameraCaptureConfig.from_dict({"roi": [1, 2, 30, 40]})
+
+        assert cfg.frame_extent == {
+            "mode": "sensor_roi",
+            "origin_xy": [1, 2],
+            "shape_hw": [40, 30],
+            "sensor_shape_hw": None,
+        }
+        assert cfg.to_dict()["frame_extent"]["shape_hw"] == [40, 30]
+        assert "roi" not in cfg.to_dict()
 
     def test_from_dict_empty(self) -> None:
         cfg = CameraCaptureConfig.from_dict({})
@@ -257,12 +279,12 @@ class TestCapturePlan:
                 "grating": "bad",
             })
 
-        with pytest.raises(CapturePlanError, match="roi"):
+        with pytest.raises(CapturePlanError, match="frame_extent"):
             CameraCaptureConfig.from_dict({
-                "roi": [1, 2],
+                "frame_extent": [1, 2],
             })
 
-        with pytest.raises(CapturePlanError, match="roi"):
+        with pytest.raises(CapturePlanError, match="frame_extent"):
             CameraCaptureConfig.from_dict({
-                "roi": "not_a_list",
+                "frame_extent": "not_a_list",
             })

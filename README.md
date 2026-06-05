@@ -231,8 +231,11 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 
 ```
 /                            attrs: plan_id, created_at_ns, software_version
-/raw/frames_avg              [N_capture, H, W]  float64  (always written)
-/raw/frames                  [N_capture, K, H, W] float64  (only if store_burst=True)
+/raw/frames_avg              [N_capture, H, W] policy dtype, default float32
+/raw/frames                  [N_capture, K, H, W] policy dtype, default input dtype
+                             (only if store_burst=True)
+/raw attrs: storage_policy_json, frames_avg_stored_dtype,
+            burst_stored_dtype, average_compute_dtype
 /masks/masks_physical        [N_mask, Hlcd, Wlcd_phys] uint8
 /masks/mask_id               [N_mask] str
 /masks/family_id             [N_mask] str
@@ -271,6 +274,24 @@ Raw capture metadata should use camera frame extent terminology.
 `/camera/frame_extent_json` is the preferred raw HDF5 field.
 `/camera/roi_json` is a legacy compatibility alias for camera SDK ROI metadata
 and must not be used as a PSF crop or ROI-support concept.
+Capture plans should use `camera.frame_extent` for acquisition extent metadata.
+Legacy `camera.roi` input is accepted only as an acquisition-extent alias and
+is serialized back as `camera.frame_extent`, not as a PSF crop or support
+window.
+
+Raw frame dataset dtype, compression, and chunking are controlled by
+`RawFrameStoragePolicy`, not by ad-hoc writer constants. The policy separates:
+
+* observed raw input dtype;
+* averaging accumulator dtype;
+* stored `frames_avg` dtype;
+* stored burst-frame dtype;
+* compression and chunk shape.
+
+The default stores frame averages as `float32` and preserves the first burst
+input dtype when `store_burst=True`. This keeps small calibration outputs easy
+to inspect while avoiding a default `float64` storage expansion for full-frame
+raw data.
 
 ### Mainline artifact path
 
@@ -292,21 +313,17 @@ Historical Phase 0/1/2 details are preserved in
 [`docs/completed_phases.md`](docs/completed_phases.md). Thesis-branch phase
 numbers are experimental history and do not define the mainline roadmap.
 
-## Active scope
+## Core Infrastructure Scope
 
-Allowed in core development:
+The core infrastructure scope is the device/control/capture boundary that
+supports the active profile, survey, support, and peak-cluster artifact paths
+described above. It includes camera/LCD/TLS service wrappers, frame streaming,
+preview, control state, synchronized acquisition, raw HDF5 export, and
+hardware-free or opt-in hardware tests.
 
-* camera hardware wrapper
-* frame stream client
-* preview worker
-* LCD physical mono mask display
-* TLS SDK service wrapper
-* control-layer command / event / state definitions
-* minimal synchronized capture task
-* raw HDF5 export
-* conversion boundary toward `LCD_forward`
-* hardware-free tests
-* opt-in hardware smoke tests
+Do not maintain this section as a second active-responsibilities list. Artifact
+semantics and current scientific workflow ordering belong in the roadmap and
+artifact-path sections above.
 
 ## Out of scope
 

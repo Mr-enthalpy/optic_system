@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 from tasks.capture_plan import CapturePlan
-from tasks.raw_capture_h5 import RawCaptureWriteError, RawCaptureWriter
+from tasks.raw_capture_h5 import (
+    RawCaptureWriteError,
+    RawCaptureWriter,
+    RawFrameStoragePolicy,
+)
 
 
 def _h5_str(dset) -> str:
@@ -153,7 +157,9 @@ class TestRawCaptureWriter:
         with h5py.File(tmp_h5_path, "r") as f:
             avg = f["raw/frames_avg"]
             assert avg.shape[0] == 4
+            assert avg.dtype == np.float32
             assert avg[0, 0, 0] == 1.0
+            assert "storage_policy_json" in f["raw"].attrs
 
             cap = f["capture"]
             assert int(cap["capture_index"][0]) == 0
@@ -264,7 +270,7 @@ class TestRawCaptureWriter:
         })
         writer = RawCaptureWriter(tmp_h5_path, plan)
         with writer:
-            burst = np.ones((3, 120, 160), dtype=np.float64)
+            burst = np.ones((3, 120, 160), dtype=np.uint16)
             writer.append_capture(
                 capture_index=0, wavelength_index=0, mask_index=0,
                 frames=burst,
@@ -276,6 +282,38 @@ class TestRawCaptureWriter:
             assert "frames" in f["raw"]
             assert int(f["raw/frames"].shape[0]) == 1
             assert int(f["raw/frames"].shape[1]) == 3
+            assert f["raw/frames"].dtype == np.uint16
+            assert f["raw"].attrs["burst_stored_dtype"] == "preserve_input"
+
+    def test_custom_raw_storage_policy_controls_dtype_and_compression(
+        self, sample_plan: CapturePlan, tmp_h5_path: Path
+    ) -> None:
+        policy = RawFrameStoragePolicy(
+            frames_avg_stored_dtype="float64",
+            burst_stored_dtype="float32",
+            compression=None,
+        )
+        sample_plan.store_burst = True
+        writer = RawCaptureWriter(tmp_h5_path, sample_plan, storage_policy=policy)
+
+        with writer:
+            burst = np.ones((5, 16, 20), dtype=np.uint16)
+            writer.append_capture(
+                capture_index=0,
+                wavelength_index=0,
+                mask_index=0,
+                frames=burst,
+                frames_avg=burst.mean(axis=0),
+                camera_meta={},
+            )
+
+        with h5py.File(tmp_h5_path, "r") as f:
+            assert f["raw/frames_avg"].dtype == np.float64
+            assert f["raw/frames"].dtype == np.float32
+            assert f["raw/frames_avg"].compression is None
+            assert f["raw/frames"].compression is None
+            policy_json = f["raw"].attrs["storage_policy_json"]
+            assert "frames_avg_stored_dtype" in policy_json
 
     def test_mapping_policy_stored(
         self, sample_plan: CapturePlan, tmp_h5_path: Path

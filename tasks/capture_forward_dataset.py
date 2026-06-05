@@ -153,7 +153,12 @@ class FakeCamera:
             metadata={
                 "exposure_us": self.exposure_us,
                 "gain_db": self.gain_db,
-                "roi": None,
+                "frame_extent": {
+                    "mode": "unknown",
+                    "origin_xy": [0, 0],
+                    "shape_hw": [self._h, self._w],
+                    "sensor_shape_hw": None,
+                },
                 "timestamp_ns": time.monotonic_ns(),
                 "status": {"source": "fake"},
                 "frame_shape": [self._h, self._w],
