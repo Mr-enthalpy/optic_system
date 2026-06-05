@@ -213,8 +213,8 @@ persists an artifact and downstream tasks should restart from saved artifacts.
 
 `SensorEnergyCenterProfile` records one global sensor energy center as a camera
 coordinate origin for support analysis and future peak-cluster modelling. It is
-not a crop-window artifact and must not introduce ROI extraction, ROI size
-selection, or ROI-centered exports. The profile also records per-entry
+not a crop-window artifact and must not introduce crop extraction, crop-size
+selection, or crop-centered exports. The profile also records per-entry
 background, corrected energy, and fallback diagnostics, and may be derived with
 an explicit valid pixel domain when known invalid sensor regions must be
 excluded.
@@ -245,7 +245,8 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 /tls/status_json             [N_wavelengths] str
 /camera/exposure_us          [N_capture] float64
 /camera/gain_db              [N_capture] float64
-/camera/roi_json             [N_capture] str
+/camera/frame_extent_json    [N_capture] str  (preferred CameraFrameExtent)
+/camera/roi_json             [N_capture] str  (legacy compatibility alias)
 /camera/timestamp_ns         [N_capture] int64
 /camera/status_json          [N_capture] str
 /lcd/settle_ms               [N_capture] int64
@@ -265,6 +266,11 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 /capture/plan_id             scalar str
 /capture/processing_flags_json scalar str
 ```
+
+Raw capture metadata should use camera frame extent terminology.
+`/camera/frame_extent_json` is the preferred raw HDF5 field.
+`/camera/roi_json` is a legacy compatibility alias for camera SDK ROI metadata
+and must not be used as a PSF crop or ROI-support concept.
 
 ### Mainline artifact path
 
@@ -399,7 +405,7 @@ camera metadata
 LCD metadata
 TLS metadata
 capture timing metadata
-camera ROI / acquired-frame extent metadata
+camera frame extent / acquired-frame extent metadata
 support / peak-cluster coordinate metadata when available
 processing flags
 ```

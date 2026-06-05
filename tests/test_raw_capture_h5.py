@@ -22,6 +22,13 @@ def _h5_str(dset) -> str:
     return str(val)
 
 
+def _h5_array_str(dset, index: int = 0) -> str:
+    val = dset[index]
+    if isinstance(val, bytes):
+        return val.decode()
+    return str(val)
+
+
 class TestRawCaptureWriter:
     def test_creates_hdf5_with_expected_groups(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
@@ -159,6 +166,34 @@ class TestRawCaptureWriter:
 
             tls_ds = f["tls"]
             assert float(tls_ds["wavelength_nm"][0]) == 532.0
+
+    def test_writes_camera_frame_extent_and_legacy_alias(
+        self, sample_plan: CapturePlan, tmp_h5_path: Path
+    ) -> None:
+        writer = RawCaptureWriter(tmp_h5_path, sample_plan)
+        with writer:
+            writer.append_capture(
+                capture_index=0,
+                wavelength_index=0,
+                mask_index=0,
+                frames=np.array([]),
+                frames_avg=np.ones((12, 16), dtype=np.float64),
+                camera_meta={
+                    "roi": {"offset_x": 3, "offset_y": 4, "width": 16, "height": 12},
+                    "status": {"sensor_shape_hw": [100, 120]},
+                },
+            )
+
+        with h5py.File(tmp_h5_path, "r") as f:
+            assert "camera/frame_extent_json" in f
+            assert "camera/roi_json" in f
+            frame_extent = _h5_array_str(f["camera/frame_extent_json"])
+            legacy = _h5_array_str(f["camera/roi_json"])
+            assert frame_extent == legacy
+            assert '"origin_xy": [' in frame_extent
+            assert '"shape_hw": [' in frame_extent
+            assert '"sensor_shape_hw": [' in frame_extent
+            assert '"source": "camera_metadata"' in frame_extent
 
     def test_all_captures_written(
         self, sample_plan: CapturePlan, tmp_h5_path: Path

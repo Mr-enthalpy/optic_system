@@ -374,11 +374,16 @@ camera metadata
 LCD metadata
 TLS metadata
 capture timing metadata
-camera ROI / acquired-frame extent metadata
+camera frame extent / acquired-frame extent metadata
 profile ids
 support / peak-cluster coordinate metadata when available
 processing flags
 ```
+
+Raw capture metadata should use camera frame extent terminology.
+`/camera/frame_extent_json` is the preferred raw HDF5 field.
+`/camera/roi_json` is a legacy compatibility alias for camera SDK ROI metadata
+and must not be used as a PSF crop or ROI-support concept.
 
 Measured artifacts have distinct roles:
 
@@ -458,7 +463,7 @@ Rules:
 * `SensorEnergyCenterProfile` defines one global sensor energy center as the
   camera-coordinate origin for support and peak-cluster analysis.
 * `SensorEnergyCenterProfile` is not a crop-window artifact. Do not introduce
-  ROI extraction, ROI size selection, or ROI-centered exports through this
+  crop extraction, crop-size selection, or crop-centered exports through this
   profile.
 * `SensorEnergyCenterProfile` should record per-entry background, corrected
   energy, and fallback diagnostics. If a valid pixel domain is known, derive

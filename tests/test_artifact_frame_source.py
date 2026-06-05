@@ -93,3 +93,72 @@ def test_reads_raw_fallback_with_opt_in(tmp_path):
         assert source.descriptor.frame_count == 2
         assert source.descriptor.mask_ids == ("a", "b")
         assert source.descriptor.wavelengths_nm == (510.0, 520.0)
+
+
+def test_raw_fallback_reads_camera_frame_extent_json(tmp_path):
+    path = tmp_path / "raw_extent.h5"
+    with h5py.File(path, "w") as f:
+        raw = f.create_group("raw")
+        raw.create_dataset("frames_avg", data=np.zeros((2, 3, 4), dtype=np.float64))
+        camera = f.create_group("camera")
+        camera.create_dataset(
+            "frame_extent_json",
+            data=[
+                json.dumps({
+                    "mode": "full_sensor",
+                    "origin_xy": [0, 0],
+                    "shape_hw": [3, 4],
+                    "sensor_shape_hw": [3, 4],
+                })
+            ],
+            dtype=h5py.string_dtype(),
+        )
+        camera.create_dataset(
+            "roi_json",
+            data=[json.dumps([1, 2, 4, 3])],
+            dtype=h5py.string_dtype(),
+        )
+
+    with h5py.File(path, "r") as f:
+        source = open_survey_or_raw_frame_source(f, path, allow_raw_fallback=True)
+
+        assert source.descriptor.coordinate_frame == "sensor_full_frame"
+        assert source.descriptor.camera_frame_extent.mode == "full_sensor"
+        assert source.descriptor.camera_frame_extent.origin_xy == (0, 0)
+
+
+def test_raw_fallback_reads_legacy_roi_json(tmp_path):
+    path = tmp_path / "raw_legacy_roi.h5"
+    with h5py.File(path, "w") as f:
+        raw = f.create_group("raw")
+        raw.create_dataset("frames_avg", data=np.zeros((2, 3, 4), dtype=np.float64))
+        camera = f.create_group("camera")
+        camera.create_dataset(
+            "roi_json",
+            data=[json.dumps([1, 2, 4, 3])],
+            dtype=h5py.string_dtype(),
+        )
+
+    with h5py.File(path, "r") as f:
+        source = open_survey_or_raw_frame_source(f, path, allow_raw_fallback=True)
+
+        assert source.descriptor.coordinate_frame == "acquired_frame"
+        assert source.descriptor.camera_frame_extent.mode == "sensor_roi"
+        assert source.descriptor.camera_frame_extent.origin_xy == (1, 2)
+        assert source.descriptor.camera_frame_extent.shape_hw == (3, 4)
+        assert source.descriptor.camera_frame_extent.source == "legacy_roi_json"
+
+
+def test_raw_fallback_uses_frame_shape_when_extent_missing(tmp_path):
+    path = tmp_path / "raw_no_extent.h5"
+    with h5py.File(path, "w") as f:
+        raw = f.create_group("raw")
+        raw.create_dataset("frames_avg", data=np.zeros((2, 3, 4), dtype=np.float64))
+
+    with h5py.File(path, "r") as f:
+        source = open_survey_or_raw_frame_source(f, path, allow_raw_fallback=True)
+
+        assert source.descriptor.coordinate_frame == "acquired_frame"
+        assert source.descriptor.camera_frame_extent.mode == "unknown"
+        assert source.descriptor.camera_frame_extent.shape_hw == (3, 4)
+        assert source.descriptor.camera_frame_extent.source == "fallback_from_frame_shape"
