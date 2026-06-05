@@ -116,11 +116,3 @@ parameter changes.
 - The broadband pupil scan uses bar profiles, then radius scan, then
   ellipse/circle overlap fitting. The effective circular pupil radius is based
   on the fitted ellipse semi-minor axis.
-
-## Thesis Branch Relation
-
-The bachelor-thesis branch may be audited for algorithms.
-
-Mainline should absorb verified algorithms and reusable abstractions, not
-thesis phase numbering, thesis workflow ordering, ROI-centered data contracts,
-or thesis-specific reconstruction / figure scripts.

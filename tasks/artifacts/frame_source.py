@@ -55,8 +55,10 @@ def open_full_frame_survey_source(h5: h5py.File, source_path: str | Path) -> Fra
     extent_data = read_json_dataset_or_attr(group, "camera_frame_extent_json")
     if not extent_data and isinstance(manifest.get("camera_frame_extent"), dict):
         extent_data = dict(manifest["camera_frame_extent"])
+    if not extent_data:
+        raise ArtifactIOError("missing camera_frame_extent_json in survey artifact")
     extent = camera_frame_extent_from_dict(
-        _fallback_extent(extent_data, frame_shape),
+        extent_data,
         fallback_shape=frame_shape,
     )
     descriptor = FrameSourceDescriptor(
@@ -127,9 +129,9 @@ def _read_survey_wavelengths(h5: h5py.File, group: h5py.Group, n: int) -> list[f
         indices = np.asarray(group["wavelength_index"], dtype=np.int64)
         unique = np.asarray(group["unique_wavelength_nm"], dtype=np.float64)
         return [float(unique[int(i)]) for i in indices[:n]]
-    if "capture/wavelength_index" in h5 and "tls/wavelength_nm" in h5:
+    if "capture/wavelength_index" in h5 and "illumination/nominal_wavelength_nm" in h5:
         indices = np.asarray(h5["capture/wavelength_index"], dtype=np.int64)
-        unique = np.asarray(h5["tls/wavelength_nm"], dtype=np.float64)
+        unique = np.asarray(h5["illumination/nominal_wavelength_nm"], dtype=np.float64)
         return [float(unique[int(i)]) for i in indices[:n]]
     manifest = read_json_dataset_or_attr(group, "manifest_json")
     if isinstance(manifest.get("entry_wavelengths_nm"), list):
@@ -160,19 +162,6 @@ def _read_dataset_strings(
         return [f"{fallback_prefix}_{i:04d}" for i in range(n)]
     values = h5[path][()]
     return [decode_h5_string(x) for x in values[:n]]
-
-
-def _fallback_extent(data: dict[str, Any], frame_shape: tuple[int, int]) -> dict[str, Any]:
-    if data:
-        return dict(data)
-    return {
-        "mode": "unknown",
-        "origin_xy": [0, 0],
-        "shape_hw": [int(frame_shape[0]), int(frame_shape[1])],
-        "sensor_shape_hw": None,
-        "source": "fallback_from_frame_shape",
-    }
-
 
 def _validate_lengths(descriptor: FrameSourceDescriptor) -> None:
     if len(descriptor.mask_ids) != int(descriptor.frame_count):

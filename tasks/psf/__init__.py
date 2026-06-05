@@ -21,7 +21,6 @@ from .analyze_diffraction_support import (
     DiffractionSupportAnalysisError,
     PeakSupportAnalysisManifest,
     analyze_diffraction_support,
-    propose_peak_supports_from_report,
 )
 from .export_peak_patch_dictionary_to_lcd_forward import (
     PeakPatchDictionaryExportError,
@@ -61,7 +60,6 @@ __all__ = [
     "derive_sensor_energy_center_profile",
     "estimate_frame_energy_center",
     "export_peak_patch_dictionary_to_lcd_forward",
-    "propose_peak_supports_from_report",
     "render_peak_patch_dense_view",
     "validate_broadband_pupil_scan_dependencies",
     "validate_center_profile_for_frame_source",

@@ -9,8 +9,8 @@ from tasks.capture_plan import (
     CameraCaptureConfig,
     CapturePlan,
     CapturePlanError,
+    IlluminationEntry,
     LCDMaskEntry,
-    TLSWavelengthEntry,
 )
 
 
@@ -28,10 +28,9 @@ def _mono_entry(wavelength_nm: float, **extra) -> dict:
 def _label_entry(wavelength_nm: float, **extra) -> dict:
     return {
         "illumination": {
-            "mode": "label_only",
+            "mode": "monochromatic",
             "effective_wavelength_nm": float(wavelength_nm),
             "tls_setpoint_nm": None,
-            "wavelength_label_nm": float(wavelength_nm),
         },
         **extra,
     }
@@ -120,21 +119,21 @@ class TestLCDMaskEntry:
         assert d["mask_id"] == "m1"
 
 
-class TestTLSWavelengthEntry:
+class TestIlluminationEntry:
     def test_from_dict(self) -> None:
-        w = TLSWavelengthEntry.from_dict(_mono_entry(532.0))
-        assert w.wavelength_nm == 532.0
+        w = IlluminationEntry.from_dict(_mono_entry(532.0))
+        assert w.nominal_wavelength_nm == 532.0
         assert w.settle_ms == 2000
 
     def test_from_dict_full(self) -> None:
-        w = TLSWavelengthEntry.from_dict(_mono_entry(405.0, grating=2, settle_ms=5000))
-        assert w.wavelength_nm == 405.0
+        w = IlluminationEntry.from_dict(_mono_entry(405.0, grating=2, settle_ms=5000))
+        assert w.nominal_wavelength_nm == 405.0
         assert w.grating == 2
         assert w.settle_ms == 5000
 
     def test_wavelength_nm_input_is_rejected(self) -> None:
         with pytest.raises(CapturePlanError, match="wavelength_nm compatibility"):
-            TLSWavelengthEntry.from_dict({"wavelength_nm": 532.0})
+            IlluminationEntry.from_dict({"wavelength_nm": 532.0})
 
 
 class TestCapturePlan:
@@ -206,7 +205,7 @@ class TestCapturePlan:
             "masks": [{"mask_id": "m1"}],
         })
 
-        assert plan.wavelengths[0].wavelength_nm == 0.0
+        assert plan.wavelengths[0].nominal_wavelength_nm == 0.0
         assert "wavelength_nm" not in plan.to_dict()["wavelengths"][0]
 
     def test_validate_frames_per_capture_fails(self) -> None:
@@ -309,7 +308,7 @@ class TestCapturePlan:
             CameraCaptureConfig.from_dict({"exposure_us": "not_a_number"})
 
         with pytest.raises(CapturePlanError, match="int"):
-            TLSWavelengthEntry.from_dict({
+            IlluminationEntry.from_dict({
                 **_label_entry(500),
                 "grating": "bad",
             })

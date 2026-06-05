@@ -98,8 +98,8 @@ def _illumination_status_json(wavelength_entry: Any, tls_status: dict[str, Any] 
     if tls_status and isinstance(tls_status.get("illumination"), dict):
         data = dict(tls_status["illumination"])
     else:
-        data = wavelength_entry.resolved_illumination().to_dict()
-    data.setdefault("nominal_wavelength_nm", float(wavelength_entry.wavelength_nm))
+        data = wavelength_entry.illumination.to_dict()
+    data.setdefault("nominal_wavelength_nm", float(wavelength_entry.nominal_wavelength_nm))
     if tls_status and tls_status.get("tls_action") is not None:
         data.setdefault("tls_action", tls_status.get("tls_action"))
     return data
@@ -193,16 +193,16 @@ class RawCaptureWriter:
         masks_grp.attrs["mask_count"] = n_mask
 
         tls_grp = f.require_group("tls")
-        tls_grp.create_dataset("wavelength_nm", shape=(n_wl,), dtype=np.float64)
-        tls_grp["wavelength_nm"].attrs["semantic_role"] = "nominal_table_label"
-        tls_grp["wavelength_nm"].attrs["compatibility_note"] = (
-            "Use illumination_json for illumination semantics."
-        )
-        tls_grp.create_dataset("illumination_json", shape=(n_wl,), dtype=h5py.string_dtype())
         tls_grp.create_dataset("grating", shape=(n_wl,), dtype=np.int64)
         tls_grp.create_dataset("settle_ms", shape=(n_wl,), dtype=np.int64)
         tls_grp.create_dataset("timestamp_ns", shape=(n_wl,), dtype=np.int64)
         tls_grp.create_dataset("status_json", shape=(n_wl,), dtype=h5py.string_dtype())
+
+        illum_grp = f.require_group("illumination")
+        illum_grp.create_dataset("illumination_json", shape=(n_wl,), dtype=h5py.string_dtype())
+        illum_grp.create_dataset("nominal_wavelength_nm", shape=(n_wl,), dtype=np.float64)
+        illum_grp.create_dataset("tls_setpoint_nm", shape=(n_wl,), dtype=np.float64)
+        illum_grp.create_dataset("effective_wavelength_nm", shape=(n_wl,), dtype=np.float64)
 
         cam_grp = f.require_group("camera")
         cam_grp.create_dataset("requested_exposure_us", shape=(n_cap,), dtype=np.float64)
@@ -412,12 +412,12 @@ class RawCaptureWriter:
         lcd_grp["display_timestamp_ns"][row] = lcd_display_timestamp_ns
 
         wl = self._plan.wavelengths[wavelength_index]
-        tls_grp = f["tls"]
+        wl_grp = f["tls"]
         if tls_status:
             _wl_nm = float(
                 tls_status.get("current_wavelength_nm")
                 or tls_status.get("wavelength_nm")
-                or wl.wavelength_nm
+                or wl.nominal_wavelength_nm
             )
             _grat = int(
                 tls_status.get("grating") or wl.grating or -1
@@ -426,18 +426,28 @@ class RawCaptureWriter:
                 tls_status.get("timestamp_ns") or _now_ns()
             )
         else:
-            _wl_nm = float(wl.wavelength_nm)
+            _wl_nm = float(wl.nominal_wavelength_nm)
             _grat = int(wl.grating or -1)
             _tls_ts = _now_ns()
 
-        tls_grp["wavelength_nm"][wavelength_index] = _wl_nm
-        tls_grp["illumination_json"][wavelength_index] = _json_str(
-            _illumination_status_json(wl, tls_status)
+        illum_json_str = _json_str(_illumination_status_json(wl, tls_status))
+        illum_data = _illumination_status_json(wl, tls_status)
+        f["illumination"]["illumination_json"][wavelength_index] = illum_json_str
+        f["illumination"]["nominal_wavelength_nm"][wavelength_index] = _wl_nm
+        f["illumination"]["tls_setpoint_nm"][wavelength_index] = (
+            float(illum_data.get("tls_setpoint_nm"))
+            if illum_data.get("tls_setpoint_nm") is not None
+            else float("nan")
         )
-        tls_grp["grating"][wavelength_index] = _grat
-        tls_grp["settle_ms"][wavelength_index] = wl.settle_ms
-        tls_grp["timestamp_ns"][wavelength_index] = _tls_ts
-        tls_grp["status_json"][wavelength_index] = _json_str(tls_status or {})
+        f["illumination"]["effective_wavelength_nm"][wavelength_index] = (
+            float(illum_data.get("effective_wavelength_nm"))
+            if illum_data.get("effective_wavelength_nm") is not None
+            else float("nan")
+        )
+        wl_grp["grating"][wavelength_index] = _grat
+        wl_grp["settle_ms"][wavelength_index] = wl.settle_ms
+        wl_grp["timestamp_ns"][wavelength_index] = _tls_ts
+        wl_grp["status_json"][wavelength_index] = _json_str(tls_status or {})
 
         self._n_written += 1
 

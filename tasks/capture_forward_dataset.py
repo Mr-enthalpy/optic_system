@@ -401,7 +401,7 @@ def run_capture_forward_dataset(
 ) -> Path:
     plan.validate()
     policy = _resolve_runtime_policy(runtime_policy, dry_run=dry_run)
-    illuminations = [entry.resolved_illumination() for entry in plan.wavelengths]
+    illuminations = [entry.illumination for entry in plan.wavelengths]
     require_tls = bool(enable_tls or any(_illumination_requires_tls(item) for item in illuminations))
     validate_required_devices(
         devices,
@@ -478,8 +478,8 @@ def run_capture_forward_dataset(
             else:
                 if _illumination_requires_tls(illumination):
                     raise RuntimeModeError(
-                        "illumination requires TLS; use explicit label_only "
-                        "illumination for no-TLS non-hardware captures"
+                        "illumination requires TLS hardware; "
+                        "use a non-hardware runtime policy for no-TLS captures"
                     )
                 tls_status = illumination_status_without_tls(illumination)
                 tls_status["grating"] = wl_entry.grating

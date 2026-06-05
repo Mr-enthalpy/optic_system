@@ -60,10 +60,9 @@ def _plan_dict() -> dict:
         "wavelengths": [
             {
                 "illumination": {
-                    "mode": "label_only",
+                    "mode": "monochromatic",
                     "effective_wavelength_nm": 532.0,
                     "tls_setpoint_nm": None,
-                    "wavelength_label_nm": 532.0,
                 }
             }
         ],
@@ -116,10 +115,9 @@ def test_missing_required_tls_rejected_in_hardware_mode():
 
 def test_missing_tls_allowed_in_no_hardware_when_no_movement_required():
     illumination = IlluminationSpec(
-        mode="label_only",
+        mode="monochromatic",
         effective_wavelength_nm=532.0,
         tls_setpoint_nm=None,
-        wavelength_label_nm=532.0,
     )
 
     validate_tls_for_illumination(
@@ -144,13 +142,13 @@ def test_broadband_pass_through_without_tls_rejected_in_hardware_mode():
         )
 
 
-def test_positive_wavelength_without_tls_is_label_only_in_no_hardware(tmp_path: Path):
+def test_positive_wavelength_without_tls_is_monochromatic_in_no_hardware(tmp_path: Path):
     plan = CapturePlan.from_dict(_plan_dict())
     devices = FakeDeviceBundle(
         camera=FakeCamera(height=4, width=5),
         lcd=FakeLCD(height=4, width_phys=12),
     )
-    output = tmp_path / "label_only.h5"
+    output = tmp_path / "mono_no_tls.h5"
 
     run_capture_forward_dataset(
         plan,
@@ -162,7 +160,7 @@ def test_positive_wavelength_without_tls_is_label_only_in_no_hardware(tmp_path: 
 
     with h5py.File(output, "r") as f:
         status = json.loads(f["tls/status_json"][0])
-    assert status["illumination"]["mode"] == "label_only"
+    assert status["illumination"]["mode"] == "monochromatic"
     assert status["illumination"]["tls_setpoint_nm"] is None
 
 

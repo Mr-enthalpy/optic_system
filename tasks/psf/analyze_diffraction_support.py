@@ -98,16 +98,6 @@ class PeakSupportAnalysisManifest:
 
 
 @dataclass
-class SurveyData:
-    frames: np.ndarray
-    mask_ids: list[str]
-    wavelengths_nm: list[float]
-    frame_shape: tuple[int, int]
-    coordinate_frame: str
-    camera_frame_extent: dict[str, Any]
-
-
-@dataclass
 class SurveyMetadata:
     mask_ids: list[str]
     wavelengths_nm: list[float]
@@ -319,33 +309,6 @@ def analyze_diffraction_support(
         write_components=not bool(energy_only),
     )
     return manifest
-
-
-def load_full_frame_psf_survey(
-    path: str | Path,
-    *,
-    runtime_policy: RuntimePolicy | str | None = None,
-) -> SurveyData:
-    """
-    Diagnostic/small-data helper that materializes a survey into memory.
-
-    Real 2048 x 2448 measured surveys should use the streaming
-    ``analyze_diffraction_support`` path instead of this loader.
-    """
-
-    source_path = Path(path)
-    with h5py.File(str(source_path), "r") as f:
-        frames_ds, metadata = _open_survey_frame_source(f)
-        frames = np.asarray(frames_ds, dtype=np.float64)
-    frames = _normalize_frames(frames)
-    return SurveyData(
-        frames=frames,
-        mask_ids=metadata.mask_ids,
-        wavelengths_nm=metadata.wavelengths_nm,
-        frame_shape=metadata.frame_shape,
-        coordinate_frame=metadata.coordinate_frame,
-        camera_frame_extent=metadata.camera_frame_extent,
-    )
 
 
 def _open_survey_frame_source(
@@ -843,9 +806,9 @@ def _read_survey_wavelengths(f: h5py.File, group: h5py.Group, n: int) -> list[fl
         indices = np.asarray(group["wavelength_index"], dtype=np.int64)
         unique = np.asarray(group["unique_wavelength_nm"], dtype=np.float64)
         return [float(unique[int(i)]) for i in indices[:n]]
-    if "capture/wavelength_index" in f and "tls/wavelength_nm" in f:
+    if "capture/wavelength_index" in f and "illumination/nominal_wavelength_nm" in f:
         indices = np.asarray(f["capture/wavelength_index"], dtype=np.int64)
-        unique = np.asarray(f["tls/wavelength_nm"], dtype=np.float64)
+        unique = np.asarray(f["illumination/nominal_wavelength_nm"], dtype=np.float64)
         return [float(unique[int(i)]) for i in indices[:n]]
     manifest = _read_json_dataset_or_attr(group, "manifest_json")
     if isinstance(manifest.get("entry_wavelengths_nm"), list):

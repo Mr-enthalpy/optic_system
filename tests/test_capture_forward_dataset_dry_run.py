@@ -31,10 +31,9 @@ def _mono_entry(wavelength_nm: float, **extra) -> dict:
 def _label_entry(wavelength_nm: float, **extra) -> dict:
     return {
         "illumination": {
-            "mode": "label_only",
+            "mode": "monochromatic",
             "effective_wavelength_nm": float(wavelength_nm),
             "tls_setpoint_nm": None,
-            "wavelength_label_nm": float(wavelength_nm),
         },
         **extra,
     }
@@ -95,8 +94,22 @@ class TestCaptureForwardDatasetDryRun:
             assert f["capture/completed"][:].all()
 
     def test_dry_run_with_tls(
-        self, sample_plan: CapturePlan, tmp_h5_path: Path
+        self, tmp_h5_path: Path
     ) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "tls_dry_run",
+            "wavelengths": [
+                _mono_entry(532.0, grating=1, settle_ms=3000),
+                _mono_entry(633.0, grating=1, settle_ms=2000),
+            ],
+            "masks": [
+                {"mask_id": "mask_a", "family_id": "f1"},
+                {"mask_id": "mask_b", "family_id": "f1"},
+            ],
+            "camera": {"frames_per_capture": 5, "average_burst": True},
+            "lcd_settle_ms": 500,
+            "store_burst": False,
+        })
         tls = FakeTLS()
         tls.connect()
 
@@ -107,7 +120,7 @@ class TestCaptureForwardDatasetDryRun:
         )
 
         result = run_capture_forward_dataset(
-            plan=sample_plan,
+            plan=plan,
             devices=devices,
             output_path=tmp_h5_path,
             enable_tls=True,
@@ -116,7 +129,7 @@ class TestCaptureForwardDatasetDryRun:
 
         assert result == tmp_h5_path
         with h5py.File(tmp_h5_path, "r") as f:
-            wl = f["tls/wavelength_nm"][()]
+            wl = f["illumination/nominal_wavelength_nm"][()]
             assert wl[0] > 0
 
     def test_dry_run_with_tls_pass_through(
@@ -148,7 +161,7 @@ class TestCaptureForwardDatasetDryRun:
         assert tls._target_nm == 0.0
         assert tls._current_nm == 0.0
         with h5py.File(tmp_h5_path, "r") as f:
-            assert float(f["tls/wavelength_nm"][0]) == 0.0
+            assert float(f["illumination"]["nominal_wavelength_nm"][0]) == 0.0
             raw_status = f["tls/status_json"][0]
             status = json.loads(raw_status.decode() if isinstance(raw_status, bytes) else str(raw_status))
             assert float(status["target_wavelength_nm"]) == 0.0
@@ -209,7 +222,7 @@ class TestCaptureForwardDatasetDryRun:
 
         with pytest.raises(TLSUnavailableError):
             run_capture_forward_dataset(
-                plan=sample_plan,
+            plan=sample_plan,
                 devices=devices,
                 output_path=tmp_h5_path,
                 enable_tls=True,

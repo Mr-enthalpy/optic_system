@@ -202,9 +202,6 @@ broadband pass-through CameraProfile
   -> downstream PSF / dOTF / mask-family capture tasks
 ```
 
-The bachelor-thesis branch task logic may be used as audited reference
-material, but its old ordering is not the mainline workflow.
-
 ### Phase 3B -- Full-Frame Scout and Peak-Patch Data-Contract Baseline
 
 Artifacts and tasks:

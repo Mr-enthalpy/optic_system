@@ -74,8 +74,6 @@ Current meaning:
 - ``app/main_gui.py`` is the manual/debug control GUI and may control hardware.
 - ``scripts/monitor_run_status.py`` is the only supported read-only monitor.
   It reads task-published run-status files and must remain hardware-free.
-- The bachelor-thesis experimental branch is historical reference, not a
-  source of mainline workflow structure.
 - The active mainline path is measured-artifact construction and diagnostics,
   not learning-side modelling.
 
@@ -108,7 +106,6 @@ diagnostics, and metadata-rich exports.
 - support-candidate stability reports;
 - peak layout and adaptive peak layout artifacts;
 - fixed-size peak-patch and future adaptive peak-cluster dictionaries;
-- dense-kernel compatibility exports and peak-cluster exports.
 
 `optic_system` must not build:
 
@@ -116,23 +113,6 @@ diagnostics, and metadata-rich exports.
 - reconstruction models;
 - differentiable mask optimization loops;
 - hidden `LCD_forward` training or validation invocations.
-
-## Mainline / thesis branch relationship
-
-The bachelor-thesis branch is historical reference.
-
-Mainline may absorb:
-
-- audited algorithms;
-- reusable artifact abstractions;
-- hardware-free diagnostics.
-
-Mainline must not absorb:
-
-- thesis phase numbering;
-- thesis workflow ordering;
-- ROI-centered data contracts;
-- thesis-specific reconstruction or figure scripts.
 
 ## Architecture rules
 
@@ -368,10 +348,6 @@ If a task only writes `state.json` and `current_mask_preview`, the monitor must
 continue to work and show only those available fields.  Missing frame previews,
 frame stats, or logs are not monitor failures.
 
-Reusable monitor/diagnostics improvements discovered on the thesis branch
-may be selectively backported to master when they remain hardware-free
-and task-agnostic.
-
 
 ## Capture data rules
 
@@ -478,7 +454,6 @@ FullFramePSFSurvey
 
 Rules:
 
-* `optic_system` may export dense-kernel baselines when useful.
 * `optic_system` may export peak-patch and adaptive peak-cluster artifacts.
 * `SensorEnergyCenterProfile` defines one global sensor energy center as the
   camera-coordinate origin for support and peak-cluster analysis.

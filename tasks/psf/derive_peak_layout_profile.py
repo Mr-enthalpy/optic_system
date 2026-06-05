@@ -138,10 +138,13 @@ def derive_peak_layout_profile(
     threshold_sigma: float = 3.0,
     min_area: int = 1,
     max_peaks: int | None = None,
-    center_profile: str | Path | SensorEnergyCenterProfile | None = None,
+    center_profile: str | Path | SensorEnergyCenterProfile,
     notes: str | None = None,
 ) -> PeakLayoutProfileManifest:
-    """Derive a replaceable first-pass peak layout from a full-frame scout survey."""
+    """Derive a replaceable first-pass peak layout from a full-frame scout survey.
+
+    Requires a SensorEnergyCenterProfile to compute center-relative peak coordinates.
+    """
 
     survey_path = Path(survey_h5)
     output_path = Path(output_json)
@@ -215,30 +218,26 @@ def derive_peak_layout_profile(
         valid_mask_ids = _read_string_dataset(src, "full_frame_survey/unique_mask_ids")
         camera_extent = _read_camera_frame_extent(src)
         coordinate_frame = _coordinate_frame(camera_extent)
-        if center_profile_obj is not None:
-            try:
-                validate_center_profile_for_frame_source(
-                    center_profile_obj,
-                    coordinate_frame=coordinate_frame,
-                    camera_frame_extent=camera_extent,
-                    frame_shape=(int(h), int(w)),
-                )
-            except SensorEnergyCenterError as exc:
-                raise PeakLayoutProfileError(str(exc)) from exc
-        energy_center_xy = (
-            [float(center_profile_obj.center_xy[0]), float(center_profile_obj.center_xy[1])]
-            if center_profile_obj is not None else None
-        )
-        center_xy_rel = (
+        try:
+            validate_center_profile_for_frame_source(
+                center_profile_obj,
+                coordinate_frame=coordinate_frame,
+                camera_frame_extent=camera_extent,
+                frame_shape=(int(h), int(w)),
+            )
+        except SensorEnergyCenterError as exc:
+            raise PeakLayoutProfileError(str(exc)) from exc
+        energy_center_xy = [
+            float(center_profile_obj.center_xy[0]),
+            float(center_profile_obj.center_xy[1]),
+        ]
+        center_xy_rel = [
             [
-                [
-                    float(p["center_xy"][0]) - float(energy_center_xy[0]),
-                    float(p["center_xy"][1]) - float(energy_center_xy[1]),
-                ]
-                for p in peaks
+                float(p["center_xy"][0]) - float(energy_center_xy[0]),
+                float(p["center_xy"][1]) - float(energy_center_xy[1]),
             ]
-            if energy_center_xy is not None else None
-        )
+            for p in peaks
+        ]
         manifest = PeakLayoutProfileManifest(
             peak_layout_id=str(peak_layout_id),
             source_survey_h5=str(survey_path),
@@ -273,12 +272,9 @@ def derive_peak_layout_profile(
                 "min_area": int(min_area),
                 "max_peaks": max_peaks,
                 "patch_shape_hw": [int(patch_shape_hw[0]), int(patch_shape_hw[1])],
-                "center_profile_role": "optional_but_preferred",
+                "center_profile_role": "required",
             },
-            center_profile_id=(
-                center_profile_obj.center_profile_id
-                if center_profile_obj is not None else None
-            ),
+            center_profile_id=center_profile_obj.center_profile_id,
             energy_center_xy=energy_center_xy,
             center_xy_rel=center_xy_rel,
             notes=notes,
@@ -378,10 +374,8 @@ def _coordinate_frame(camera_frame_extent: dict[str, Any]) -> str:
 
 
 def _load_center_profile(
-    center_profile: str | Path | SensorEnergyCenterProfile | None,
-) -> SensorEnergyCenterProfile | None:
-    if center_profile is None:
-        return None
+    center_profile: str | Path | SensorEnergyCenterProfile,
+) -> SensorEnergyCenterProfile:
     if isinstance(center_profile, SensorEnergyCenterProfile):
         return center_profile
     try:

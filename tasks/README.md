@@ -7,35 +7,6 @@ lives in [`../docs/roadmap.md`](../docs/roadmap.md). Profile-chain operational
 rules live in
 [`../docs/profile_task_chain.md`](../docs/profile_task_chain.md).
 
-## Task Status Classification
-
-Each task file should carry one of the following status labels:
-
-| Status | Meaning |
-|--------|---------|
-| **active** | Currently in use as part of the mainline architecture. Uses current camera/LCD/TLS conventions and preserves metadata. |
-| **planned** | Future direction recorded in the roadmap. Not an active module unless implemented and listed here. |
-| **experimental** | Prototype code that may contain useful patterns but has not been audited against current architecture rules. |
-| **legacy** | Code from earlier project phases that is no longer maintained. May bypass current boundaries or lack metadata preservation. |
-| **deprecated** | Should never be used. Depends on removed or unsupported paths such as pywinauto TLS automation. |
-
-Historical task files, if present, belong under `legacy`, `experimental`, or
-`deprecated` status and must not be revived without explicit audit.
-
-## Audit Criteria
-
-Before classifying or reusing a task, check:
-
-1. Does it use the current `control -> devices` boundary, or document a narrow task adapter boundary?
-2. Does it bypass `SessionController`?
-3. Does it depend on old pywinauto TLS logic?
-4. Does it preserve raw capture metadata and profile identifiers?
-5. Is it compatible with the current LCD physical mono mask convention?
-
-Tasks that bypass the current architecture should be marked `legacy` or
-`needs audit`. Tasks that use pywinauto TLS automation should be marked
-`deprecated`.
-
 ## Active Capture Layer
 
 | File | Status | Purpose |
@@ -132,18 +103,6 @@ to pass-through.
 Additional task-specific tests live with the relevant profile, PSF, support,
 and export modules.
 
-## Removed Legacy Stubs
-
-The following empty placeholders were removed. Their historical intent is
-preserved here only to prevent accidental resurrection:
-
-| Removed file | Original intent |
-|--------------|-----------------|
-| `aperture_search_task.py` | Aperture parameter search. Never implemented. |
-| `calibration_sequence_task.py` | Calibration sequence automation. Never implemented. Full calibration workflow is outside the current task layer. |
-| `capture_average_task.py` | Simple frame averaging. Never implemented. Superseded by `capture_forward_dataset.py`. |
-| `wavelength_sweep_task.py` | Wavelength sweep orchestration. Never implemented. Full sweep orchestration is not an active task. |
-
 ## Planned Directions
 
 Planned task names are roadmap items, not active files. See
@@ -152,7 +111,6 @@ capture tasks, diagnostics, and conversion directions.
 
 ## Policy
 
-- Old tasks may be referenced for design patterns but must not be assumed correct.
-- New task code must preserve raw capture metadata and profile identifiers.
-- Hardware tests must remain opt-in.
-- All new task code must be compatible with the architecture rules in `AGENTS.md`.
+No historical task revival is planned. The active module list above defines
+the implementation surface. All new task code must preserve raw capture
+metadata and profile identifiers. Hardware tests must remain opt-in.
