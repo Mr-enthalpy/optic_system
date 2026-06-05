@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import h5py
@@ -57,7 +58,9 @@ class TestRawCaptureWriter:
 
         with h5py.File(tmp_h5_path, "r") as f:
             assert f.attrs["plan_id"] == "test_plan_01"
-            assert f.attrs["software_version"] == "optic_system phase2"
+            assert f.attrs["software_version"] == "optic_system"
+            assert int(f.attrs["raw_capture_schema_version"]) == 2
+            assert f.attrs["capture_role"] == "minimal_capture"
 
     def test_plan_json_stored(self, sample_plan: CapturePlan, tmp_h5_path: Path) -> None:
         writer = RawCaptureWriter(tmp_h5_path, sample_plan)
@@ -96,6 +99,20 @@ class TestRawCaptureWriter:
             requirements = _h5_str(f["profiles/requirements_json"])
             assert "per_band_pupil_open_v1" in requirements
 
+    def test_capture_role_from_plan_extra(self, sample_plan: CapturePlan, tmp_h5_path: Path) -> None:
+        plan_dict = sample_plan.to_dict()
+        plan_dict["extra"] = {"capture_role": "profile_capture"}
+        plan = CapturePlan.from_dict(plan_dict)
+
+        writer = RawCaptureWriter(tmp_h5_path, plan)
+        with writer:
+            pass
+
+        with h5py.File(tmp_h5_path, "r") as f:
+            assert f.attrs["capture_role"] == "profile_capture"
+            pf = json.loads(_h5_str(f["capture/processing_flags_json"]))
+            assert pf["capture_role"] == "profile_capture"
+
     def test_processing_flags_written(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
     ) -> None:
@@ -104,10 +121,12 @@ class TestRawCaptureWriter:
             pass
 
         with h5py.File(tmp_h5_path, "r") as f:
-            pf = _h5_str(f["capture/processing_flags_json"])
-            assert "scientific_calibration_valid" in pf
-            assert "phase2_minimal_capture" in pf
-            assert "completed" in pf
+            pf = json.loads(_h5_str(f["capture/processing_flags_json"]))
+            assert pf["scientific_calibration_valid"] is False
+            assert pf["raw_capture_schema_version"] == 2
+            assert pf["capture_role"] == "minimal_capture"
+            assert "phase" not in pf
+            assert pf["completed"] is True
 
     def test_writes_physical_masks(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
@@ -179,6 +198,15 @@ class TestRawCaptureWriter:
 
             tls_ds = f["tls"]
             assert float(tls_ds["wavelength_nm"][0]) == 532.0
+            assert tls_ds["wavelength_nm"].attrs["semantic_role"] == "nominal_table_label"
+            raw_illumination = tls_ds["illumination_json"][0]
+            illumination = json.loads(
+                raw_illumination.decode("utf-8")
+                if isinstance(raw_illumination, bytes)
+                else str(raw_illumination)
+            )
+            assert illumination["mode"] == "label_only"
+            assert illumination["nominal_wavelength_nm"] == 532.0
 
     def test_writes_camera_frame_extent_without_legacy_alias(
         self, sample_plan: CapturePlan, tmp_h5_path: Path

@@ -180,6 +180,14 @@ def test_builds_full_frame_survey_as_scout_artifact(tmp_path: Path) -> None:
     assert manifest.unique_wavelengths_nm == [450.0, 550.0]
     with h5py.File(survey_path, "r") as f:
         assert f["full_frame_survey/frames_avg"].shape == (4, 20, 20)
+        raw_illumination = f["full_frame_survey/entry_illumination_json"][0]
+        illumination = json.loads(
+            raw_illumination.decode("utf-8")
+            if isinstance(raw_illumination, bytes)
+            else str(raw_illumination)
+        )
+        assert illumination["mode"] == "monochromatic"
+        assert illumination["effective_wavelength_nm"] == 450.0
         assert _h5_str(f["profiles/pupil_profile_id"]) == "pupil_profile_v1"
         assert json.loads(_h5_str(f["full_frame_survey/manifest_json"]))["full_frame_role"] == "scout"
 

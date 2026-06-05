@@ -39,6 +39,7 @@ class FullFramePSFSurveyManifest:
     camera_profile_id: str | None
     illumination_mode: str
     entry_wavelengths_nm: list[float]
+    entry_illumination_json: list[str]
     entry_mask_ids: list[str]
     unique_wavelengths_nm: list[float]
     unique_mask_ids: list[str]
@@ -61,6 +62,9 @@ class FullFramePSFSurveyManifest:
             illumination_mode=_require_str(data, "illumination_mode"),
             entry_wavelengths_nm=[
                 float(v) for v in _require_list(data, "entry_wavelengths_nm")
+            ],
+            entry_illumination_json=[
+                str(v) for v in data.get("entry_illumination_json", [])
             ],
             entry_mask_ids=[str(v) for v in _require_list(data, "entry_mask_ids")],
             unique_wavelengths_nm=[
@@ -165,6 +169,7 @@ def build_full_frame_psf_survey(
             )
 
             wavelengths_by_index = np.asarray(src["tls/wavelength_nm"], dtype=np.float64)
+            illumination_by_index = _read_raw_illumination_json_by_index(src, plan=None)
             mask_ids_by_index = read_string_array(src["masks/mask_id"])
             entry_mask_ids = [
                 index_string(mask_ids_by_index, int(mask_indices[row])) for row in valid_rows
@@ -175,6 +180,12 @@ def build_full_frame_psf_survey(
             ]
             source_plan_json = read_scalar_string(src["capture/plan_json"])
             plan = loads_json_object(source_plan_json)
+            if not illumination_by_index:
+                illumination_by_index = _read_raw_illumination_json_by_index(src, plan=plan)
+            entry_illumination_json = [
+                index_string(illumination_by_index, int(wavelength_indices[row]))
+                for row in valid_rows
+            ]
             pupil_profile_id = read_optional_dataset_string(src, "profiles/pupil_profile_id")
             camera_profile_id = read_optional_dataset_string(src, "profiles/camera_profile_id")
             illum_mode = illumination_mode(plan)
@@ -195,6 +206,7 @@ def build_full_frame_psf_survey(
                 camera_profile_id=camera_profile_id,
                 illumination_mode=illum_mode,
                 entry_wavelengths_nm=entry_wavelengths,
+                entry_illumination_json=entry_illumination_json,
                 entry_mask_ids=entry_mask_ids,
                 unique_wavelengths_nm=unique_preserve_order(entry_wavelengths),
                 unique_mask_ids=unique_preserve_order(entry_mask_ids),
@@ -256,6 +268,11 @@ def _write_survey_h5(
             frames[out_idx] = frame
         grp.create_dataset("entry_mask_ids", data=np.asarray(manifest.entry_mask_ids, dtype=object), dtype=string_dtype)
         grp.create_dataset("entry_wavelength_nm", data=np.asarray(manifest.entry_wavelengths_nm, dtype=np.float64))
+        grp.create_dataset(
+            "entry_illumination_json",
+            data=np.asarray(manifest.entry_illumination_json, dtype=object),
+            dtype=string_dtype,
+        )
         grp.create_dataset("unique_mask_ids", data=np.asarray(manifest.unique_mask_ids, dtype=object), dtype=string_dtype)
         grp.create_dataset("unique_wavelength_nm", data=np.asarray(manifest.unique_wavelengths_nm, dtype=np.float64))
         grp.create_dataset("mask_index", data=mask_indices.astype(np.int64))
@@ -288,6 +305,27 @@ def _write_survey_h5(
         source = dst.require_group("source")
         source.create_dataset("raw_capture_h5", data=manifest.source_raw_capture_h5)
         source.create_dataset("plan_json", data=source_plan_json)
+
+
+def _read_raw_illumination_json_by_index(
+    src: h5py.File,
+    *,
+    plan: dict[str, Any] | None,
+) -> list[str]:
+    if "tls/illumination_json" in src:
+        return [
+            value.decode("utf-8") if isinstance(value, bytes) else str(value)
+            for value in src["tls/illumination_json"][()]
+        ]
+    if isinstance(plan, dict) and isinstance(plan.get("wavelengths"), list):
+        result: list[str] = []
+        for item in plan["wavelengths"]:
+            if isinstance(item, dict) and isinstance(item.get("illumination"), dict):
+                result.append(json.dumps(item["illumination"], sort_keys=True))
+            else:
+                result.append(json.dumps({"mode": "unknown"}, sort_keys=True))
+        return result
+    return []
 
 
 def _require_str(data: dict[str, Any], key: str) -> str:

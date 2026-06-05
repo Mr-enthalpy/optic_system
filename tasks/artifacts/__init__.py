@@ -26,6 +26,7 @@ from .json_io import (
 from .manifest import (
     ArtifactManifestBase,
     ArtifactRef,
+    MeasuredArtifactManifestBase,
     manifest_from_json_dict,
     manifest_to_json_dict,
     read_manifest_json,
@@ -39,6 +40,7 @@ __all__ = [
     "CoordinateFrameDescriptor",
     "FrameSource",
     "FrameSourceDescriptor",
+    "MeasuredArtifactManifestBase",
     "camera_frame_extent_from_camera_metadata",
     "camera_frame_extent_from_dict",
     "camera_frame_extent_json_dict",

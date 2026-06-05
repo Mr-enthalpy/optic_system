@@ -100,6 +100,14 @@ class LCDMaskEntry:
 
 @dataclass
 class TLSWavelengthEntry:
+    """
+    Historical capture-plan row type.
+
+    New plan input must provide ``illumination``. ``wavelength_nm`` is retained
+    only as a nominal table label for HDF5 rows and legacy wavelength-indexed
+    arrays; it is not the semantic illumination object.
+    """
+
     wavelength_nm: float
     grating: int | None = None
     settle_ms: int = 2000

@@ -17,6 +17,11 @@ from .artifacts.coordinate_frame import (
 from .capture_plan import CapturePlan
 
 
+RAW_CAPTURE_SCHEMA_VERSION = 2
+SOFTWARE_NAME = "optic_system"
+DEFAULT_CAPTURE_ROLE = "minimal_capture"
+
+
 class RawCaptureWriteError(RuntimeError):
     pass
 
@@ -80,6 +85,26 @@ def _json_str(obj: Any) -> str:
     return json.dumps(obj, indent=2, default=str)
 
 
+def _capture_role(plan: CapturePlan) -> str:
+    value = plan.extra.get("capture_role") if isinstance(plan.extra, dict) else None
+    if value is None:
+        value = plan.extra.get("role") if isinstance(plan.extra, dict) else None
+    text = str(value or DEFAULT_CAPTURE_ROLE).strip()
+    allowed = {"minimal_capture", "profile_capture", "psf_capture", "survey_capture"}
+    return text if text in allowed else DEFAULT_CAPTURE_ROLE
+
+
+def _illumination_status_json(wavelength_entry: Any, tls_status: dict[str, Any] | None) -> dict[str, Any]:
+    if tls_status and isinstance(tls_status.get("illumination"), dict):
+        data = dict(tls_status["illumination"])
+    else:
+        data = wavelength_entry.resolved_illumination().to_dict()
+    data.setdefault("nominal_wavelength_nm", float(wavelength_entry.wavelength_nm))
+    if tls_status and tls_status.get("tls_action") is not None:
+        data.setdefault("tls_action", tls_status.get("tls_action"))
+    return data
+
+
 class RawCaptureWriter:
     """
     Incremental raw capture HDF5 writer.
@@ -125,7 +150,9 @@ class RawCaptureWriter:
 
         f.attrs["plan_id"] = self._plan.plan_id
         f.attrs["created_at_ns"] = self._created_at_ns
-        f.attrs["software_version"] = "optic_system phase2"
+        f.attrs["software_version"] = SOFTWARE_NAME
+        f.attrs["raw_capture_schema_version"] = RAW_CAPTURE_SCHEMA_VERSION
+        f.attrs["capture_role"] = _capture_role(self._plan)
         f.attrs["hdf5_writer_version"] = "1.0"
 
         raw = f.require_group("raw")
@@ -167,6 +194,11 @@ class RawCaptureWriter:
 
         tls_grp = f.require_group("tls")
         tls_grp.create_dataset("wavelength_nm", shape=(n_wl,), dtype=np.float64)
+        tls_grp["wavelength_nm"].attrs["semantic_role"] = "nominal_table_label"
+        tls_grp["wavelength_nm"].attrs["compatibility_note"] = (
+            "Use illumination_json for illumination semantics."
+        )
+        tls_grp.create_dataset("illumination_json", shape=(n_wl,), dtype=h5py.string_dtype())
         tls_grp.create_dataset("grating", shape=(n_wl,), dtype=np.int64)
         tls_grp.create_dataset("settle_ms", shape=(n_wl,), dtype=np.int64)
         tls_grp.create_dataset("timestamp_ns", shape=(n_wl,), dtype=np.int64)
@@ -217,7 +249,8 @@ class RawCaptureWriter:
             "scientific_calibration_valid": False,
             "optical_alignment_validated": False,
             "training_ready": False,
-            "phase": "phase2_minimal_capture",
+            "raw_capture_schema_version": RAW_CAPTURE_SCHEMA_VERSION,
+            "capture_role": _capture_role(self._plan),
             "completed": False,
             "error": None,
             "last_completed_capture_index": -1,
@@ -398,6 +431,9 @@ class RawCaptureWriter:
             _tls_ts = _now_ns()
 
         tls_grp["wavelength_nm"][wavelength_index] = _wl_nm
+        tls_grp["illumination_json"][wavelength_index] = _json_str(
+            _illumination_status_json(wl, tls_status)
+        )
         tls_grp["grating"][wavelength_index] = _grat
         tls_grp["settle_ms"][wavelength_index] = wl.settle_ms
         tls_grp["timestamp_ns"][wavelength_index] = _tls_ts
@@ -418,7 +454,8 @@ class RawCaptureWriter:
             "scientific_calibration_valid": False,
             "optical_alignment_validated": False,
             "training_ready": False,
-            "phase": "phase2_minimal_capture",
+            "raw_capture_schema_version": RAW_CAPTURE_SCHEMA_VERSION,
+            "capture_role": _capture_role(self._plan),
             "completed": completed,
             "error": error,
             "last_completed_capture_index": (

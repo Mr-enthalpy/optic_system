@@ -5,6 +5,7 @@ import json
 import h5py
 
 from tasks.artifacts.json_io import canonical_json, decode_h5_string, read_json_dataset_or_attr, write_json_dataset
+from tasks.artifacts.manifest import MeasuredArtifactManifestBase, manifest_to_json_dict
 
 
 def test_read_json_dataset_or_attr_handles_bytes_and_strings(tmp_path):
@@ -31,3 +32,28 @@ def test_write_json_dataset_and_canonical_json(tmp_path):
 
     assert canonical_json({"b": 2, "a": 1}) == '{"a":1,"b":2}'
     assert decode_h5_string(b"abc") == "abc"
+
+
+def test_measured_artifact_manifest_base_serializes_sensor_metadata():
+    manifest = MeasuredArtifactManifestBase(
+        artifact_type="example_measured_artifact",
+        schema_version=1,
+        artifact_id="artifact_001",
+        coordinate_frame="sensor_full_frame",
+        camera_frame_extent={
+            "mode": "full_sensor",
+            "origin_xy": [0, 0],
+            "shape_hw": [4, 5],
+            "sensor_shape_hw": [4, 5],
+        },
+        frame_shape=(4, 5),
+        created_by_task="test_task",
+        validation_policy={"requires_full_sensor": True},
+    )
+
+    data = manifest_to_json_dict(manifest)
+
+    assert data["software_version"] == "optic_system"
+    assert data["coordinate_frame"] == "sensor_full_frame"
+    assert data["camera_frame_extent"]["mode"] == "full_sensor"
+    assert data["validation_policy"]["requires_full_sensor"] is True

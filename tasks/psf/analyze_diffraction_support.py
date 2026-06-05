@@ -326,6 +326,13 @@ def load_full_frame_psf_survey(
     *,
     runtime_policy: RuntimePolicy | str | None = None,
 ) -> SurveyData:
+    """
+    Diagnostic/small-data helper that materializes a survey into memory.
+
+    Real 2048 x 2448 measured surveys should use the streaming
+    ``analyze_diffraction_support`` path instead of this loader.
+    """
+
     source_path = Path(path)
     with h5py.File(str(source_path), "r") as f:
         frames_ds, metadata = _open_survey_frame_source(f)
@@ -386,6 +393,14 @@ def propose_peak_supports_from_report(
     merge_overlapping: bool = True,
     far_field_only: bool = False,
 ) -> list[dict[str, Any]]:
+    """
+    Diagnostic support-candidate proposal helper.
+
+    This is not a stability report and not a layout promotion path. A future
+    SupportCandidateStabilityReport task should own cross-entry candidate
+    aggregation and promotion semantics.
+    """
+
     rows = _read_component_rows(report_h5)
     frame_h, frame_w = _read_report_frame_shape(report_h5)
     selected = [
