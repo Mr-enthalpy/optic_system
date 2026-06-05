@@ -242,7 +242,8 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 ### Raw capture HDF5 schema
 
 ```
-/                            attrs: plan_id, created_at_ns, software_version
+/                            attrs: plan_id, created_at_ns, software_version,
+                             raw_capture_schema_version, capture_role
 /raw/frames_avg              [N_capture, H, W] policy dtype, default float32
 /raw/frames                  [N_capture, K, H, W] policy dtype, default input dtype
                              (only if store_burst=True)
@@ -253,7 +254,8 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 /masks/family_id             [N_mask] str
 /masks/family_params_json    [N_mask] str
 /masks/has_mask_array        [N_mask] bool
-/tls/wavelength_nm           [N_wavelengths] float64
+/tls/illumination_json       [N_wavelengths] str  (primary illumination semantics)
+/tls/wavelength_nm           [N_wavelengths] float64  (nominal table label)
 /tls/grating                 [N_wavelengths] int64
 /tls/settle_ms               [N_wavelengths] int64
 /tls/timestamp_ns            [N_wavelengths] int64
@@ -286,6 +288,11 @@ Raw capture metadata should use camera frame extent terminology.
 `camera.frame_extent` for acquisition extent metadata. Pre-mainline
 thesis/development data are outside the current schema and require explicit
 migration if needed.
+
+Raw capture files use neutral schema terminology: `software_version` is
+`optic_system`, `raw_capture_schema_version` records raw schema evolution, and
+`capture_role` records acquisition intent such as `minimal_capture`,
+`profile_capture`, `psf_capture`, or `survey_capture`.
 
 Canonical capture-plan examples:
 

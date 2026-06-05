@@ -27,6 +27,16 @@ class ArtifactManifestBase:
     notes: str | None = None
 
 
+@dataclass(frozen=True)
+class MeasuredArtifactManifestBase(ArtifactManifestBase):
+    coordinate_frame: str | None = None
+    camera_frame_extent: dict[str, Any] | None = None
+    frame_shape: tuple[int, int] | None = None
+    created_by_task: str | None = None
+    software_version: str = "optic_system"
+    validation_policy: dict[str, Any] | None = None
+
+
 TManifest = TypeVar("TManifest", bound=ArtifactManifestBase)
 
 

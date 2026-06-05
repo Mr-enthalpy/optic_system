@@ -480,13 +480,11 @@ Phase 3.5C support-stability work separate unless a PR is explicitly scoped to
 both tracks.
 
 ```text
-1. validate the profile-driven calibration chain on real hardware
-2. scipy connected-component backend for PeakSupportAnalysisReport
-3. streaming / energy-only mode for large full-frame data
-4. real-data presets for support analysis
-5. SupportCandidateStabilityReport
-6. AdaptivePeakLayoutProfile
-7. AdaptivePeakClusterPSFDictionary
+1. hardware validation of the profile-driven calibration chain
+2. SupportCandidateStabilityReport
+3. AdaptivePeakLayoutProfile
+4. AdaptivePeakClusterPSFDictionary
+5. hardware-data-driven profile task fixes
 ```
 
 Training and validation of the peak-cluster forward model are explicitly

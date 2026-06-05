@@ -137,7 +137,8 @@ Important processing flags:
   "scientific_calibration_valid": false,
   "optical_alignment_validated": false,
   "training_ready": false,
-  "phase": "phase2_minimal_capture"
+  "raw_capture_schema_version": 2,
+  "capture_role": "minimal_capture"
 }
 ```
 

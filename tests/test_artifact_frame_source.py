@@ -26,6 +26,14 @@ def test_reads_full_frame_survey_3d(tmp_path):
         )
         group.create_dataset("entry_mask_id", data=np.asarray(["m0", "m1"], dtype=object), dtype=h5py.string_dtype())
         group.create_dataset("entry_wavelength_nm", data=np.asarray([500.0, 600.0]))
+        group.create_dataset(
+            "entry_illumination_json",
+            data=np.asarray([
+                json.dumps({"mode": "monochromatic", "effective_wavelength_nm": 500.0}),
+                json.dumps({"mode": "broadband_passthrough", "effective_wavelength_nm": None}),
+            ], dtype=object),
+            dtype=h5py.string_dtype(),
+        )
 
     with h5py.File(path, "r") as f:
         source = open_full_frame_survey_source(f, path)
@@ -35,6 +43,7 @@ def test_reads_full_frame_survey_3d(tmp_path):
         assert source.descriptor.frame_shape == (3, 4)
         assert source.descriptor.coordinate_frame == "sensor_full_frame"
         assert source.descriptor.mask_ids == ("m0", "m1")
+        assert json.loads(source.descriptor.entry_illumination_json[1])["mode"] == "broadband_passthrough"
         assert source.read_frame(1).shape == (3, 4)
 
 
@@ -61,6 +70,7 @@ def test_reads_full_frame_survey_2d_as_one_entry(tmp_path):
 
         assert source.descriptor.frame_count == 1
         assert source.descriptor.frame_shape == (3, 4)
+        assert json.loads(source.descriptor.entry_illumination_json[0])["mode"] == "unknown"
         assert source.read_frame(0).shape == (3, 4)
         with pytest.raises(ArtifactIOError):
             source.read_frame(1)

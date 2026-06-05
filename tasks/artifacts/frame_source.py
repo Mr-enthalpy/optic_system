@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ class FrameSourceDescriptor:
     camera_frame_extent: CameraFrameExtent
     mask_ids: tuple[str, ...]
     wavelengths_nm: tuple[float, ...]
+    entry_illumination_json: tuple[str, ...]
     source_kind: str
 
     def camera_frame_extent_dict(self) -> dict[str, Any]:
@@ -66,6 +68,9 @@ def open_full_frame_survey_source(h5: h5py.File, source_path: str | Path) -> Fra
         camera_frame_extent=extent,
         mask_ids=tuple(_read_survey_mask_ids(h5, group, frame_count)),
         wavelengths_nm=tuple(_read_survey_wavelengths(h5, group, frame_count)),
+        entry_illumination_json=tuple(
+            _read_survey_illumination_json(h5, group, frame_count)
+        ),
         source_kind="full_frame_survey",
     )
     _validate_lengths(descriptor)
@@ -132,6 +137,19 @@ def _read_survey_wavelengths(h5: h5py.File, group: h5py.Group, n: int) -> list[f
     return [float("nan") for _ in range(n)]
 
 
+def _read_survey_illumination_json(h5: h5py.File, group: h5py.Group, n: int) -> list[str]:
+    for name in ("entry_illumination_json", "illumination_json"):
+        if name in group:
+            return _read_dataset_strings(h5, f"full_frame_survey/{name}", n, "illumination")
+    manifest = read_json_dataset_or_attr(group, "manifest_json")
+    if isinstance(manifest.get("entry_illumination_json"), list):
+        return [str(x) for x in manifest["entry_illumination_json"][:n]]
+    return [
+        json.dumps({"mode": "unknown", "nominal_wavelength_nm": wl}, sort_keys=True)
+        for wl in _read_survey_wavelengths(h5, group, n)
+    ]
+
+
 def _read_dataset_strings(
     h5: h5py.File,
     path: str,
@@ -161,3 +179,5 @@ def _validate_lengths(descriptor: FrameSourceDescriptor) -> None:
         raise ArtifactIOError("mask id count does not match frame count")
     if len(descriptor.wavelengths_nm) != int(descriptor.frame_count):
         raise ArtifactIOError("wavelength count does not match frame count")
+    if len(descriptor.entry_illumination_json) != int(descriptor.frame_count):
+        raise ArtifactIOError("illumination count does not match frame count")

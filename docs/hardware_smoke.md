@@ -249,17 +249,18 @@ Hardware smoke tests verify **control and data integrity only**.
 They do not validate optical alignment, PSF quality, mask-response
 calibration, or any scientific property of the captured frames.
 
-Every raw capture HDF5 produced by Phase 2B records::
+Every current raw capture HDF5 records audit flags equivalent to:
 
 ```json
 {
   "scientific_calibration_valid": false,
   "optical_alignment_validated":   false,
   "training_ready":                false,
-  "phase":                         "phase2_minimal_capture"
+  "raw_capture_schema_version":    2,
+  "capture_role":                  "minimal_capture"
 }
 ```
 
 This remains true even when all hardware tests pass.
-Phase 3 (raw-capture to LCD_forward conversion) will introduce the
-notion of training-ready data when the system is optically configured.
+Later conversion/export steps may introduce training-ready data only when the
+system is optically configured and validated.

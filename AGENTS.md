@@ -422,11 +422,19 @@ Raw capture HDF5 must preserve LCD metadata when available:
 * physical_shape
 * mapping policy (axis-aware)
 
-Raw capture HDF5 produced by Phase 2B must keep ``processing_flags_json`` as::
+Raw capture HDF5 must keep ``processing_flags_json`` audit flags as::
 
   scientific_calibration_valid: false
   optical_alignment_validated:   false
   training_ready:                false
+
+Raw capture writer metadata should use neutral schema terminology:
+
+```text
+software_version: optic_system
+raw_capture_schema_version: integer
+capture_role: minimal_capture | profile_capture | psf_capture | survey_capture
+```
 
 Passing hardware smoke tests does **not** imply the optical system is
 calibrated or scientifically valid.
@@ -607,9 +615,7 @@ Completed:
 Current mainline priority:
 
 1. Validate the Phase 3A-H profile-driven calibration chain on real hardware.
-2. Accelerate `PeakSupportAnalysisReport` on real full-frame data.
-3. Add streaming / energy-only support analysis for large surveys.
-4. Define real-data presets for support analysis.
-5. Build `SupportCandidateStabilityReport`.
-6. Promote only stable support candidates into `AdaptivePeakLayoutProfile`.
-7. Build `AdaptivePeakClusterPSFDictionary`.
+2. Build `SupportCandidateStabilityReport`.
+3. Promote only stable support candidates into `AdaptivePeakLayoutProfile`.
+4. Build `AdaptivePeakClusterPSFDictionary`.
+5. Apply hardware-data-driven profile task fixes.

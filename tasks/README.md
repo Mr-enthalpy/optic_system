@@ -2,10 +2,6 @@
 
 ## Purpose
 
-Some historical task files came from early experiments; active task files are
-listed below. Do not revive removed or unaudited legacy task logic without
-explicit audit.
-
 This document is an index of implemented task modules. Roadmap phase structure
 lives in [`../docs/roadmap.md`](../docs/roadmap.md). Profile-chain operational
 rules live in
@@ -22,6 +18,9 @@ Each task file should carry one of the following status labels:
 | **experimental** | Prototype code that may contain useful patterns but has not been audited against current architecture rules. |
 | **legacy** | Code from earlier project phases that is no longer maintained. May bypass current boundaries or lack metadata preservation. |
 | **deprecated** | Should never be used. Depends on removed or unsupported paths such as pywinauto TLS automation. |
+
+Historical task files, if present, belong under `legacy`, `experimental`, or
+`deprecated` status and must not be revived without explicit audit.
 
 ## Audit Criteria
 
