@@ -32,7 +32,7 @@ broadband pass-through camera calibration
 
 `wavelength_nm: 0.0` remains a compatibility encoding for TLS zero-order
 broadband pass-through in capture plans. Task internals should normalize it to
-`IlluminationSpec(mode="broadband_passthrough")`.
+`tasks.illumination.IlluminationSpec(mode="broadband_passthrough")`.
 
 Do not call `set_wavelength(0)` or `set_wavelength_nm(0)`. The `tls_c1`
 high-level API exposes pass-through as a separate operation, and task code must

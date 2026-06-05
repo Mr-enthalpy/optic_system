@@ -8,7 +8,13 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from .camera_profile import MONOCHROMATIC, PER_BAND_PUPIL_OPEN, CameraProfile, IlluminationSpec, PerWavelengthCameraSettings
+from .camera_profile import (
+    MONOCHROMATIC,
+    PER_BAND_PUPIL_OPEN,
+    CameraProfile,
+    CameraProfileIllumination,
+    PerWavelengthCameraSettings,
+)
 from .exposure_search import (
     ExposureCandidate,
     ExposureGainSearchConfig,
@@ -195,7 +201,7 @@ def calibrate_per_band_pupil_open_camera_profile(
     profile = CameraProfile(
         camera_profile_id=plan.camera_profile_id,
         profile_family=PER_BAND_PUPIL_OPEN,
-        illumination=IlluminationSpec(
+        illumination=CameraProfileIllumination(
             mode=MONOCHROMATIC,
             wavelengths_nm=wavelengths_nm,
         ),

@@ -22,7 +22,9 @@ class ProfileError(ValueError):
 
 
 @dataclass
-class IlluminationSpec:
+class CameraProfileIllumination:
+    """Illumination schema for CameraProfile artifacts, not runtime TLS control."""
+
     mode: str
     tls_setpoint_nm: float | None = None
     effective_wavelength_nm: float | None = None
@@ -30,7 +32,7 @@ class IlluminationSpec:
     source: str | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> IlluminationSpec:
+    def from_dict(cls, d: dict[str, Any]) -> CameraProfileIllumination:
         wavelengths = d.get("wavelengths_nm") or []
         if not isinstance(wavelengths, list):
             raise ProfileError("illumination.wavelengths_nm must be a list")
@@ -135,7 +137,7 @@ class PerWavelengthCameraSettings:
 class CameraProfile:
     camera_profile_id: str
     profile_family: str
-    illumination: IlluminationSpec
+    illumination: CameraProfileIllumination
     lcd_state: dict[str, Any]
     valid_for: list[str]
     per_wavelength: dict[str, PerWavelengthCameraSettings] = field(default_factory=dict)
@@ -153,7 +155,9 @@ class CameraProfile:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CameraProfile:
         profile_family = _require_str(d, "profile_family")
-        illumination = IlluminationSpec.from_dict(_require_dict(d, "illumination"))
+        illumination = CameraProfileIllumination.from_dict(
+            _require_dict(d, "illumination")
+        )
         camera_block = _optional_dict(d.get("camera")) or {}
         per_wavelength_raw = (
             d.get("per_wavelength")
