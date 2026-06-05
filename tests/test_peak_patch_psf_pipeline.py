@@ -18,6 +18,7 @@ from tasks.psf import (
     export_peak_patch_dictionary_to_lcd_forward,
     render_peak_patch_dense_view,
 )
+from tasks.psf.derive_peak_layout_profile import PeakLayoutProfileError
 from tasks.raw_capture_h5 import RawCaptureWriter
 
 
@@ -201,6 +202,17 @@ def test_full_frame_survey_defaults_to_confirmed_full_sensor(tmp_path: Path) -> 
             output_h5=tmp_path / "survey.h5",
             pupil_profile_manifest=pupil_manifest,
             camera_profile_manifest=camera_manifest,
+        )
+
+
+def test_peak_layout_rejects_raw_frames_avg_input(tmp_path: Path) -> None:
+    raw_path = _raw_psf_capture(tmp_path, sensor_shape_hw=[20, 20])
+
+    with pytest.raises(PeakLayoutProfileError, match="full_frame_survey/frames_avg"):
+        derive_peak_layout_profile(
+            survey_h5=raw_path,
+            output_json=tmp_path / "peak_layout.json",
+            peak_layout_id="peak_layout_v1",
         )
 
 
