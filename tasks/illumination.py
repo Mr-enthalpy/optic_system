@@ -14,7 +14,6 @@ class IlluminationSpec:
     effective_wavelength_nm: float | None
     tls_setpoint_nm: float | None
     wavelength_label_nm: float | None = None
-    source_encoding: str | None = None
 
     def __post_init__(self) -> None:
         mode = str(self.mode)
@@ -54,7 +53,6 @@ class IlluminationSpec:
             "effective_wavelength_nm": self.effective_wavelength_nm,
             "tls_setpoint_nm": self.tls_setpoint_nm,
             "wavelength_label_nm": self.wavelength_label_nm,
-            "source_encoding": self.source_encoding,
         }
 
     @classmethod
@@ -67,51 +65,23 @@ class IlluminationSpec:
             effective_wavelength_nm=data.get("effective_wavelength_nm"),
             tls_setpoint_nm=data.get("tls_setpoint_nm"),
             wavelength_label_nm=data.get("wavelength_label_nm"),
-            source_encoding=(
-                str(data["source_encoding"])
-                if data.get("source_encoding") is not None else None
-            ),
         )
 
-    def compatibility_wavelength_nm(self) -> float:
-        if self.is_broadband_passthrough:
-            return 0.0
-        if self.effective_wavelength_nm is not None:
-            return float(self.effective_wavelength_nm)
-        if self.wavelength_label_nm is not None:
-            return float(self.wavelength_label_nm)
-        raise IlluminationSpecError(
-            "illumination spec has no legacy-compatible wavelength_nm"
-        )
+def illumination_nominal_wavelength_nm(spec: IlluminationSpec) -> float:
+    """Internal row-label value for tables that still store wavelength columns."""
+    if spec.is_broadband_passthrough:
+        return 0.0
+    if spec.effective_wavelength_nm is not None:
+        return float(spec.effective_wavelength_nm)
+    if spec.wavelength_label_nm is not None:
+        return float(spec.wavelength_label_nm)
+    raise IlluminationSpecError("illumination spec has no wavelength label")
 
 
-def illumination_from_legacy_wavelength_nm(value: float) -> IlluminationSpec:
-    wavelength = float(value)
-    if wavelength < 0.0:
-        raise IlluminationSpecError("wavelength_nm must be non-negative")
-    if wavelength == 0.0:
-        return IlluminationSpec(
-            mode="broadband_passthrough",
-            effective_wavelength_nm=None,
-            tls_setpoint_nm=0.0,
-            wavelength_label_nm=None,
-            source_encoding="legacy_wavelength_nm_zero_passthrough",
-        )
-    return IlluminationSpec(
-        mode="monochromatic",
-        effective_wavelength_nm=wavelength,
-        tls_setpoint_nm=wavelength,
-        wavelength_label_nm=wavelength,
-        source_encoding="legacy_wavelength_nm",
-    )
-
-
-def normalize_illumination_spec(data: Mapping[str, Any] | float | int) -> IlluminationSpec:
-    if isinstance(data, (float, int)):
-        return illumination_from_legacy_wavelength_nm(float(data))
+def normalize_illumination_spec(data: Mapping[str, Any]) -> IlluminationSpec:
     if not isinstance(data, Mapping):
         raise IlluminationSpecError(
-            f"illumination spec must be mapping or wavelength number, got {type(data).__name__}"
+            f"illumination spec must be mapping, got {type(data).__name__}"
         )
     if "illumination" in data:
         illum = data["illumination"]
@@ -121,8 +91,10 @@ def normalize_illumination_spec(data: Mapping[str, Any] | float | int) -> Illumi
     if "mode" in data:
         return IlluminationSpec.from_dict(data)
     if "wavelength_nm" in data:
-        return illumination_from_legacy_wavelength_nm(float(data["wavelength_nm"]))
-    raise IlluminationSpecError("expected illumination mapping or wavelength_nm")
+        raise IlluminationSpecError(
+            "wavelength_nm compatibility input is no longer supported; use illumination"
+        )
+    raise IlluminationSpecError("expected illumination mapping")
 
 
 def apply_illumination_to_tls(

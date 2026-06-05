@@ -92,7 +92,14 @@ def test_hardware_lcd_service_gets_status_dir(monkeypatch, tmp_path: Path):
     from tasks.capture_plan import CapturePlan
     plan = CapturePlan.from_dict({
         "plan_id": "wire_test",
-        "wavelengths": [{"wavelength_nm": 550}],
+        "wavelengths": [{
+            "illumination": {
+                "mode": "label_only",
+                "effective_wavelength_nm": 550.0,
+                "tls_setpoint_nm": None,
+                "wavelength_label_nm": 550.0,
+            }
+        }],
         "masks": [{"mask_id": "m1"}],
         "camera": {"height": 60, "width": 60, "frames_per_capture": 2},
         "lcd_settle_ms": 0,
@@ -147,7 +154,13 @@ def test_hardware_tls_service_gets_status_dir(monkeypatch, tmp_path: Path):
     from tasks.capture_plan import CapturePlan
     plan = CapturePlan.from_dict({
         "plan_id": "tls_wire_test",
-        "wavelengths": [{"wavelength_nm": 550}],
+        "wavelengths": [{
+            "illumination": {
+                "mode": "monochromatic",
+                "effective_wavelength_nm": 550.0,
+                "tls_setpoint_nm": 550.0,
+            }
+        }],
         "masks": [{"mask_id": "m1"}],
         "camera": {"height": 60, "width": 60, "frames_per_capture": 2},
         "lcd_settle_ms": 0,

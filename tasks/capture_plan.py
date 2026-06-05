@@ -10,6 +10,7 @@ import numpy as np
 from .illumination import (
     IlluminationSpec,
     IlluminationSpecError,
+    illumination_nominal_wavelength_nm,
     normalize_illumination_spec,
 )
 
@@ -29,15 +30,12 @@ class CameraCaptureConfig:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CameraCaptureConfig:
-        extent_value = (
-            d.get("frame_extent")
-            if "frame_extent" in d
-            else d.get("camera_frame_extent")
-        )
-        if extent_value is None and "camera_roi" in d:
-            extent_value = d.get("camera_roi")
-        if extent_value is None and "roi" in d:
-            extent_value = d.get("roi")
+        if "roi" in d or "camera_roi" in d:
+            raise CapturePlanError(
+                "camera.roi / camera.camera_roi are no longer supported; "
+                "use camera.frame_extent"
+            )
+        extent_value = d.get("frame_extent")
         return cls(
             frames_per_capture=int(d.get("frames_per_capture", 1)),
             average_burst=bool(d.get("average_burst", True)),
@@ -61,21 +59,6 @@ class CameraCaptureConfig:
         if self.trigger_mode is not None:
             result["trigger_mode"] = self.trigger_mode
         return result
-
-    @property
-    def roi(self) -> tuple[int, int, int, int] | None:
-        """Legacy acquisition-ROI alias; use frame_extent for new plans."""
-        if self.frame_extent is None:
-            return None
-        origin = self.frame_extent.get("origin_xy")
-        shape = self.frame_extent.get("shape_hw")
-        if not isinstance(origin, (list, tuple)) or len(origin) != 2:
-            return None
-        if not isinstance(shape, (list, tuple)) or len(shape) != 2:
-            return None
-        x0, y0 = int(origin[0]), int(origin[1])
-        h, w = int(shape[0]), int(shape[1])
-        return (x0, y0, w, h)
 
 
 @dataclass
@@ -125,30 +108,16 @@ class TLSWavelengthEntry:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TLSWavelengthEntry:
+        if "wavelength_nm" in d:
+            raise CapturePlanError(
+                "wavelength_nm compatibility input is no longer supported; use illumination"
+            )
         try:
             spec = normalize_illumination_spec(d)
         except IlluminationSpecError as exc:
             raise CapturePlanError(str(exc)) from exc
-        if "wavelength_nm" in d:
-            wavelength_nm = float(d["wavelength_nm"])
-            if wavelength_nm < 0.0:
-                raise CapturePlanError(
-                    "wavelength_nm must be non-negative; 0.0 is a compatibility "
-                    "encoding for TLS zero-order broadband pass-through"
-                )
-            if "illumination" in d and not np.isclose(
-                wavelength_nm,
-                spec.compatibility_wavelength_nm(),
-                rtol=0.0,
-                atol=1e-12,
-            ):
-                raise CapturePlanError(
-                    "wavelength_nm does not match illumination compatibility encoding"
-                )
-        else:
-            wavelength_nm = spec.compatibility_wavelength_nm()
         return cls(
-            wavelength_nm=float(wavelength_nm),
+            wavelength_nm=illumination_nominal_wavelength_nm(spec),
             grating=_optional_int(d.get("grating")),
             settle_ms=int(d.get("settle_ms", 2000)),
             extra=_optional_dict(d.get("extra")) or {},
@@ -157,7 +126,6 @@ class TLSWavelengthEntry:
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
-            "wavelength_nm": self.wavelength_nm,
             "settle_ms": self.settle_ms,
             "illumination": self.resolved_illumination().to_dict(),
         }
@@ -171,7 +139,12 @@ class TLSWavelengthEntry:
         if self.illumination is not None:
             return self.illumination
         try:
-            return normalize_illumination_spec(float(self.wavelength_nm))
+            return IlluminationSpec(
+                mode="label_only",
+                effective_wavelength_nm=float(self.wavelength_nm),
+                tls_setpoint_nm=None,
+                wavelength_label_nm=float(self.wavelength_nm),
+            )
         except IlluminationSpecError as exc:
             raise CapturePlanError(str(exc)) from exc
 
@@ -283,21 +256,6 @@ class CapturePlan:
                 spec = w.resolved_illumination()
             except IlluminationSpecError as exc:
                 raise CapturePlanError(f"wavelengths[{i}]: {exc}") from exc
-            if w.wavelength_nm < 0:
-                raise CapturePlanError(
-                    f"wavelengths[{i}].wavelength_nm must be non-negative; "
-                    "0.0 requests TLS zero-order pass-through, "
-                    f"got {w.wavelength_nm}"
-                )
-            if not np.isclose(
-                float(w.wavelength_nm),
-                spec.compatibility_wavelength_nm(),
-                rtol=0.0,
-                atol=1e-12,
-            ):
-                raise CapturePlanError(
-                    f"wavelengths[{i}].wavelength_nm does not match illumination"
-                )
             if w.settle_ms < 0:
                 raise CapturePlanError(
                     f"wavelengths[{i}].settle_ms must be >= 0, got {w.settle_ms}"
@@ -404,8 +362,6 @@ def _optional_camera_frame_extent(value: Any) -> dict[str, Any] | None:
     if isinstance(value, dict):
         origin = value.get("origin_xy", [0, 0])
         shape = value.get("shape_hw")
-        if shape is None and {"width", "height"} <= set(value):
-            shape = [value["height"], value["width"]]
         if shape is None:
             raise CapturePlanError("frame_extent.shape_hw is required")
         result: dict[str, Any] = {
@@ -420,28 +376,9 @@ def _optional_camera_frame_extent(value: Any) -> dict[str, Any] | None:
                 _int_pair(sensor_shape, "frame_extent.sensor_shape_hw")
             )
         return result
-    if not isinstance(value, (list, tuple)) or len(value) != 4:
-        raise CapturePlanError(
-            "frame_extent/camera_roi must be a dict or a legacy "
-            f"[x, y, width, height] list, got {type(value).__name__}: {value!r}"
-        )
-    try:
-        x0, y0, width, height = (
-            int(value[0]),
-            int(value[1]),
-            int(value[2]),
-            int(value[3]),
-        )
-    except (TypeError, ValueError):
-        raise CapturePlanError(
-            f"frame_extent/camera_roi elements must be ints, got {value!r}"
-        ) from None
-    return {
-        "mode": "sensor_roi",
-        "origin_xy": [x0, y0],
-        "shape_hw": [height, width],
-        "sensor_shape_hw": None,
-    }
+    raise CapturePlanError(
+        f"camera.frame_extent must be a mapping, got {type(value).__name__}: {value!r}"
+    )
 
 
 def _int_pair(value: Any, name: str) -> tuple[int, int]:

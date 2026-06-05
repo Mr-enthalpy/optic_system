@@ -11,7 +11,6 @@ SUPPORTED_COORDINATE_FRAMES = {"sensor_full_frame", "acquired_frame"}
 CAMERA_FRAME_EXTENT_DATASET_PRIORITY = (
     "frame_extent_json",
     "acquired_frame_extent_json",
-    "roi_json",
 )
 
 
@@ -102,19 +101,6 @@ def camera_frame_extent_from_camera_metadata(
                     fallback_shape=fallback_shape,
                 )
 
-    roi = _normalize_roi_metadata(metadata.get("roi"), fallback_shape=fallback_shape)
-    if roi is None and isinstance(status, Mapping):
-        roi = _normalize_roi_metadata(status.get("roi"), fallback_shape=fallback_shape)
-    if roi is not None:
-        if roi.get("sensor_shape_hw") is None:
-            sensor_shape = _sensor_shape_from_metadata(metadata)
-            if sensor_shape is None and isinstance(status, Mapping):
-                sensor_shape = _sensor_shape_from_metadata(status)
-            if sensor_shape is not None:
-                roi["sensor_shape_hw"] = [int(sensor_shape[0]), int(sensor_shape[1])]
-        roi.setdefault("source", "camera_metadata")
-        return camera_frame_extent_from_dict(roi, fallback_shape=fallback_shape)
-
     shape = _shape_from_metadata(metadata) or fallback_shape
     if shape is None:
         raise ValueError("camera_frame_extent.shape_hw is required")
@@ -155,10 +141,7 @@ def read_camera_frame_extent_from_group(
         for data in _iter_json_dataset_objects(group[name]):
             extent = _normalize_extent_payload(
                 data,
-                source=(
-                    "legacy_roi_json"
-                    if name == "roi_json" else f"camera/{name}"
-                ),
+                source=f"camera/{name}",
                 fallback_shape=fallback_shape,
             )
             if extent is not None:
@@ -178,14 +161,8 @@ def read_camera_frame_extent_from_group(
                 except ValueError:
                     continue
 
-    if fallback_shape is None:
-        raise ValueError("camera_frame_extent.shape_hw is required")
-    return CameraFrameExtent(
-        mode="unknown",
-        origin_xy=(0, 0),
-        shape_hw=(int(fallback_shape[0]), int(fallback_shape[1])),
-        sensor_shape_hw=None,
-        source="fallback_from_frame_shape",
+    raise ValueError(
+        "camera frame extent metadata not found; expected /camera/frame_extent_json"
     )
 
 
@@ -243,46 +220,6 @@ def _extent_from_possible_json(value: Any) -> dict[str, Any] | None:
     return None
 
 
-def _normalize_roi_metadata(
-    roi: Any,
-    *,
-    fallback_shape: tuple[int, int] | None,
-) -> dict[str, Any] | None:
-    if roi is None:
-        return None
-    if isinstance(roi, Mapping):
-        if {"mode", "origin_xy", "shape_hw"} & set(roi):
-            data = dict(roi)
-            data.setdefault("mode", "sensor_roi")
-            return data
-        x0 = roi.get("x", roi.get("offset_x", roi.get("origin_x", 0)))
-        y0 = roi.get("y", roi.get("offset_y", roi.get("origin_y", 0)))
-        width = roi.get("width", roi.get("w"))
-        height = roi.get("height", roi.get("h"))
-        sensor_shape = roi.get("sensor_shape_hw")
-        if sensor_shape is None and {"sensor_height", "sensor_width"} <= set(roi):
-            sensor_shape = [roi["sensor_height"], roi["sensor_width"]]
-        if width is None or height is None:
-            if fallback_shape is None:
-                return None
-            height, width = fallback_shape
-        return {
-            "mode": "sensor_roi",
-            "origin_xy": [int(x0), int(y0)],
-            "shape_hw": [int(height), int(width)],
-            "sensor_shape_hw": sensor_shape,
-        }
-    if isinstance(roi, (list, tuple)) and len(roi) == 4:
-        x0, y0, width, height = roi
-        return {
-            "mode": "sensor_roi",
-            "origin_xy": [int(x0), int(y0)],
-            "shape_hw": [int(height), int(width)],
-            "sensor_shape_hw": None,
-        }
-    return None
-
-
 def _shape_from_metadata(metadata: Mapping[str, Any]) -> tuple[int, int] | None:
     for key in ("shape_hw", "frame_shape", "acquired_shape_hw"):
         value = metadata.get(key)
@@ -334,7 +271,4 @@ def _normalize_extent_payload(
         extent = dict(data)
         extent.setdefault("source", source)
         return extent
-    extent = _normalize_roi_metadata(data, fallback_shape=fallback_shape)
-    if extent is not None:
-        extent.setdefault("source", source)
-    return extent
+    return None

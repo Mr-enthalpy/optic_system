@@ -16,7 +16,7 @@ from tasks.capture_forward_dataset import (
     run_capture_forward_dataset,
 )
 from tasks.capture_plan import CapturePlan
-from tasks.illumination import IlluminationSpec, illumination_from_legacy_wavelength_nm
+from tasks.illumination import IlluminationSpec
 from tasks.profiles import BroadbandCameraCalibrationPlan, calibrate_broadband_camera_profile
 from tasks.runtime_mode import (
     RuntimeModeError,
@@ -57,10 +57,33 @@ class DummyLCD:
 def _plan_dict() -> dict:
     return {
         "plan_id": "runtime_mode_capture",
-        "wavelengths": [{"wavelength_nm": 532.0}],
+        "wavelengths": [
+            {
+                "illumination": {
+                    "mode": "label_only",
+                    "effective_wavelength_nm": 532.0,
+                    "tls_setpoint_nm": None,
+                    "wavelength_label_nm": 532.0,
+                }
+            }
+        ],
         "masks": [{"mask_id": "m0"}],
         "camera": {"frames_per_capture": 2},
     }
+
+
+def _mono_plan_dict() -> dict:
+    data = _plan_dict()
+    data["wavelengths"] = [
+        {
+            "illumination": {
+                "mode": "monochromatic",
+                "effective_wavelength_nm": 532.0,
+                "tls_setpoint_nm": 532.0,
+            }
+        }
+    ]
+    return data
 
 
 def test_hardware_policy_forbids_fake_devices():
@@ -107,7 +130,11 @@ def test_missing_tls_allowed_in_no_hardware_when_no_movement_required():
 
 
 def test_broadband_pass_through_without_tls_rejected_in_hardware_mode():
-    illumination = illumination_from_legacy_wavelength_nm(0.0)
+    illumination = IlluminationSpec(
+        mode="broadband_passthrough",
+        effective_wavelength_nm=None,
+        tls_setpoint_nm=0.0,
+    )
 
     with pytest.raises(RuntimeModeError, match="TLS"):
         validate_tls_for_illumination(
@@ -168,7 +195,7 @@ def test_capture_records_runtime_policy_metadata(tmp_path: Path):
 
 
 def test_positive_wavelength_without_tls_rejected_in_hardware_mode(tmp_path: Path):
-    plan = CapturePlan.from_dict(_plan_dict())
+    plan = CapturePlan.from_dict(_mono_plan_dict())
     devices = SimpleNamespace(camera=DummyCamera(), lcd=DummyLCD(), tls=None)
 
     with pytest.raises(RuntimeModeError, match="TLS"):
