@@ -17,6 +17,10 @@ FullFramePSFSurvey
   -> AdaptivePeakClusterPSFDictionary
 ```
 
+RawCapture HDF5 must be explicitly converted into `FullFramePSFSurvey` before
+deriving this profile. Pre-mainline raw files must be migrated explicitly
+before current measured-artifact analysis.
+
 The profile records:
 
 - `center_xy`: the single global sensor energy center used downstream.

@@ -11,16 +11,10 @@ from .coordinate_frame import (
     CameraFrameExtent,
     camera_frame_extent_from_dict,
     camera_frame_extent_to_dict,
-    read_camera_frame_extent_from_group,
     resolve_coordinate_frame,
 )
 from .errors import ArtifactIOError
 from .json_io import decode_h5_string, read_json_dataset_or_attr
-from tasks.illumination import (
-    IlluminationSpecError,
-    illumination_nominal_wavelength_nm,
-    normalize_illumination_spec,
-)
 
 
 @dataclass(frozen=True)
@@ -76,54 +70,6 @@ def open_full_frame_survey_source(h5: h5py.File, source_path: str | Path) -> Fra
     )
     _validate_lengths(descriptor)
     return FrameSource(h5=h5, dataset=frames, descriptor=descriptor)
-
-
-def open_raw_frames_avg_source(h5: h5py.File, source_path: str | Path) -> FrameSource:
-    if "raw/frames_avg" not in h5:
-        raise ArtifactIOError("missing raw/frames_avg")
-    frames = h5["raw/frames_avg"]
-    frame_count, frame_shape = frame_dataset_count_and_shape(frames)
-    if "camera" in h5:
-        try:
-            extent = read_camera_frame_extent_from_group(
-                h5["camera"],
-                fallback_shape=frame_shape,
-            )
-        except ValueError as exc:
-            raise ArtifactIOError(str(exc)) from exc
-    else:
-        raise ArtifactIOError(
-            "camera frame extent metadata not found; expected /camera/frame_extent_json"
-        )
-    descriptor = FrameSourceDescriptor(
-        source_path=str(source_path),
-        dataset_path="raw/frames_avg",
-        frame_count=frame_count,
-        frame_shape=frame_shape,
-        coordinate_frame=resolve_coordinate_frame(extent),
-        camera_frame_extent=extent,
-        mask_ids=tuple(_read_dataset_strings(h5, "raw/mask_id", frame_count, "entry")),
-        wavelengths_nm=tuple(_read_raw_wavelengths(h5, frame_count)),
-        source_kind="raw_frames_avg",
-    )
-    _validate_lengths(descriptor)
-    return FrameSource(h5=h5, dataset=frames, descriptor=descriptor)
-
-
-def open_survey_or_raw_frame_source(
-    h5: h5py.File,
-    source_path: str | Path,
-    *,
-    allow_raw_fallback: bool,
-) -> FrameSource:
-    if "full_frame_survey/frames_avg" in h5:
-        return open_full_frame_survey_source(h5, source_path)
-    if allow_raw_fallback and "raw/frames_avg" in h5:
-        return open_raw_frames_avg_source(h5, source_path)
-    raise ArtifactIOError(
-        "frame source requires full_frame_survey/frames_avg; pass "
-        "allow_raw_fallback=True only for legacy/dev raw/frames_avg inputs"
-    )
 
 
 def frame_dataset_count_and_shape(dataset: h5py.Dataset) -> tuple[int, tuple[int, int]]:
@@ -183,30 +129,6 @@ def _read_survey_wavelengths(h5: h5py.File, group: h5py.Group, n: int) -> list[f
     manifest = read_json_dataset_or_attr(group, "manifest_json")
     if isinstance(manifest.get("entry_wavelengths_nm"), list):
         return [float(x) for x in manifest["entry_wavelengths_nm"][:n]]
-    return [float("nan") for _ in range(n)]
-
-
-def _read_raw_wavelengths(h5: h5py.File, n: int) -> list[float]:
-    if "raw/wavelength_nm" in h5:
-        return [float(x) for x in np.asarray(h5["raw/wavelength_nm"], dtype=np.float64)[:n]]
-    if "raw/wavelength_index" in h5 and "capture/plan_json" in h5:
-        plan = read_json_dataset_or_attr(h5["capture"], "plan_json")
-        wavelengths = plan.get("wavelengths")
-        if isinstance(wavelengths, list) and wavelengths:
-            unique = []
-            for item in wavelengths:
-                try:
-                    spec = normalize_illumination_spec(item)
-                    unique.append(illumination_nominal_wavelength_nm(spec))
-                except (IlluminationSpecError, TypeError, ValueError) as exc:
-                    raise ArtifactIOError(
-                        "raw plan_json wavelength entries must use illumination"
-                    ) from exc
-            indices = np.asarray(h5["raw/wavelength_index"], dtype=np.int64)
-            return [unique[int(i)] for i in indices[:n]]
-        wavelength = plan.get("wavelength")
-        if isinstance(wavelength, dict) and wavelength.get("wavelength_nm") is not None:
-            return [float(wavelength["wavelength_nm"]) for _ in range(n)]
     return [float("nan") for _ in range(n)]
 
 

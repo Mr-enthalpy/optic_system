@@ -54,11 +54,6 @@ def main() -> int:
         help="Compute energy metrics only and intentionally skip the connected-component table.",
     )
     parser.add_argument(
-        "--allow-raw-fallback",
-        action="store_true",
-        help="Allow legacy/dev raw/frames_avg inputs instead of a FullFramePSFSurvey.",
-    )
-    parser.add_argument(
         "--center-policy",
         choices=("frame_center", "manual_xy", "brightest_component", "sensor_energy_center_profile"),
         default="frame_center",
@@ -91,7 +86,6 @@ def main() -> int:
         center_policy=args.center_policy,
         manual_center_xy=tuple(args.manual_center_xy) if args.manual_center_xy is not None else None,
         center_profile=args.center_profile,
-        allow_raw_fallback=bool(args.allow_raw_fallback),
         energy_only=bool(args.energy_only),
         preset_name=args.preset,
         notes=args.notes,

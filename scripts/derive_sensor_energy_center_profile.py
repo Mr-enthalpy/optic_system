@@ -30,18 +30,7 @@ def main() -> int:
         default=None,
         help="JSON valid-pixel-domain policy, e.g. '{\"type\":\"exclude_top_rows\",\"top_rows\":16}'.",
     )
-    parser.add_argument(
-        "--allow-raw-fallback",
-        action="store_true",
-        help="Allow legacy/dev raw/frames_avg inputs instead of a FullFramePSFSurvey.",
-    )
     parser.add_argument("--notes")
-    parser.add_argument(
-        "--runtime-mode",
-        choices=("hardware", "no_hardware", "synthetic", "diagnostic"),
-        default="diagnostic",
-        help="runtime validation mode; diagnostic is the default for analysis scripts",
-    )
     args = parser.parse_args()
 
     _ensure_repo_on_path()
@@ -56,9 +45,7 @@ def main() -> int:
             json.loads(args.valid_pixel_domain_json)
             if args.valid_pixel_domain_json is not None else None
         ),
-        allow_raw_fallback=bool(args.allow_raw_fallback),
         notes=args.notes,
-        runtime_policy=args.runtime_mode,
     )
     print(profile.to_json())
     return 0

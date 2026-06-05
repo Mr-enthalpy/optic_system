@@ -14,12 +14,7 @@ from tasks.artifacts.coordinate_frame import (
     validate_coordinate_frame_descriptor,
 )
 from tasks.artifacts.errors import ArtifactIOError
-from tasks.artifacts.frame_source import open_survey_or_raw_frame_source
-from tasks.runtime_mode import (
-    RuntimePolicy,
-    normalize_runtime_policy,
-    validate_raw_fallback_allowed,
-)
+from tasks.artifacts.frame_source import open_full_frame_survey_source
 
 
 class SensorEnergyCenterError(ValueError):
@@ -221,15 +216,8 @@ def derive_sensor_energy_center_profile(
     bg_percentile: float = 5.0,
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
-    allow_raw_fallback: bool = False,
     notes: str | None = None,
-    runtime_policy: RuntimePolicy | str | None = None,
 ) -> SensorEnergyCenterProfile:
-    policy = normalize_runtime_policy(runtime_policy)
-    validate_raw_fallback_allowed(
-        allow_raw_fallback=allow_raw_fallback,
-        policy=policy,
-    )
     source_path = Path(survey_h5)
     output_path = Path(output_json)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,13 +226,12 @@ def derive_sensor_energy_center_profile(
 
     with h5py.File(str(source_path), "r") as f:
         try:
-            source = open_survey_or_raw_frame_source(
-                f,
-                source_path,
-                allow_raw_fallback=allow_raw_fallback,
-            )
+            source = open_full_frame_survey_source(f, source_path)
         except ArtifactIOError as exc:
-            raise SensorEnergyCenterError(str(exc)) from exc
+            raise SensorEnergyCenterError(
+                "SensorEnergyCenterProfile requires FullFramePSFSurvey; "
+                "convert raw capture to survey first"
+            ) from exc
         descriptor = source.descriptor
         resolved_valid_mask = _valid_mask_from_domain(
             descriptor.frame_shape,

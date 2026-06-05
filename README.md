@@ -126,10 +126,10 @@ wavelength, and task code must call `TLSService.set_pass_through()`.
 
 Runtime mode is explicit for capture, profile, and diagnostic task entry
 points. Real hardware tasks default to hardware runtime mode. Fake devices,
-missing required hardware, raw fallback, and test-settle overrides must be
-explicit non-hardware/diagnostic choices. No-TLS positive wavelength labels are
-allowed only in non-hardware contexts. TLS zero-order pass-through requires a
-real TLS adapter in hardware mode.
+missing required hardware, diagnostic-only shortcuts, and test-settle overrides
+must be explicit non-hardware/diagnostic choices. No-TLS positive wavelength
+labels are allowed only in non-hardware contexts. TLS zero-order pass-through
+requires a real TLS adapter in hardware mode.
 
 ## Relationship with LCD_forward
 
@@ -213,6 +213,11 @@ FullFramePSFSurvey
   -> future AdaptivePeakLayoutProfile
   -> future AdaptivePeakClusterPSFDictionary
 ```
+
+Measured-artifact analysis tasks consume `FullFramePSFSurvey`. RawCapture HDF5
+must be explicitly converted into `FullFramePSFSurvey` before sensor-center,
+support, or layout analysis. Pre-mainline raw files must be migrated explicitly
+before current measured-artifact analysis.
 
 The profile-driven calibration chain is documented in
 [`docs/profile_task_chain.md`](docs/profile_task_chain.md). Each stage

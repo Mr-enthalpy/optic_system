@@ -18,8 +18,17 @@ FullFramePSFSurvey
 
 Support analysis consumes the survey and writes a separate report. It does not
 modify `PeakLayoutProfile` and does not run `LCD_forward` validation. The
-formal mainline input is `FullFramePSFSurvey`; the CLI and loader expose an
-explicit raw-HDF5 fallback only as a legacy/development convenience.
+formal mainline input is `FullFramePSFSurvey`.
+
+RawCapture HDF5 must be explicitly converted into `FullFramePSFSurvey` before
+support analysis:
+
+```text
+RawCapture HDF5
+  -> FullFramePSFSurvey
+  -> SensorEnergyCenterProfile
+  -> PeakSupportAnalysisReport
+```
 
 The report preserves the survey coordinate semantics. If the survey
 `camera_frame_extent.mode` is `full_sensor`, coordinates are reported as
@@ -164,27 +173,17 @@ python scripts/analyze_diffraction_support.py survey.h5 support_energy_only.h5 \
   --energy-only
 ```
 
-For legacy Phase 3 raw HDF5 inputs that do not yet have a formal
-`FullFramePSFSurvey` wrapper:
-
-```bash
-python scripts/analyze_diffraction_support.py raw.h5 support_energy_only.h5 \
-  --allow-raw-fallback \
-  --preset measured_full_frame_2048 \
-  --energy-only
-```
-
 The report is no-hardware and read-only with respect to the source survey.
-Use `--allow-raw-fallback` only for legacy or development diagnostics that do
-not yet have a `FullFramePSFSurvey` artifact.
+Pre-mainline raw files must be migrated explicitly before current
+measured-artifact analysis.
 
 ## Real-Data Lessons
 
 Issue #62 records the first mainline trial on real Phase 3 full-frame PSF data.
 The useful conclusions are general rules for the mainline pipeline:
 
-- The formal input remains `FullFramePSFSurvey`. Raw HDF5 fallback is useful for
-  legacy diagnostics, but it should not become the production boundary.
+- The formal input is `FullFramePSFSurvey`. RawCapture HDF5 remains acquisition
+  data and must be converted before measured-artifact analysis.
 - Synthetic defaults should not be treated as real-data defaults. In
   2048 x 2448 full-frame data, `min_component_area=1` can generate very large
   component tables dominated by tiny noise components. Real-data presets should

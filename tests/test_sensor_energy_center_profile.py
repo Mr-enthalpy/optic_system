@@ -229,21 +229,16 @@ def test_valid_pixel_domain_excludes_contaminating_region(tmp_path: Path) -> Non
     }
 
 
-def test_raw_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:
+def test_rejects_raw_frames_avg_input(tmp_path: Path) -> None:
     raw_h5 = tmp_path / "raw.h5"
     frame = _gaussian_frame((16, 20), center_xy=(8.0, 6.0))
     _write_raw_frames(raw_h5, frame)
 
-    with pytest.raises(SensorEnergyCenterError, match="full_frame_survey"):
+    with pytest.raises(
+        SensorEnergyCenterError,
+        match="SensorEnergyCenterProfile requires FullFramePSFSurvey",
+    ):
         derive_sensor_energy_center_profile(raw_h5, tmp_path / "center.json")
-
-    profile = derive_sensor_energy_center_profile(
-        raw_h5,
-        tmp_path / "center.json",
-        allow_raw_fallback=True,
-        runtime_policy="diagnostic",
-    )
-    assert profile.coordinate_frame == "sensor_full_frame"
 
 
 def test_support_analysis_uses_sensor_energy_center_profile_for_radius(tmp_path: Path) -> None:

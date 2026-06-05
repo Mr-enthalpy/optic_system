@@ -11,23 +11,14 @@ import numpy as np
 from tasks.artifacts.errors import ArtifactIOError
 from tasks.artifacts.frame_source import (
     frame_dataset_count_and_shape as _shared_frame_dataset_count_and_shape,
-    open_survey_or_raw_frame_source,
+    open_full_frame_survey_source,
     read_frame_entry as _shared_read_frame_entry,
 )
 from tasks.artifacts.json_io import (
     decode_h5_string,
     read_json_dataset_or_attr as _shared_read_json_dataset_or_attr,
 )
-from tasks.runtime_mode import (
-    RuntimePolicy,
-    normalize_runtime_policy,
-    validate_raw_fallback_allowed,
-)
-from tasks.illumination import (
-    IlluminationSpecError,
-    illumination_nominal_wavelength_nm,
-    normalize_illumination_spec,
-)
+from tasks.runtime_mode import RuntimePolicy
 
 from .sensor_energy_center import (
     SensorEnergyCenterError,
@@ -142,17 +133,11 @@ def analyze_diffraction_support(
     manual_center_xy: tuple[float, float] | None = None,
     center_profile: str | Path | SensorEnergyCenterProfile | None = None,
     valid_pixel_domain: dict[str, Any] | None = None,
-    allow_raw_fallback: bool = False,
     energy_only: bool = False,
     preset_name: str | None = None,
     notes: str | None = None,
     runtime_policy: RuntimePolicy | str | None = None,
 ) -> PeakSupportAnalysisManifest:
-    policy = normalize_runtime_policy(runtime_policy)
-    validate_raw_fallback_allowed(
-        allow_raw_fallback=allow_raw_fallback,
-        policy=policy,
-    )
     source_path = Path(survey_h5)
     out_path = Path(output_h5)
     preset = _support_analysis_preset(preset_name)
@@ -197,7 +182,7 @@ def analyze_diffraction_support(
 
     component_rows: list[dict[str, Any]] = []
     with h5py.File(str(source_path), "r") as source_file:
-        frames, survey = _open_survey_frame_source(source_file, allow_raw_fallback=allow_raw_fallback)
+        frames, survey = _open_survey_frame_source(source_file)
         if center_profile_obj is not None:
             try:
                 validate_center_profile_for_frame_source(
@@ -339,17 +324,11 @@ def analyze_diffraction_support(
 def load_full_frame_psf_survey(
     path: str | Path,
     *,
-    allow_raw_fallback: bool = False,
     runtime_policy: RuntimePolicy | str | None = None,
 ) -> SurveyData:
-    policy = normalize_runtime_policy(runtime_policy)
-    validate_raw_fallback_allowed(
-        allow_raw_fallback=allow_raw_fallback,
-        policy=policy,
-    )
     source_path = Path(path)
     with h5py.File(str(source_path), "r") as f:
-        frames_ds, metadata = _open_survey_frame_source(f, allow_raw_fallback=allow_raw_fallback)
+        frames_ds, metadata = _open_survey_frame_source(f)
         frames = np.asarray(frames_ds, dtype=np.float64)
     frames = _normalize_frames(frames)
     return SurveyData(
@@ -364,18 +343,13 @@ def load_full_frame_psf_survey(
 
 def _open_survey_frame_source(
     f: h5py.File,
-    *,
-    allow_raw_fallback: bool = False,
 ) -> tuple[h5py.Dataset, SurveyMetadata]:
     try:
-        source = open_survey_or_raw_frame_source(
-            f,
-            getattr(f, "filename", ""),
-            allow_raw_fallback=allow_raw_fallback,
-        )
+        source = open_full_frame_survey_source(f, getattr(f, "filename", ""))
     except ArtifactIOError as exc:
         raise DiffractionSupportAnalysisError(
-            str(exc)
+            "PeakSupportAnalysisReport requires FullFramePSFSurvey; "
+            "convert raw capture to survey first"
         ) from exc
     descriptor = source.descriptor
     return source.dataset, SurveyMetadata(
@@ -864,27 +838,6 @@ def _read_survey_wavelengths(f: h5py.File, group: h5py.Group, n: int) -> list[fl
     return [float("nan") for _ in range(n)]
 
 
-def _read_raw_wavelengths(f: h5py.File, n: int) -> list[float]:
-    if "raw/wavelength_nm" in f:
-        return [float(x) for x in np.asarray(f["raw/wavelength_nm"], dtype=np.float64)[:n]]
-    if "raw/wavelength_index" in f and "capture/plan_json" in f:
-        plan = _read_json_dataset(f, "capture/plan_json")
-        wavelengths = plan.get("wavelengths")
-        if isinstance(wavelengths, list) and wavelengths:
-            unique = []
-            for item in wavelengths:
-                try:
-                    spec = normalize_illumination_spec(item)
-                    unique.append(illumination_nominal_wavelength_nm(spec))
-                except (IlluminationSpecError, TypeError, ValueError) as exc:
-                    raise DiffractionSupportAnalysisError(
-                        "raw plan_json wavelength entries must use illumination"
-                    ) from exc
-            indices = np.asarray(f["raw/wavelength_index"], dtype=np.int64)
-            return [unique[int(i)] for i in indices[:n]]
-    return [float("nan") for _ in range(n)]
-
-
 def _coordinate_frame_from_manifest_or_extent(
     manifest: dict[str, Any],
     extent: dict[str, Any],
@@ -906,12 +859,6 @@ def _read_dataset_strings(f: h5py.File, path: str, n: int, fallback_prefix: str)
         return [f"{fallback_prefix}_{i:04d}" for i in range(n)]
     values = f[path][()]
     return [_decode(x) for x in values[:n]]
-
-
-def _read_json_dataset(f: h5py.File, path: str) -> dict[str, Any]:
-    value = f[path][()]
-    text = _decode(value)
-    return json.loads(text) if text else {}
 
 
 def _read_json_dataset_or_attr(group: h5py.Group, name: str) -> dict[str, Any]:
