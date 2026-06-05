@@ -283,12 +283,17 @@ coordinate-frame helpers. New measured-artifact modules should use this layer
 instead of reimplementing frame-source parsing, manifest JSON handling, or
 coordinate validation.
 
+Measured-artifact analysis tasks consume `FullFramePSFSurvey`. RawCapture HDF5
+must be explicitly converted into `FullFramePSFSurvey` before sensor-center,
+support, or layout analysis. Pre-mainline raw files must be migrated explicitly
+before current measured-artifact analysis.
+
 Runtime mode is explicit for capture, profile, and diagnostic task entry
 points. Real hardware tasks default to hardware runtime mode. Fake devices,
-missing required hardware, raw fallback, and test-settle overrides must be
-explicit non-hardware/diagnostic choices. No-TLS positive wavelength labels are
-allowed only in non-hardware contexts. TLS zero-order pass-through requires a
-real TLS adapter in hardware mode.
+missing required hardware, diagnostic-only shortcuts, and test-settle overrides
+must be explicit non-hardware/diagnostic choices. No-TLS positive wavelength
+labels are allowed only in non-hardware contexts. TLS zero-order pass-through
+requires a real TLS adapter in hardware mode.
 
 Before reusing any old task:
 

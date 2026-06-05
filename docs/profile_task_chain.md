@@ -63,10 +63,10 @@ Pass-through is a device-control mode, not a physical wavelength. Wavelength
 labels without TLS are not equivalent to pass-through.
 
 Real hardware tasks default to hardware runtime mode. Fake devices, missing
-required hardware, raw fallback, and test-settle overrides must be explicit
-non-hardware/diagnostic choices. No-TLS positive wavelength labels are allowed
-only in non-hardware contexts. TLS zero-order pass-through requires a real TLS
-adapter in hardware mode.
+required hardware, diagnostic-only shortcuts, and test-settle overrides must be
+explicit non-hardware/diagnostic choices. No-TLS positive wavelength labels are
+allowed only in non-hardware contexts. TLS zero-order pass-through requires a
+real TLS adapter in hardware mode.
 
 ## Exposure Search Policy
 

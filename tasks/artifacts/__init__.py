@@ -14,8 +14,6 @@ from .frame_source import (
     FrameSourceDescriptor,
     frame_dataset_count_and_shape,
     open_full_frame_survey_source,
-    open_raw_frames_avg_source,
-    open_survey_or_raw_frame_source,
     read_frame_entry,
 )
 from .json_io import (
@@ -52,8 +50,6 @@ __all__ = [
     "manifest_from_json_dict",
     "manifest_to_json_dict",
     "open_full_frame_survey_source",
-    "open_raw_frames_avg_source",
-    "open_survey_or_raw_frame_source",
     "read_camera_frame_extent_from_group",
     "read_frame_entry",
     "read_json_dataset_or_attr",

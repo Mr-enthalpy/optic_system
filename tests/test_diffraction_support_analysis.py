@@ -258,24 +258,16 @@ def test_acquired_frame_extent_maps_to_acquired_frame_coordinate_frame(tmp_path:
     assert manifest.camera_frame_extent["mode"] == "sensor_roi"
 
 
-def test_raw_frames_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:
+def test_rejects_raw_frames_avg_input(tmp_path: Path) -> None:
     raw_h5 = tmp_path / "raw.h5"
     report_h5 = tmp_path / "support.h5"
     _write_raw_frames_h5(raw_h5)
 
-    with pytest.raises(DiffractionSupportAnalysisError, match="FullFramePSFSurvey|full_frame_survey"):
+    with pytest.raises(
+        DiffractionSupportAnalysisError,
+        match="PeakSupportAnalysisReport requires FullFramePSFSurvey",
+    ):
         analyze_diffraction_support(raw_h5, report_h5, tau_values=[0.5], support_radii=[10])
-
-    manifest = analyze_diffraction_support(
-        raw_h5,
-        report_h5,
-        tau_values=[0.5],
-        support_radii=[10],
-        allow_raw_fallback=True,
-        runtime_policy="diagnostic",
-    )
-    assert manifest.coordinate_frame == "sensor_full_frame"
-    assert manifest.entry_mask_ids == ["raw_mask"]
 
 
 def test_energy_only_report_skips_component_table_but_keeps_energy_metrics(tmp_path: Path) -> None:

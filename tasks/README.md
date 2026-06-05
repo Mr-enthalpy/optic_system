@@ -58,8 +58,8 @@ scripts/capture_forward_dataset.py
 | `tasks/runtime_mode.py` | **active** | Explicit `hardware`, `no_hardware`, `synthetic`, and `diagnostic` runtime validation policies. |
 
 Real hardware tasks default to hardware runtime mode.
-Fake devices, missing required hardware, raw fallback, and test-settle
-overrides must be explicit non-hardware/diagnostic choices.
+Fake devices, missing required hardware, diagnostic-only shortcuts, and
+test-settle overrides must be explicit non-hardware/diagnostic choices.
 No-TLS positive wavelength labels are allowed only in non-hardware contexts.
 TLS zero-order pass-through requires a real TLS adapter in hardware mode.
 
@@ -94,11 +94,16 @@ Profile-chain hardware rules are centralized in
 |------|--------|---------|
 | `tasks/artifacts/json_io.py` | **active** | Hardware-free JSON and HDF5 string helpers for measured artifacts. |
 | `tasks/artifacts/coordinate_frame.py` | **active** | Shared camera frame extent and coordinate-frame descriptors / validation. |
-| `tasks/artifacts/frame_source.py` | **active** | Shared HDF5 frame-source descriptors for full-frame survey and explicit raw fallback inputs. |
+| `tasks/artifacts/frame_source.py` | **active** | Shared HDF5 frame-source descriptors for `FullFramePSFSurvey` inputs. |
 | `tasks/artifacts/manifest.py` | **active** | Minimal manifest reference dataclasses and JSON helpers. |
 
 New measured-artifact modules should use `tasks/artifacts/` instead of
 reimplementing frame-source parsing or coordinate validation.
+
+Measured-artifact analysis tasks consume `FullFramePSFSurvey`. RawCapture HDF5
+must be explicitly converted into `FullFramePSFSurvey` before sensor-center,
+support, or layout analysis. Pre-mainline raw files must be migrated explicitly
+before current measured-artifact analysis.
 
 Raw capture metadata should use camera frame extent terminology.
 `/camera/frame_extent_json` is the raw HDF5 field. Capture plans must use
