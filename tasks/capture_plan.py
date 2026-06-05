@@ -24,17 +24,26 @@ class CameraCaptureConfig:
     average_burst: bool = True
     exposure_us: float | None = None
     gain_db: float | None = None
-    roi: tuple[int, int, int, int] | None = None
+    frame_extent: dict[str, Any] | None = None
     trigger_mode: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CameraCaptureConfig:
+        extent_value = (
+            d.get("frame_extent")
+            if "frame_extent" in d
+            else d.get("camera_frame_extent")
+        )
+        if extent_value is None and "camera_roi" in d:
+            extent_value = d.get("camera_roi")
+        if extent_value is None and "roi" in d:
+            extent_value = d.get("roi")
         return cls(
             frames_per_capture=int(d.get("frames_per_capture", 1)),
             average_burst=bool(d.get("average_burst", True)),
             exposure_us=_optional_float(d.get("exposure_us")),
             gain_db=_optional_float(d.get("gain_db")),
-            roi=_optional_int_quadruple(d.get("roi")),
+            frame_extent=_optional_camera_frame_extent(extent_value),
             trigger_mode=_optional_str(d.get("trigger_mode")),
         )
 
@@ -47,11 +56,26 @@ class CameraCaptureConfig:
             result["exposure_us"] = self.exposure_us
         if self.gain_db is not None:
             result["gain_db"] = self.gain_db
-        if self.roi is not None:
-            result["roi"] = list(self.roi)
+        if self.frame_extent is not None:
+            result["frame_extent"] = dict(self.frame_extent)
         if self.trigger_mode is not None:
             result["trigger_mode"] = self.trigger_mode
         return result
+
+    @property
+    def roi(self) -> tuple[int, int, int, int] | None:
+        """Legacy acquisition-ROI alias; use frame_extent for new plans."""
+        if self.frame_extent is None:
+            return None
+        origin = self.frame_extent.get("origin_xy")
+        shape = self.frame_extent.get("shape_hw")
+        if not isinstance(origin, (list, tuple)) or len(origin) != 2:
+            return None
+        if not isinstance(shape, (list, tuple)) or len(shape) != 2:
+            return None
+        x0, y0 = int(origin[0]), int(origin[1])
+        h, w = int(shape[0]), int(shape[1])
+        return (x0, y0, w, h)
 
 
 @dataclass
@@ -374,18 +398,60 @@ def _optional_dict(value: Any) -> dict[str, Any] | None:
     return None
 
 
-def _optional_int_quadruple(value: Any) -> tuple[int, int, int, int] | None:
+def _optional_camera_frame_extent(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
+    if isinstance(value, dict):
+        origin = value.get("origin_xy", [0, 0])
+        shape = value.get("shape_hw")
+        if shape is None and {"width", "height"} <= set(value):
+            shape = [value["height"], value["width"]]
+        if shape is None:
+            raise CapturePlanError("frame_extent.shape_hw is required")
+        result: dict[str, Any] = {
+            "mode": str(value.get("mode") or "acquired_frame"),
+            "origin_xy": list(_int_pair(origin, "frame_extent.origin_xy")),
+            "shape_hw": list(_int_pair(shape, "frame_extent.shape_hw")),
+            "sensor_shape_hw": None,
+        }
+        sensor_shape = value.get("sensor_shape_hw")
+        if sensor_shape is not None:
+            result["sensor_shape_hw"] = list(
+                _int_pair(sensor_shape, "frame_extent.sensor_shape_hw")
+            )
+        return result
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         raise CapturePlanError(
-            f"roi must be a list or tuple of 4 ints, got {type(value).__name__}: {value!r}"
+            "frame_extent/camera_roi must be a dict or a legacy "
+            f"[x, y, width, height] list, got {type(value).__name__}: {value!r}"
         )
     try:
-        return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))
+        x0, y0, width, height = (
+            int(value[0]),
+            int(value[1]),
+            int(value[2]),
+            int(value[3]),
+        )
     except (TypeError, ValueError):
         raise CapturePlanError(
-            f"roi elements must be ints, got {value!r}"
+            f"frame_extent/camera_roi elements must be ints, got {value!r}"
+        ) from None
+    return {
+        "mode": "sensor_roi",
+        "origin_xy": [x0, y0],
+        "shape_hw": [height, width],
+        "sensor_shape_hw": None,
+    }
+
+
+def _int_pair(value: Any, name: str) -> tuple[int, int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise CapturePlanError(f"{name} must contain two integers")
+    try:
+        return (int(value[0]), int(value[1]))
+    except (TypeError, ValueError):
+        raise CapturePlanError(
+            f"{name} elements must be ints, got {value!r}"
         ) from None
 
 

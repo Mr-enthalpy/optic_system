@@ -188,7 +188,7 @@ camera metadata
 LCD metadata
 TLS metadata
 capture timing metadata
-ROI metadata
+camera frame extent / acquired-frame extent metadata
 processing flags
 ```
 
