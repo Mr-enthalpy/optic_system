@@ -153,6 +153,12 @@ def validate_tls_for_illumination(
         raise RuntimeModeError(
             "illumination requires TLS movement/pass-through in this runtime mode"
         )
+    is_monochromatic = bool(getattr(illumination, "is_monochromatic", False))
+    if is_monochromatic and getattr(illumination, "tls_setpoint_nm", None) is None:
+        if policy.mode == RuntimeMode.HARDWARE:
+            raise RuntimeModeError(
+                "monochromatic illumination requires tls_setpoint_nm in hardware mode"
+            )
 
 
 def validate_raw_fallback_allowed(

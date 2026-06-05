@@ -414,11 +414,6 @@ class RawCaptureWriter:
         wl = self._plan.wavelengths[wavelength_index]
         wl_grp = f["tls"]
         if tls_status:
-            _wl_nm = float(
-                tls_status.get("current_wavelength_nm")
-                or tls_status.get("wavelength_nm")
-                or wl.nominal_wavelength_nm
-            )
             _grat = int(
                 tls_status.get("grating") or wl.grating or -1
             )
@@ -426,14 +421,13 @@ class RawCaptureWriter:
                 tls_status.get("timestamp_ns") or _now_ns()
             )
         else:
-            _wl_nm = float(wl.nominal_wavelength_nm)
             _grat = int(wl.grating or -1)
             _tls_ts = _now_ns()
 
         illum_json_str = _json_str(_illumination_status_json(wl, tls_status))
         illum_data = _illumination_status_json(wl, tls_status)
         f["illumination"]["illumination_json"][wavelength_index] = illum_json_str
-        f["illumination"]["nominal_wavelength_nm"][wavelength_index] = _wl_nm
+        f["illumination"]["nominal_wavelength_nm"][wavelength_index] = float(wl.nominal_wavelength_nm)
         f["illumination"]["tls_setpoint_nm"][wavelength_index] = (
             float(illum_data.get("tls_setpoint_nm"))
             if illum_data.get("tls_setpoint_nm") is not None
