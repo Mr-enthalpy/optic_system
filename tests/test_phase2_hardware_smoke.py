@@ -497,7 +497,7 @@ def _verify_hdf5_structure(path: Path, plan, *, expect_tls: bool) -> None:
         assert bool(completed.all())
 
         if expect_tls:
-            assert "illumination/nominal_wavelength_nm" in f
+            assert "illumination/illumination_json" in f
             assert "tls/grating" in f
             assert "tls/status_json" in f
 

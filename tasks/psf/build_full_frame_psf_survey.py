@@ -8,7 +8,7 @@ from typing import Any
 import h5py
 import numpy as np
 
-from ._artifact_utils import (
+from ._support_utils import (
     PSFArtifactError,
     camera_frame_extent,
     h5_string_dtype,
@@ -139,7 +139,7 @@ def build_full_frame_psf_survey(
                     "capture/mask_index",
                     "capture/capture_index",
                     "capture/plan_json",
-                    "illumination/nominal_wavelength_nm",
+                    "illumination/illumination_json",
                     "masks/mask_id",
                 ],
             )
@@ -168,15 +168,11 @@ def build_full_frame_psf_survey(
                 artifact_name="full-frame PSF survey",
             )
 
-            wavelengths_by_index = np.asarray(src["illumination/nominal_wavelength_nm"], dtype=np.float64)
+
             illumination_by_index = _read_raw_illumination_json_by_index(src, plan=None)
             mask_ids_by_index = read_string_array(src["masks/mask_id"])
             entry_mask_ids = [
                 index_string(mask_ids_by_index, int(mask_indices[row])) for row in valid_rows
-            ]
-            entry_wavelengths = [
-                float(wavelengths_by_index[int(wavelength_indices[row])])
-                for row in valid_rows
             ]
             source_plan_json = read_scalar_string(src["capture/plan_json"])
             plan = loads_json_object(source_plan_json)
@@ -184,6 +180,12 @@ def build_full_frame_psf_survey(
                 illumination_by_index = _read_raw_illumination_json_by_index(src, plan=plan)
             entry_illumination_json = [
                 index_string(illumination_by_index, int(wavelength_indices[row]))
+                for row in valid_rows
+            ]
+            entry_wavelengths = [
+                _wavelength_from_illumination_json(
+                    _index_str(illumination_by_index, int(wavelength_indices[row]))
+                )
                 for row in valid_rows
             ]
             pupil_profile_id = read_optional_dataset_string(src, "profiles/pupil_profile_id")
@@ -356,3 +358,26 @@ def _require_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise FullFramePSFSurveyError(f"{key} must be a mapping")
     return value
+
+
+def _index_str(values: list[str], index: int) -> str:
+    if 0 <= index < len(values):
+        return values[index]
+    return "{}"
+
+
+def _wavelength_from_illumination_json(illumination_str: str) -> float:
+    try:
+        data = json.loads(illumination_str)
+    except (json.JSONDecodeError, TypeError):
+        return float("nan")
+    mode = data.get("mode") or ""
+    if mode == "broadband_passthrough":
+        return float("nan")
+    effective = data.get("effective_wavelength_nm")
+    if effective is not None:
+        return float(effective)
+    label = data.get("wavelength_label_nm")
+    if label is not None:
+        return float(label)
+    return float("nan")

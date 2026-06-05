@@ -63,7 +63,6 @@ def sample_plan_dict() -> dict[str, Any]:
         ],
         "camera": {
             "frames_per_capture": 5,
-            "average_burst": True,
         },
         "lcd_settle_ms": 500,
         "store_burst": False,

@@ -228,27 +228,32 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 
 ```
 /                            attrs: plan_id, created_at_ns, software_version,
-                             raw_capture_schema_version, capture_role
+                             raw_capture_schema_version, capture_role,
+                             hdf5_writer_version
 /raw/frames_avg              [N_capture, H, W] policy dtype, default float32
 /raw/frames                  [N_capture, K, H, W] policy dtype, default input dtype
                              (only if store_burst=True)
-/raw attrs: storage_policy_json, frames_avg_stored_dtype,
-            burst_stored_dtype, average_compute_dtype
+/raw attrs: storage_policy_json, stores_burst, frames_per_capture,
+            average_compute_dtype, frames_avg_stored_dtype, burst_stored_dtype,
+            frame_height, frame_width, frames_avg_input_dtype
+/raw attrs: burst_input_dtype (only if store_burst=True)
 /masks/masks_physical        [N_mask, Hlcd, Wlcd_phys] uint8
 /masks/mask_id               [N_mask] str
 /masks/family_id             [N_mask] str
 /masks/family_params_json    [N_mask] str
 /masks/has_mask_array        [N_mask] bool
+/masks attrs: mask_count
 /illumination/illumination_json           [N_wavelengths] str
-/illumination/nominal_wavelength_nm      [N_wavelengths] float64
 /illumination/tls_setpoint_nm            [N_wavelengths] float64
 /illumination/effective_wavelength_nm    [N_wavelengths] float64
 /tls/grating                 [N_wavelengths] int64
 /tls/settle_ms               [N_wavelengths] int64
 /tls/timestamp_ns            [N_wavelengths] int64
 /tls/status_json             [N_wavelengths] str
-/camera/exposure_us          [N_capture] float64
-/camera/gain_db              [N_capture] float64
+/camera/requested_exposure_us   [N_capture] float64
+/camera/requested_gain_db       [N_capture] float64
+/camera/readback_exposure_us    [N_capture] float64
+/camera/readback_gain_db        [N_capture] float64
 /camera/frame_extent_json    [N_capture] str  (CameraFrameExtent)
 /camera/timestamp_ns         [N_capture] int64
 /camera/status_json          [N_capture] str
@@ -267,6 +272,8 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 /capture/completed           [N_capture] bool
 /capture/plan_json           scalar str
 /capture/plan_id             scalar str
+/capture/runtime_mode        scalar str
+/capture/runtime_policy_json scalar str
 /capture/processing_flags_json scalar str
 ```
 

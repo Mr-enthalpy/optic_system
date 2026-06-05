@@ -67,17 +67,6 @@ class IlluminationSpec:
             wavelength_label_nm=data.get("wavelength_label_nm"),
         )
 
-def illumination_nominal_wavelength_nm(spec: IlluminationSpec) -> float:
-    """Internal row-label value for tables that still store wavelength columns."""
-    if spec.is_broadband_passthrough:
-        return 0.0
-    if spec.effective_wavelength_nm is not None:
-        return float(spec.effective_wavelength_nm)
-    if spec.wavelength_label_nm is not None:
-        return float(spec.wavelength_label_nm)
-    raise IlluminationSpecError("illumination spec has no wavelength label")
-
-
 def normalize_illumination_spec(data: Mapping[str, Any]) -> IlluminationSpec:
     if not isinstance(data, Mapping):
         raise IlluminationSpecError(

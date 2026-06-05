@@ -175,7 +175,7 @@ def test_explicit_illumination_plan_entry_parses_without_wavelength_nm():
         "masks": [{"mask_id": "m1"}],
     })
 
-    assert plan.wavelengths[0].nominal_wavelength_nm == 650.0
+    assert plan.wavelengths[0].illumination.effective_wavelength_nm == 650.0
     assert "wavelength_nm" not in plan.to_dict()["wavelengths"][0]
     assert plan.resolved_illumination_specs()[0].mode == "monochromatic"
 

@@ -24,7 +24,6 @@ from tasks.runtime_mode import (
     hardware_runtime_policy,
     no_hardware_runtime_policy,
     validate_no_fake_devices,
-    validate_raw_fallback_allowed,
     validate_required_devices,
     validate_tls_for_illumination,
 )
@@ -203,18 +202,6 @@ def test_positive_wavelength_without_tls_rejected_in_hardware_mode(tmp_path: Pat
             tmp_path / "hardware_missing_tls.h5",
             runtime_policy="hardware",
         )
-
-
-def test_raw_fallback_requires_diagnostic_or_synthetic_policy():
-    with pytest.raises(RuntimeModeError, match="allow_raw_fallback"):
-        validate_raw_fallback_allowed(
-            allow_raw_fallback=True,
-            policy=hardware_runtime_policy(),
-        )
-    validate_raw_fallback_allowed(
-        allow_raw_fallback=True,
-        policy=diagnostic_runtime_policy(),
-    )
 
 
 def test_capture_fake_devices_rejected_in_explicit_hardware_mode(tmp_path: Path):

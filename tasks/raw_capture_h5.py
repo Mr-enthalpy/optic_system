@@ -99,7 +99,6 @@ def _illumination_status_json(wavelength_entry: Any, tls_status: dict[str, Any] 
         data = dict(tls_status["illumination"])
     else:
         data = wavelength_entry.illumination.to_dict()
-    data.setdefault("nominal_wavelength_nm", float(wavelength_entry.nominal_wavelength_nm))
     if tls_status and tls_status.get("tls_action") is not None:
         data.setdefault("tls_action", tls_status.get("tls_action"))
     return data
@@ -200,7 +199,6 @@ class RawCaptureWriter:
 
         illum_grp = f.require_group("illumination")
         illum_grp.create_dataset("illumination_json", shape=(n_wl,), dtype=h5py.string_dtype())
-        illum_grp.create_dataset("nominal_wavelength_nm", shape=(n_wl,), dtype=np.float64)
         illum_grp.create_dataset("tls_setpoint_nm", shape=(n_wl,), dtype=np.float64)
         illum_grp.create_dataset("effective_wavelength_nm", shape=(n_wl,), dtype=np.float64)
 
@@ -427,7 +425,6 @@ class RawCaptureWriter:
         illum_json_str = _json_str(_illumination_status_json(wl, tls_status))
         illum_data = _illumination_status_json(wl, tls_status)
         f["illumination"]["illumination_json"][wavelength_index] = illum_json_str
-        f["illumination"]["nominal_wavelength_nm"][wavelength_index] = float(wl.nominal_wavelength_nm)
         f["illumination"]["tls_setpoint_nm"][wavelength_index] = (
             float(illum_data.get("tls_setpoint_nm"))
             if illum_data.get("tls_setpoint_nm") is not None

@@ -16,7 +16,6 @@ from tasks.artifacts.frame_source import (
 )
 from tasks.artifacts.json_io import (
     decode_h5_string,
-    read_json_dataset_or_attr as _shared_read_json_dataset_or_attr,
 )
 from tasks.runtime_mode import RuntimePolicy
 
@@ -776,74 +775,6 @@ def _normalize_frames(frames: np.ndarray) -> np.ndarray:
     if arr.ndim == 3:
         return arr
     raise DiffractionSupportAnalysisError(f"survey frames must be 2D or 3D, got {arr.shape}")
-
-
-def _read_survey_mask_ids(f: h5py.File, group: h5py.Group, n: int) -> list[str]:
-    for path in ("full_frame_survey/entry_mask_id", "full_frame_survey/entry_mask_ids", "full_frame_survey/mask_id"):
-        if path in f:
-            return _read_dataset_strings(f, path, n, "entry")
-    for index_name in ("mask_index", "entry_mask_index"):
-        if index_name in group and "unique_mask_ids" in group:
-            indices = np.asarray(group[index_name], dtype=np.int64)
-            unique = [_decode(x) for x in group["unique_mask_ids"][()]]
-            return [unique[int(i)] for i in indices]
-    if "capture/mask_index" in f and "masks/mask_id" in f:
-        indices = np.asarray(f["capture/mask_index"], dtype=np.int64)
-        unique = [_decode(x) for x in f["masks/mask_id"][()]]
-        return [unique[int(i)] for i in indices[:n]]
-    manifest = _read_json_dataset_or_attr(group, "manifest_json")
-    if isinstance(manifest.get("entry_mask_ids"), list):
-        return [str(x) for x in manifest["entry_mask_ids"]]
-    return [f"entry_{i:04d}" for i in range(n)]
-
-
-def _read_survey_wavelengths(f: h5py.File, group: h5py.Group, n: int) -> list[float]:
-    for name in ("entry_wavelength_nm", "entry_wavelengths_nm", "wavelength_nm"):
-        if name in group:
-            arr = np.asarray(group[name], dtype=np.float64)
-            return [float(x) for x in arr[:n]]
-    if "wavelength_index" in group and "unique_wavelength_nm" in group:
-        indices = np.asarray(group["wavelength_index"], dtype=np.int64)
-        unique = np.asarray(group["unique_wavelength_nm"], dtype=np.float64)
-        return [float(unique[int(i)]) for i in indices[:n]]
-    if "capture/wavelength_index" in f and "illumination/nominal_wavelength_nm" in f:
-        indices = np.asarray(f["capture/wavelength_index"], dtype=np.int64)
-        unique = np.asarray(f["illumination/nominal_wavelength_nm"], dtype=np.float64)
-        return [float(unique[int(i)]) for i in indices[:n]]
-    manifest = _read_json_dataset_or_attr(group, "manifest_json")
-    if isinstance(manifest.get("entry_wavelengths_nm"), list):
-        return [float(x) for x in manifest["entry_wavelengths_nm"]]
-    return [float("nan") for _ in range(n)]
-
-
-def _coordinate_frame_from_manifest_or_extent(
-    manifest: dict[str, Any],
-    extent: dict[str, Any],
-) -> str:
-    value = manifest.get("coordinate_frame")
-    if isinstance(value, str) and value in {"sensor_full_frame", "acquired_frame"}:
-        return value
-    return _coordinate_frame_from_extent(extent)
-
-
-def _coordinate_frame_from_extent(extent: dict[str, Any]) -> str:
-    if extent.get("mode") == "full_sensor":
-        return "sensor_full_frame"
-    return "acquired_frame"
-
-
-def _read_dataset_strings(f: h5py.File, path: str, n: int, fallback_prefix: str) -> list[str]:
-    if path not in f:
-        return [f"{fallback_prefix}_{i:04d}" for i in range(n)]
-    values = f[path][()]
-    return [_decode(x) for x in values[:n]]
-
-
-def _read_json_dataset_or_attr(group: h5py.Group, name: str) -> dict[str, Any]:
-    try:
-        return _shared_read_json_dataset_or_attr(group, name)
-    except ValueError as exc:
-        raise DiffractionSupportAnalysisError(str(exc)) from exc
 
 
 def _valid_pixel_mask(shape: tuple[int, int], valid_pixel_domain: dict[str, Any] | None) -> np.ndarray:

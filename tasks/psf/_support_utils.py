@@ -1,3 +1,5 @@
+"""Shared PSF/support utility helpers (replaces tasks/psf/_artifact_utils.py)."""
+
 from __future__ import annotations
 
 import json
@@ -194,5 +196,3 @@ def _load_profile_manifest(cls: Any, path: str | Path) -> Any:
     if profile_path.suffix.lower() in {".yaml", ".yml"}:
         return cls.load_yaml(profile_path)
     return cls.load_json(profile_path)
-
-
