@@ -118,11 +118,11 @@ GUI / task intent
 Hardware tests for TLS must remain opt-in.
 The default test suite should run without TLS hardware and without vendor DLLs.
 
-Capture plans may still use `wavelength_nm: 0.0` as a compatibility encoding
-for TLS zero-order broadband pass-through. Task internals should normalize
-wavelength entries to `IlluminationSpec` and should not scatter
-`wavelength_nm == 0.0` checks. Pass-through is a device-control mode, not a
-physical wavelength, and task code must call `TLSService.set_pass_through()`.
+Capture plans must represent illumination explicitly. TLS zero-order broadband
+pass-through uses `illumination.mode: broadband_passthrough`; `wavelength_nm:
+0.0` is not a supported capture-plan input. Task internals consume
+`IlluminationSpec`. Pass-through is a device-control mode, not a physical
+wavelength, and task code must call `TLSService.set_pass_through()`.
 
 Runtime mode is explicit for capture, profile, and diagnostic task entry
 points. Real hardware tasks default to hardware runtime mode. Fake devices,
@@ -255,8 +255,7 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 /tls/status_json             [N_wavelengths] str
 /camera/exposure_us          [N_capture] float64
 /camera/gain_db              [N_capture] float64
-/camera/frame_extent_json    [N_capture] str  (preferred CameraFrameExtent)
-/camera/roi_json             [N_capture] str  (legacy compatibility alias)
+/camera/frame_extent_json    [N_capture] str  (CameraFrameExtent)
 /camera/timestamp_ns         [N_capture] int64
 /camera/status_json          [N_capture] str
 /lcd/settle_ms               [N_capture] int64
@@ -278,13 +277,35 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 ```
 
 Raw capture metadata should use camera frame extent terminology.
-`/camera/frame_extent_json` is the preferred raw HDF5 field.
-`/camera/roi_json` is a legacy compatibility alias for camera SDK ROI metadata
-and must not be used as a PSF crop or ROI-support concept.
-Capture plans should use `camera.frame_extent` for acquisition extent metadata.
-Legacy `camera.roi` input is accepted only as an acquisition-extent alias and
-is serialized back as `camera.frame_extent`, not as a PSF crop or support
-window.
+`/camera/frame_extent_json` is the raw HDF5 field. Capture plans must use
+`camera.frame_extent` for acquisition extent metadata. Pre-mainline
+thesis/development data are outside the current schema and require explicit
+migration if needed.
+
+Canonical capture-plan examples:
+
+```yaml
+camera:
+  frame_extent:
+    mode: full_sensor
+    origin_xy: [0, 0]
+    shape_hw: [2048, 2448]
+    sensor_shape_hw: [2048, 2448]
+
+wavelengths:
+  - illumination:
+      mode: broadband_passthrough
+      tls_setpoint_nm: 0.0
+      effective_wavelength_nm: null
+    grating: 1
+    settle_ms: 2000
+  - illumination:
+      mode: monochromatic
+      tls_setpoint_nm: 550.0
+      effective_wavelength_nm: 550.0
+    grating: 1
+    settle_ms: 2000
+```
 
 Raw frame dataset dtype, compression, and chunking are controlled by
 `RawFrameStoragePolicy`, not by ad-hoc writer constants. The policy separates:

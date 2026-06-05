@@ -38,8 +38,26 @@ def sample_plan_dict() -> dict[str, Any]:
     return {
         "plan_id": "test_plan_01",
         "wavelengths": [
-            {"wavelength_nm": 532.0, "grating": 1, "settle_ms": 3000},
-            {"wavelength_nm": 633.0, "grating": 1, "settle_ms": 2000},
+            {
+                "illumination": {
+                    "mode": "label_only",
+                    "effective_wavelength_nm": 532.0,
+                    "tls_setpoint_nm": None,
+                    "wavelength_label_nm": 532.0,
+                },
+                "grating": 1,
+                "settle_ms": 3000,
+            },
+            {
+                "illumination": {
+                    "mode": "label_only",
+                    "effective_wavelength_nm": 633.0,
+                    "tls_setpoint_nm": None,
+                    "wavelength_label_nm": 633.0,
+                },
+                "grating": 1,
+                "settle_ms": 2000,
+            },
         ],
         "masks": [
             {"mask_id": "mask_a", "family_id": "f1"},

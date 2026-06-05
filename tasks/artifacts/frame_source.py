@@ -16,6 +16,11 @@ from .coordinate_frame import (
 )
 from .errors import ArtifactIOError
 from .json_io import decode_h5_string, read_json_dataset_or_attr
+from tasks.illumination import (
+    IlluminationSpecError,
+    illumination_nominal_wavelength_nm,
+    normalize_illumination_spec,
+)
 
 
 @dataclass(frozen=True)
@@ -79,14 +84,16 @@ def open_raw_frames_avg_source(h5: h5py.File, source_path: str | Path) -> FrameS
     frames = h5["raw/frames_avg"]
     frame_count, frame_shape = frame_dataset_count_and_shape(frames)
     if "camera" in h5:
-        extent = read_camera_frame_extent_from_group(
-            h5["camera"],
-            fallback_shape=frame_shape,
-        )
+        try:
+            extent = read_camera_frame_extent_from_group(
+                h5["camera"],
+                fallback_shape=frame_shape,
+            )
+        except ValueError as exc:
+            raise ArtifactIOError(str(exc)) from exc
     else:
-        extent = camera_frame_extent_from_dict(
-            _fallback_extent({}, frame_shape),
-            fallback_shape=frame_shape,
+        raise ArtifactIOError(
+            "camera frame extent metadata not found; expected /camera/frame_extent_json"
         )
     descriptor = FrameSourceDescriptor(
         source_path=str(source_path),
@@ -186,7 +193,15 @@ def _read_raw_wavelengths(h5: h5py.File, n: int) -> list[float]:
         plan = read_json_dataset_or_attr(h5["capture"], "plan_json")
         wavelengths = plan.get("wavelengths")
         if isinstance(wavelengths, list) and wavelengths:
-            unique = [float(item["wavelength_nm"]) for item in wavelengths]
+            unique = []
+            for item in wavelengths:
+                try:
+                    spec = normalize_illumination_spec(item)
+                    unique.append(illumination_nominal_wavelength_nm(spec))
+                except (IlluminationSpecError, TypeError, ValueError) as exc:
+                    raise ArtifactIOError(
+                        "raw plan_json wavelength entries must use illumination"
+                    ) from exc
             indices = np.asarray(h5["raw/wavelength_index"], dtype=np.int64)
             return [unique[int(i)] for i in indices[:n]]
         wavelength = plan.get("wavelength")

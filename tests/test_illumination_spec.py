@@ -12,12 +12,11 @@ from tasks.capture_forward_dataset import (
     FakeLCD,
     run_capture_forward_dataset,
 )
-from tasks.capture_plan import CapturePlan
+from tasks.capture_plan import CapturePlan, CapturePlanError
 from tasks.illumination import (
     IlluminationSpec,
     IlluminationSpecError,
     apply_illumination_to_tls,
-    illumination_from_legacy_wavelength_nm,
     normalize_illumination_spec,
 )
 
@@ -50,52 +49,66 @@ class RecordingTLS:
         }
 
 
-def test_positive_legacy_wavelength_normalizes_to_monochromatic():
-    spec = illumination_from_legacy_wavelength_nm(550.0)
+def _mono_entry(wavelength_nm: float, **extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "monochromatic",
+            "effective_wavelength_nm": float(wavelength_nm),
+            "tls_setpoint_nm": float(wavelength_nm),
+        },
+        **extra,
+    }
+
+
+def _label_entry(wavelength_nm: float, **extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "label_only",
+            "effective_wavelength_nm": float(wavelength_nm),
+            "tls_setpoint_nm": None,
+            "wavelength_label_nm": float(wavelength_nm),
+        },
+        **extra,
+    }
+
+
+def _pass_entry(**extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "broadband_passthrough",
+            "effective_wavelength_nm": None,
+            "tls_setpoint_nm": 0.0,
+        },
+        **extra,
+    }
+
+
+def test_numeric_legacy_wavelength_input_is_rejected():
+    with pytest.raises(IlluminationSpecError, match="mapping"):
+        normalize_illumination_spec(550.0)  # type: ignore[arg-type]
+
+
+def test_wavelength_nm_mapping_input_is_rejected():
+    with pytest.raises(IlluminationSpecError, match="wavelength_nm compatibility"):
+        normalize_illumination_spec({"wavelength_nm": 550.0})
+
+
+def test_explicit_monochromatic_validates_positive_wavelength():
+    spec = normalize_illumination_spec(_mono_entry(450.0))
 
     assert spec.mode == "monochromatic"
-    assert spec.effective_wavelength_nm == 550.0
-    assert spec.tls_setpoint_nm == 550.0
+    assert spec.effective_wavelength_nm == 450.0
+    assert spec.tls_setpoint_nm == 450.0
     assert spec.requires_tls_wavelength_move is True
 
 
-def test_zero_legacy_wavelength_normalizes_to_broadband_passthrough():
-    spec = illumination_from_legacy_wavelength_nm(0.0)
+def test_explicit_broadband_passthrough_validates_setpoint_zero():
+    spec = normalize_illumination_spec(_pass_entry())
 
     assert spec.mode == "broadband_passthrough"
     assert spec.effective_wavelength_nm is None
     assert spec.tls_setpoint_nm == 0.0
     assert spec.requires_tls_pass_through is True
-
-
-def test_negative_legacy_wavelength_is_rejected():
-    with pytest.raises(IlluminationSpecError, match="non-negative"):
-        illumination_from_legacy_wavelength_nm(-1.0)
-
-
-def test_explicit_monochromatic_validates_positive_wavelength():
-    spec = normalize_illumination_spec({
-        "illumination": {
-            "mode": "monochromatic",
-            "effective_wavelength_nm": 450.0,
-            "tls_setpoint_nm": 450.0,
-        }
-    })
-
-    assert spec.mode == "monochromatic"
-    assert spec.compatibility_wavelength_nm() == 450.0
-
-
-def test_explicit_broadband_passthrough_validates_setpoint_zero():
-    spec = normalize_illumination_spec({
-        "illumination": {
-            "mode": "broadband_passthrough",
-            "effective_wavelength_nm": None,
-            "tls_setpoint_nm": 0.0,
-        }
-    })
-
-    assert spec.mode == "broadband_passthrough"
 
 
 def test_invalid_explicit_broadband_passthrough_rejects_effective_wavelength():
@@ -123,7 +136,7 @@ def test_pass_through_helper_calls_set_pass_through_not_set_wavelength():
     tls = RecordingTLS()
     status = apply_illumination_to_tls(
         tls,
-        illumination_from_legacy_wavelength_nm(0.0),
+        normalize_illumination_spec(_pass_entry()),
         timeout_s=12.0,
     )
 
@@ -136,7 +149,7 @@ def test_monochromatic_helper_calls_wavelength_move_path():
     tls = RecordingTLS()
     status = apply_illumination_to_tls(
         tls,
-        illumination_from_legacy_wavelength_nm(532.0),
+        normalize_illumination_spec(_mono_entry(532.0)),
         timeout_s=3.0,
     )
 
@@ -145,45 +158,34 @@ def test_monochromatic_helper_calls_wavelength_move_path():
     assert status["illumination"]["mode"] == "monochromatic"
 
 
-def test_existing_legacy_capture_plan_still_parses():
-    plan = CapturePlan.from_dict({
-        "plan_id": "legacy_plan",
-        "wavelengths": [
-            {"wavelength_nm": 0.0},
-            {"wavelength_nm": 450.0},
-        ],
-        "masks": [{"mask_id": "m1"}],
-    })
-
-    specs = plan.resolved_illumination_specs()
-    assert specs[0].mode == "broadband_passthrough"
-    assert specs[1].mode == "monochromatic"
-    assert plan.to_dict()["wavelengths"][0]["wavelength_nm"] == 0.0
+def test_legacy_capture_plan_wavelength_nm_is_rejected():
+    with pytest.raises(CapturePlanError, match="wavelength_nm compatibility"):
+        CapturePlan.from_dict({
+            "plan_id": "legacy_plan",
+            "wavelengths": [
+                {"wavelength_nm": 0.0},
+                {"wavelength_nm": 450.0},
+            ],
+            "masks": [{"mask_id": "m1"}],
+        })
 
 
 def test_explicit_illumination_plan_entry_parses_without_wavelength_nm():
     plan = CapturePlan.from_dict({
         "plan_id": "explicit_plan",
-        "wavelengths": [
-            {
-                "illumination": {
-                    "mode": "monochromatic",
-                    "effective_wavelength_nm": 650.0,
-                    "tls_setpoint_nm": 650.0,
-                }
-            },
-        ],
+        "wavelengths": [_mono_entry(650.0)],
         "masks": [{"mask_id": "m1"}],
     })
 
     assert plan.wavelengths[0].wavelength_nm == 650.0
+    assert "wavelength_nm" not in plan.to_dict()["wavelengths"][0]
     assert plan.resolved_illumination_specs()[0].mode == "monochromatic"
 
 
 def test_raw_status_metadata_records_illumination_mode(tmp_path: Path):
     plan = CapturePlan.from_dict({
         "plan_id": "metadata_illumination",
-        "wavelengths": [{"wavelength_nm": 0.0}],
+        "wavelengths": [_pass_entry()],
         "masks": [{"mask_id": "m1"}],
         "camera": {"frames_per_capture": 1},
     })
@@ -205,7 +207,9 @@ def test_raw_status_metadata_records_illumination_mode(tmp_path: Path):
 
     with h5py.File(output, "r") as f:
         status_raw = f["tls/status_json"][0]
-        status = json.loads(status_raw.decode() if isinstance(status_raw, bytes) else str(status_raw))
+        status = json.loads(
+            status_raw.decode() if isinstance(status_raw, bytes) else str(status_raw)
+        )
 
     assert status["illumination"]["mode"] == "broadband_passthrough"
     assert status["illumination"]["effective_wavelength_nm"] is None
@@ -213,10 +217,10 @@ def test_raw_status_metadata_records_illumination_mode(tmp_path: Path):
     assert status["tls_action"] == "set_pass_through"
 
 
-def test_no_tls_positive_wavelength_records_label_only(tmp_path: Path):
+def test_explicit_label_only_without_tls_records_label_only(tmp_path: Path):
     plan = CapturePlan.from_dict({
         "plan_id": "metadata_label_only",
-        "wavelengths": [{"wavelength_nm": 550.0}],
+        "wavelengths": [_label_entry(550.0)],
         "masks": [{"mask_id": "m1"}],
         "camera": {"frames_per_capture": 1},
     })
@@ -237,7 +241,9 @@ def test_no_tls_positive_wavelength_records_label_only(tmp_path: Path):
 
     with h5py.File(output, "r") as f:
         status_raw = f["tls/status_json"][0]
-        status = json.loads(status_raw.decode() if isinstance(status_raw, bytes) else str(status_raw))
+        status = json.loads(
+            status_raw.decode() if isinstance(status_raw, bytes) else str(status_raw)
+        )
 
     assert status["illumination"]["mode"] == "label_only"
     assert status["illumination"]["effective_wavelength_nm"] == 550.0

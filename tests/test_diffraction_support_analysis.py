@@ -52,6 +52,17 @@ def _write_raw_frames_h5(path: Path) -> None:
         raw.create_dataset("frames_avg", data=frame[np.newaxis, :, :])
         raw.create_dataset("mask_id", data=np.asarray(["raw_mask"], dtype=object), dtype=string_dtype)
         raw.create_dataset("wavelength_nm", data=np.asarray([550.0], dtype=np.float64))
+        camera = f.require_group("camera")
+        camera.create_dataset(
+            "frame_extent_json",
+            data=[json.dumps({
+                "mode": "full_sensor",
+                "origin_xy": [0, 0],
+                "shape_hw": [16, 16],
+                "sensor_shape_hw": [16, 16],
+            })],
+            dtype=string_dtype,
+        )
 
 
 def test_builds_peak_support_analysis_report_from_synthetic_survey(tmp_path: Path) -> None:
@@ -263,7 +274,7 @@ def test_raw_frames_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:
         allow_raw_fallback=True,
         runtime_policy="diagnostic",
     )
-    assert manifest.coordinate_frame == "acquired_frame"
+    assert manifest.coordinate_frame == "sensor_full_frame"
     assert manifest.entry_mask_ids == ["raw_mask"]
 
 

@@ -178,7 +178,6 @@ class RawCaptureWriter:
         cam_grp.create_dataset("readback_exposure_us", shape=(n_cap,), dtype=np.float64)
         cam_grp.create_dataset("readback_gain_db", shape=(n_cap,), dtype=np.float64)
         cam_grp.create_dataset("frame_extent_json", shape=(n_cap,), dtype=h5py.string_dtype())
-        cam_grp.create_dataset("roi_json", shape=(n_cap,), dtype=h5py.string_dtype())
         cam_grp.create_dataset("timestamp_ns", shape=(n_cap,), dtype=np.int64)
         cam_grp.create_dataset("status_json", shape=(n_cap,), dtype=h5py.string_dtype())
 
@@ -372,7 +371,6 @@ class RawCaptureWriter:
         )
         frame_extent_json = _json_str(frame_extent)
         cam_grp["frame_extent_json"][row] = frame_extent_json
-        cam_grp["roi_json"][row] = frame_extent_json
         cam_grp["timestamp_ns"][row] = int(camera_meta.get("timestamp_ns") or _now_ns())
         cam_grp["status_json"][row] = _json_str(camera_meta.get("status", {}))
 

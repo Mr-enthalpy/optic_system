@@ -14,6 +14,40 @@ from tasks.capture_plan import (
 )
 
 
+def _mono_entry(wavelength_nm: float, **extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "monochromatic",
+            "effective_wavelength_nm": float(wavelength_nm),
+            "tls_setpoint_nm": float(wavelength_nm),
+        },
+        **extra,
+    }
+
+
+def _label_entry(wavelength_nm: float, **extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "label_only",
+            "effective_wavelength_nm": float(wavelength_nm),
+            "tls_setpoint_nm": None,
+            "wavelength_label_nm": float(wavelength_nm),
+        },
+        **extra,
+    }
+
+
+def _pass_entry(**extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "broadband_passthrough",
+            "effective_wavelength_nm": None,
+            "tls_setpoint_nm": 0.0,
+        },
+        **extra,
+    }
+
+
 class TestCameraCaptureConfig:
     def test_defaults(self) -> None:
         cfg = CameraCaptureConfig()
@@ -43,19 +77,11 @@ class TestCameraCaptureConfig:
             "shape_hw": [480, 640],
             "sensor_shape_hw": None,
         }
-        assert cfg.roi == (0, 0, 640, 480)
-
-    def test_legacy_roi_input_normalizes_to_frame_extent(self) -> None:
-        cfg = CameraCaptureConfig.from_dict({"roi": [1, 2, 30, 40]})
-
-        assert cfg.frame_extent == {
-            "mode": "sensor_roi",
-            "origin_xy": [1, 2],
-            "shape_hw": [40, 30],
-            "sensor_shape_hw": None,
-        }
-        assert cfg.to_dict()["frame_extent"]["shape_hw"] == [40, 30]
-        assert "roi" not in cfg.to_dict()
+    def test_legacy_roi_input_is_rejected(self) -> None:
+        with pytest.raises(CapturePlanError, match="camera.frame_extent"):
+            CameraCaptureConfig.from_dict({"roi": [1, 2, 30, 40]})
+        with pytest.raises(CapturePlanError, match="camera.frame_extent"):
+            CameraCaptureConfig.from_dict({"camera_roi": [1, 2, 30, 40]})
 
     def test_from_dict_empty(self) -> None:
         cfg = CameraCaptureConfig.from_dict({})
@@ -96,26 +122,26 @@ class TestLCDMaskEntry:
 
 class TestTLSWavelengthEntry:
     def test_from_dict(self) -> None:
-        w = TLSWavelengthEntry.from_dict({"wavelength_nm": 532.0})
+        w = TLSWavelengthEntry.from_dict(_mono_entry(532.0))
         assert w.wavelength_nm == 532.0
         assert w.settle_ms == 2000
 
     def test_from_dict_full(self) -> None:
-        w = TLSWavelengthEntry.from_dict({
-            "wavelength_nm": 405.0,
-            "grating": 2,
-            "settle_ms": 5000,
-        })
+        w = TLSWavelengthEntry.from_dict(_mono_entry(405.0, grating=2, settle_ms=5000))
         assert w.wavelength_nm == 405.0
         assert w.grating == 2
         assert w.settle_ms == 5000
+
+    def test_wavelength_nm_input_is_rejected(self) -> None:
+        with pytest.raises(CapturePlanError, match="wavelength_nm compatibility"):
+            TLSWavelengthEntry.from_dict({"wavelength_nm": 532.0})
 
 
 class TestCapturePlan:
     def test_from_dict_minimal(self) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "minimal",
-            "wavelengths": [{"wavelength_nm": 500.0}],
+            "wavelengths": [_label_entry(500.0)],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 1},
         })
@@ -137,7 +163,7 @@ class TestCapturePlan:
         with pytest.raises(CapturePlanError, match="mask_id"):
             CapturePlan.from_dict({
                 "plan_id": "p",
-                "wavelengths": [{"wavelength_nm": 500}],
+                "wavelengths": [_label_entry(500)],
                 "masks": [{"mask_id": ""}],
             })
 
@@ -153,32 +179,41 @@ class TestCapturePlan:
         with pytest.raises(CapturePlanError, match="masks"):
             CapturePlan.from_dict({
                 "plan_id": "p",
-                "wavelengths": [{"wavelength_nm": 500}],
+                "wavelengths": [_label_entry(500)],
                 "masks": [],
             })
 
-    def test_validate_negative_wavelength_fails(self) -> None:
-        with pytest.raises(CapturePlanError, match="wavelength_nm"):
+    def test_validate_wavelength_nm_input_fails(self) -> None:
+        with pytest.raises(CapturePlanError, match="wavelength_nm compatibility"):
             CapturePlan.from_dict({
                 "plan_id": "p",
                 "wavelengths": [{"wavelength_nm": -1}],
                 "masks": [{"mask_id": "m1"}],
             })
 
-    def test_validate_zero_wavelength_requests_pass_through(self) -> None:
+    def test_validate_zero_wavelength_input_fails(self) -> None:
+        with pytest.raises(CapturePlanError, match="wavelength_nm compatibility"):
+            CapturePlan.from_dict({
+                "plan_id": "pass_through",
+                "wavelengths": [{"wavelength_nm": 0.0}],
+                "masks": [{"mask_id": "m1"}],
+            })
+
+    def test_explicit_pass_through_illumination_parses(self) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "pass_through",
-            "wavelengths": [{"wavelength_nm": 0.0}],
+            "wavelengths": [_pass_entry()],
             "masks": [{"mask_id": "m1"}],
         })
 
         assert plan.wavelengths[0].wavelength_nm == 0.0
+        assert "wavelength_nm" not in plan.to_dict()["wavelengths"][0]
 
     def test_validate_frames_per_capture_fails(self) -> None:
         with pytest.raises(CapturePlanError, match="frames_per_capture"):
             CapturePlan.from_dict({
                 "plan_id": "p",
-                "wavelengths": [{"wavelength_nm": 500}],
+                "wavelengths": [_label_entry(500)],
                 "masks": [{"mask_id": "m1"}],
                 "camera": {"frames_per_capture": 0},
             })
@@ -187,7 +222,7 @@ class TestCapturePlan:
         with pytest.raises(CapturePlanError, match="lcd_settle_ms"):
             CapturePlan.from_dict({
                 "plan_id": "p",
-                "wavelengths": [{"wavelength_nm": 500}],
+                "wavelengths": [_label_entry(500)],
                 "masks": [{"mask_id": "m1"}],
                 "lcd_settle_ms": -1,
             })
@@ -197,8 +232,8 @@ class TestCapturePlan:
             CapturePlan.from_dict({
                 "plan_id": "p",
                 "wavelengths": [
-                    {"wavelength_nm": 500},
-                    {"wavelength_nm": 500},
+                    _label_entry(500),
+                    _label_entry(500),
                 ],
                 "masks": [{"mask_id": "m1"}],
             })
@@ -207,7 +242,7 @@ class TestCapturePlan:
         with pytest.raises(CapturePlanError, match="duplicate mask_id"):
             CapturePlan.from_dict({
                 "plan_id": "p",
-                "wavelengths": [{"wavelength_nm": 500}],
+                "wavelengths": [_label_entry(500)],
                 "masks": [
                     {"mask_id": "dup"},
                     {"mask_id": "dup"},
@@ -225,12 +260,12 @@ class TestCapturePlan:
     def test_to_json_serializable(self, sample_plan: CapturePlan) -> None:
         text = sample_plan.to_json()
         assert "test_plan_01" in text
-        assert "wavelength_nm" in text
+        assert "illumination" in text
 
     def test_preserves_extra(self) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "extra_test",
-            "wavelengths": [{"wavelength_nm": 400}],
+            "wavelengths": [_label_entry(400)],
             "masks": [{"mask_id": "m1"}],
             "extra": {"custom_field": "hello"},
         })
@@ -243,7 +278,7 @@ class TestCapturePlan:
                 "pupil_profile_id": "pupil_profile_v1",
                 "camera_profile_id": "per_band_pupil_open_v1",
             },
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
         })
 
@@ -254,9 +289,9 @@ class TestCapturePlan:
         plan = CapturePlan.from_dict({
             "plan_id": "prod",
             "wavelengths": [
-                {"wavelength_nm": 400},
-                {"wavelength_nm": 500},
-                {"wavelength_nm": 600},
+                _label_entry(400),
+                _label_entry(500),
+                _label_entry(600),
             ],
             "masks": [
                 {"mask_id": "a"},
@@ -275,7 +310,7 @@ class TestCapturePlan:
 
         with pytest.raises(CapturePlanError, match="int"):
             TLSWavelengthEntry.from_dict({
-                "wavelength_nm": 500,
+                **_label_entry(500),
                 "grating": "bad",
             })
 

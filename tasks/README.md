@@ -101,9 +101,9 @@ New measured-artifact modules should use `tasks/artifacts/` instead of
 reimplementing frame-source parsing or coordinate validation.
 
 Raw capture metadata should use camera frame extent terminology.
-`/camera/frame_extent_json` is the preferred raw HDF5 field.
-`/camera/roi_json` is a legacy compatibility alias for camera SDK ROI metadata
-and must not be used as a PSF crop or ROI-support concept.
+`/camera/frame_extent_json` is the raw HDF5 field. Capture plans must use
+`camera.frame_extent`. Pre-mainline thesis/development data are outside the
+current schema and require explicit migration if needed.
 
 ## Active Illumination Helpers
 
@@ -111,10 +111,11 @@ and must not be used as a PSF crop or ROI-support concept.
 |------|--------|---------|
 | `tasks/illumination.py` | **active** | Typed `IlluminationSpec` normalization for monochromatic, broadband pass-through, and label-only illumination semantics. |
 
-Capture plans may still use `wavelength_nm: 0.0` as a compatibility encoding
-for TLS zero-order broadband pass-through. Task internals should use
-`IlluminationSpec`, not scattered `wavelength_nm == 0.0` checks. Wavelength
-labels without TLS are not equivalent to pass-through.
+Capture plans must use explicit `illumination` objects. TLS zero-order
+broadband pass-through is represented by
+`illumination.mode=broadband_passthrough`; numeric wavelength sentinels are not
+supported capture-plan inputs. Wavelength labels without TLS are not equivalent
+to pass-through.
 
 ## Active Tests
 

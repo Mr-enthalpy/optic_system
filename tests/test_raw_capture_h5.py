@@ -75,7 +75,14 @@ class TestRawCaptureWriter:
                 "pupil_profile_id": "pupil_profile_v1",
                 "camera_profile_id": "per_band_pupil_open_v1",
             },
-            "wavelengths": [{"wavelength_nm": 550}],
+            "wavelengths": [{
+                "illumination": {
+                    "mode": "label_only",
+                    "effective_wavelength_nm": 550.0,
+                    "tls_setpoint_nm": None,
+                    "wavelength_label_nm": 550.0,
+                }
+            }],
             "masks": [{"mask_id": "m1"}],
         })
 
@@ -173,7 +180,7 @@ class TestRawCaptureWriter:
             tls_ds = f["tls"]
             assert float(tls_ds["wavelength_nm"][0]) == 532.0
 
-    def test_writes_camera_frame_extent_and_legacy_alias(
+    def test_writes_camera_frame_extent_without_legacy_alias(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
     ) -> None:
         writer = RawCaptureWriter(tmp_h5_path, sample_plan)
@@ -185,17 +192,19 @@ class TestRawCaptureWriter:
                 frames=np.array([]),
                 frames_avg=np.ones((12, 16), dtype=np.float64),
                 camera_meta={
-                    "roi": {"offset_x": 3, "offset_y": 4, "width": 16, "height": 12},
-                    "status": {"sensor_shape_hw": [100, 120]},
+                    "frame_extent": {
+                        "mode": "acquired_frame",
+                        "origin_xy": [3, 4],
+                        "shape_hw": [12, 16],
+                        "sensor_shape_hw": [100, 120],
+                    },
                 },
             )
 
         with h5py.File(tmp_h5_path, "r") as f:
             assert "camera/frame_extent_json" in f
-            assert "camera/roi_json" in f
             frame_extent = _h5_array_str(f["camera/frame_extent_json"])
-            legacy = _h5_array_str(f["camera/roi_json"])
-            assert frame_extent == legacy
+            assert "camera/roi_json" not in f
             assert '"origin_xy": [' in frame_extent
             assert '"shape_hw": [' in frame_extent
             assert '"sensor_shape_hw": [' in frame_extent
@@ -263,7 +272,14 @@ class TestRawCaptureWriter:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "burst_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [{
+                "illumination": {
+                    "mode": "label_only",
+                    "effective_wavelength_nm": 500.0,
+                    "tls_setpoint_nm": None,
+                    "wavelength_label_nm": 500.0,
+                }
+            }],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 3},
             "store_burst": True,

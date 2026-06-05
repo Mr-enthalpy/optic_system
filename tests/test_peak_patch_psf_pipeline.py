@@ -33,7 +33,7 @@ def _raw_psf_capture(
     *,
     with_profiles: bool = True,
     wavelengths: list[float] | None = None,
-    legacy_camera_roi: list[int] | None = None,
+    camera_frame_extent: dict | None = None,
     sensor_shape_hw: list[int] | None = None,
 ) -> Path:
     wavelengths = wavelengths or [450.0, 550.0]
@@ -52,7 +52,16 @@ def _raw_psf_capture(
             "mode": "monochromatic",
             "wavelengths_nm": wavelengths,
         },
-        "wavelengths": [{"wavelength_nm": wl} for wl in wavelengths],
+        "wavelengths": [
+            {
+                "illumination": {
+                    "mode": "monochromatic",
+                    "effective_wavelength_nm": float(wl),
+                    "tls_setpoint_nm": float(wl),
+                }
+            }
+            for wl in wavelengths
+        ],
         "masks": [
             {"mask_id": "mask_a"},
             {"mask_id": "mask_b"},
@@ -76,7 +85,12 @@ def _raw_psf_capture(
                 frames=None,
                 frames_avg=frame,
                 camera_meta={
-                    "roi": legacy_camera_roi,
+                    "frame_extent": camera_frame_extent or {
+                        "mode": "full_sensor",
+                        "origin_xy": [0, 0],
+                        "shape_hw": [20, 20],
+                        "sensor_shape_hw": sensor_shape_hw or [20, 20],
+                    },
                     "status": (
                         {"sensor_shape_hw": sensor_shape_hw}
                         if sensor_shape_hw is not None
@@ -170,7 +184,15 @@ def test_builds_full_frame_survey_as_scout_artifact(tmp_path: Path) -> None:
 
 
 def test_full_frame_survey_defaults_to_confirmed_full_sensor(tmp_path: Path) -> None:
-    raw_path = _raw_psf_capture(tmp_path)
+    raw_path = _raw_psf_capture(
+        tmp_path,
+        camera_frame_extent={
+            "mode": "acquired_frame",
+            "origin_xy": [5, 7],
+            "shape_hw": [20, 20],
+            "sensor_shape_hw": [40, 40],
+        },
+    )
     pupil_manifest, camera_manifest = _write_profile_manifests(tmp_path)
 
     with pytest.raises(FullFramePSFSurveyError, match="full-sensor"):
@@ -203,7 +225,7 @@ def test_derives_peak_layout_profile_from_survey(tmp_path: Path) -> None:
         "origin_xy": [0, 0],
         "shape_hw": [20, 20],
         "sensor_shape_hw": [20, 20],
-        "source": "camera_status_metadata",
+        "source": "camera_metadata",
     }
     assert layout.survey_mask_ids == ["mask_a", "mask_b"]
     assert layout.survey_wavelengths_nm == [450.0, 550.0]
@@ -263,7 +285,15 @@ def test_peak_patch_dictionary_rejects_profile_missing_raw_wavelength(tmp_path: 
 
 def test_peak_patch_dictionary_rejects_camera_frame_extent_mismatch(tmp_path: Path) -> None:
     _, _, layout_path = _survey_and_layout(tmp_path)
-    raw_path = _raw_psf_capture(tmp_path, legacy_camera_roi=[10, 20, 20, 20])
+    raw_path = _raw_psf_capture(
+        tmp_path,
+        camera_frame_extent={
+            "mode": "acquired_frame",
+            "origin_xy": [10, 20],
+            "shape_hw": [20, 20],
+            "sensor_shape_hw": [40, 40],
+        },
+    )
     pupil_manifest, camera_manifest = _write_profile_manifests(tmp_path)
 
     with pytest.raises(PeakPatchPSFDictionaryError, match="camera_frame_extent"):

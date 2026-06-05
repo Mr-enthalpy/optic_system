@@ -23,6 +23,11 @@ from tasks.runtime_mode import (
     normalize_runtime_policy,
     validate_raw_fallback_allowed,
 )
+from tasks.illumination import (
+    IlluminationSpecError,
+    illumination_nominal_wavelength_nm,
+    normalize_illumination_spec,
+)
 
 from .sensor_energy_center import (
     SensorEnergyCenterError,
@@ -866,12 +871,17 @@ def _read_raw_wavelengths(f: h5py.File, n: int) -> list[float]:
         plan = _read_json_dataset(f, "capture/plan_json")
         wavelengths = plan.get("wavelengths")
         if isinstance(wavelengths, list) and wavelengths:
-            unique = [float(item["wavelength_nm"]) for item in wavelengths]
+            unique = []
+            for item in wavelengths:
+                try:
+                    spec = normalize_illumination_spec(item)
+                    unique.append(illumination_nominal_wavelength_nm(spec))
+                except (IlluminationSpecError, TypeError, ValueError) as exc:
+                    raise DiffractionSupportAnalysisError(
+                        "raw plan_json wavelength entries must use illumination"
+                    ) from exc
             indices = np.asarray(f["raw/wavelength_index"], dtype=np.int64)
             return [unique[int(i)] for i in indices[:n]]
-        wavelength = plan.get("wavelength")
-        if isinstance(wavelength, dict) and wavelength.get("wavelength_nm") is not None:
-            return [float(wavelength["wavelength_nm"]) for _ in range(n)]
     return [float("nan") for _ in range(n)]
 
 

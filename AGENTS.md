@@ -266,9 +266,9 @@ zero-order position, where it passes broadband light through the optical path.
   zero-order mode.
 * Do not call ``set_wavelength_nm(0)``. The `tls_c1` high-level parser rejects
   non-positive wavelengths and exposes pass-through as a separate API.
-* Capture plans may use ``wavelength_nm: 0.0`` as a compatibility encoding for
-  pass-through. Task internals must normalize wavelength entries to
-  `IlluminationSpec` and must not scatter ``wavelength_nm == 0.0`` checks.
+* Capture plans must use explicit illumination objects. Numeric wavelength
+  sentinels are not supported pass-through encodings.
+* Task internals must consume `IlluminationSpec`.
 * Pass-through is a device-control mode, not a physical wavelength.
 * Wavelength labels without TLS are not equivalent to pass-through mode; they
   skip TLS movement, while pass-through explicitly moves the grating to
@@ -312,8 +312,8 @@ Hard rules:
 
 * Pass-through uses `TLSService.set_pass_through()` /
   `tls_c1.set_pass_through()`, not `set_wavelength(0)`.
-* Capture tasks should use `tasks.illumination.IlluminationSpec` rather than
-  raw `wavelength_nm == 0.0` sentinel checks.
+* Capture plans must use explicit `tasks.illumination.IlluminationSpec`
+  objects; raw numeric pass-through sentinel checks are invalid.
 * PSF-producing tasks need a `PupilProfile` and a per-band pupil-open
   `CameraProfile`.
 * Broadband `CameraProfile` artifacts are only for broadband pupil scan.
@@ -388,9 +388,9 @@ processing flags
 ```
 
 Raw capture metadata should use camera frame extent terminology.
-`/camera/frame_extent_json` is the preferred raw HDF5 field.
-`/camera/roi_json` is a legacy compatibility alias for camera SDK ROI metadata
-and must not be used as a PSF crop or ROI-support concept.
+`/camera/frame_extent_json` is the raw HDF5 field. Capture plans must use
+`camera.frame_extent`. Pre-mainline thesis/development data are outside the
+current schema and require explicit migration if needed.
 
 Measured artifacts have distinct roles:
 

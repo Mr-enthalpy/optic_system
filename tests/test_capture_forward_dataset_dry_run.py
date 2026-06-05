@@ -17,6 +17,40 @@ from tasks.capture_forward_dataset import (
 )
 
 
+def _mono_entry(wavelength_nm: float, **extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "monochromatic",
+            "effective_wavelength_nm": float(wavelength_nm),
+            "tls_setpoint_nm": float(wavelength_nm),
+        },
+        **extra,
+    }
+
+
+def _label_entry(wavelength_nm: float, **extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "label_only",
+            "effective_wavelength_nm": float(wavelength_nm),
+            "tls_setpoint_nm": None,
+            "wavelength_label_nm": float(wavelength_nm),
+        },
+        **extra,
+    }
+
+
+def _pass_entry(**extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "broadband_passthrough",
+            "effective_wavelength_nm": None,
+            "tls_setpoint_nm": 0.0,
+        },
+        **extra,
+    }
+
+
 def _h5_str(dset) -> str:
     val = dset[()]
     if isinstance(val, bytes):
@@ -90,7 +124,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "pass_through_test",
-            "wavelengths": [{"wavelength_nm": 0.0}],
+            "wavelengths": [_pass_entry()],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 1},
         })
@@ -232,7 +266,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "burst_frames_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 3},
             "store_burst": True,
@@ -269,7 +303,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "noburst_avg_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 3, "average_burst": False},
             "store_burst": False,
@@ -298,7 +332,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "grating_test",
-            "wavelengths": [{"wavelength_nm": 532, "grating": 3}],
+            "wavelengths": [_mono_entry(532, grating=3)],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 1},
         })
@@ -369,7 +403,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "shape_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "bad_shape", "array": np.zeros((100, 200), dtype=np.uint8)}],
             "camera": {"frames_per_capture": 1},
         })
@@ -393,7 +427,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "camera_params_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
             "camera": {
                 "frames_per_capture": 2,
@@ -440,7 +474,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "no_camera_params_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 2},
         })

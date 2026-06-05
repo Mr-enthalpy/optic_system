@@ -93,6 +93,17 @@ def _write_raw_frames(path: Path, frames: np.ndarray) -> None:
         raw.create_dataset("frames_avg", data=arr)
         raw.create_dataset("mask_id", data=np.asarray(["raw_mask"], dtype=object), dtype=string_dtype)
         raw.create_dataset("wavelength_nm", data=np.asarray([550.0], dtype=np.float64))
+        camera = f.require_group("camera")
+        camera.create_dataset(
+            "frame_extent_json",
+            data=[json.dumps({
+                "mode": "full_sensor",
+                "origin_xy": [0, 0],
+                "shape_hw": [int(arr.shape[1]), int(arr.shape[2])],
+                "sensor_shape_hw": [int(arr.shape[1]), int(arr.shape[2])],
+            })],
+            dtype=string_dtype,
+        )
 
 
 def _center_profile(
@@ -232,7 +243,7 @@ def test_raw_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:
         allow_raw_fallback=True,
         runtime_policy="diagnostic",
     )
-    assert profile.coordinate_frame == "acquired_frame"
+    assert profile.coordinate_frame == "sensor_full_frame"
 
 
 def test_support_analysis_uses_sensor_energy_center_profile_for_radius(tmp_path: Path) -> None:

@@ -476,9 +476,12 @@ def run_capture_forward_dataset(
                 if wl_entry.settle_ms > 0 and not dry_run:
                     time.sleep(wl_entry.settle_ms / 1000.0)
             else:
-                tls_status = illumination_status_without_tls(
-                    _no_tls_illumination(illumination)
-                )
+                if _illumination_requires_tls(illumination):
+                    raise RuntimeModeError(
+                        "illumination requires TLS; use explicit label_only "
+                        "illumination for no-TLS non-hardware captures"
+                    )
+                tls_status = illumination_status_without_tls(illumination)
                 tls_status["grating"] = wl_entry.grating
                 tls_status["timestamp_ns"] = time.monotonic_ns()
 
@@ -565,19 +568,6 @@ def run_capture_forward_dataset(
         raise
 
     return output_path
-
-
-def _no_tls_illumination(spec: IlluminationSpec) -> IlluminationSpec:
-    if spec.is_monochromatic:
-        label = spec.wavelength_label_nm or spec.effective_wavelength_nm
-        return IlluminationSpec(
-            mode="label_only",
-            effective_wavelength_nm=spec.effective_wavelength_nm,
-            tls_setpoint_nm=None,
-            wavelength_label_nm=label,
-            source_encoding=spec.source_encoding,
-        )
-    return spec
 
 
 def _resolve_runtime_policy(

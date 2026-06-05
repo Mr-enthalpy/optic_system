@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from tasks.illumination import illumination_from_legacy_wavelength_nm
+from tasks.illumination import IlluminationSpec
 from tasks.runtime_mode import (
     RuntimePolicy,
     RuntimeModeError,
@@ -221,7 +221,11 @@ def calibrate_broadband_camera_profile(
 
 
 def _tls_status_dict(tls: PassThroughTLS | None) -> dict[str, Any]:
-    illumination = illumination_from_legacy_wavelength_nm(0.0).to_dict()
+    illumination = IlluminationSpec(
+        mode="broadband_passthrough",
+        effective_wavelength_nm=None,
+        tls_setpoint_nm=0.0,
+    ).to_dict()
     if tls is None:
         return {
             "connected": False,
