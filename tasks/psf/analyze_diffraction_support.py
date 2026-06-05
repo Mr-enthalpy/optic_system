@@ -18,6 +18,11 @@ from tasks.artifacts.json_io import (
     decode_h5_string,
     read_json_dataset_or_attr as _shared_read_json_dataset_or_attr,
 )
+from tasks.runtime_mode import (
+    RuntimePolicy,
+    normalize_runtime_policy,
+    validate_raw_fallback_allowed,
+)
 
 from .sensor_energy_center import (
     SensorEnergyCenterError,
@@ -136,7 +141,13 @@ def analyze_diffraction_support(
     energy_only: bool = False,
     preset_name: str | None = None,
     notes: str | None = None,
+    runtime_policy: RuntimePolicy | str | None = None,
 ) -> PeakSupportAnalysisManifest:
+    policy = normalize_runtime_policy(runtime_policy)
+    validate_raw_fallback_allowed(
+        allow_raw_fallback=allow_raw_fallback,
+        policy=policy,
+    )
     source_path = Path(survey_h5)
     out_path = Path(output_h5)
     preset = _support_analysis_preset(preset_name)
@@ -320,7 +331,17 @@ def analyze_diffraction_support(
     return manifest
 
 
-def load_full_frame_psf_survey(path: str | Path, *, allow_raw_fallback: bool = False) -> SurveyData:
+def load_full_frame_psf_survey(
+    path: str | Path,
+    *,
+    allow_raw_fallback: bool = False,
+    runtime_policy: RuntimePolicy | str | None = None,
+) -> SurveyData:
+    policy = normalize_runtime_policy(runtime_policy)
+    validate_raw_fallback_allowed(
+        allow_raw_fallback=allow_raw_fallback,
+        policy=policy,
+    )
     source_path = Path(path)
     with h5py.File(str(source_path), "r") as f:
         frames_ds, metadata = _open_survey_frame_source(f, allow_raw_fallback=allow_raw_fallback)

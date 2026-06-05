@@ -111,6 +111,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="disable optional run-status output",
     )
+    parser.add_argument(
+        "--runtime-mode",
+        choices=("hardware", "no_hardware", "synthetic", "diagnostic"),
+        default=None,
+        help="runtime validation mode; defaults to no_hardware for dry-run and hardware for --hardware",
+    )
     return parser.parse_args(argv)
 
 
@@ -180,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=True,
             status_dir=status_dir,
             run_id=run_id,
+            runtime_policy=args.runtime_mode or "no_hardware",
         )
         print(f"[dry-run] wrote {plan.n_captures} captures to {result}")
         return 0
@@ -277,6 +284,7 @@ def _run_hardware(
             dry_run=False,
             status_dir=status_dir,
             run_id=run_id,
+            runtime_policy=args.runtime_mode or "hardware",
         )
         print(f"Capture complete: {result}")
     finally:

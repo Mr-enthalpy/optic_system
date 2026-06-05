@@ -261,6 +261,7 @@ def test_raw_frames_fallback_requires_explicit_opt_in(tmp_path: Path) -> None:
         tau_values=[0.5],
         support_radii=[10],
         allow_raw_fallback=True,
+        runtime_policy="diagnostic",
     )
     assert manifest.coordinate_frame == "acquired_frame"
     assert manifest.entry_mask_ids == ["raw_mask"]

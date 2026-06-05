@@ -124,6 +124,13 @@ wavelength entries to `IlluminationSpec` and should not scatter
 `wavelength_nm == 0.0` checks. Pass-through is a device-control mode, not a
 physical wavelength, and task code must call `TLSService.set_pass_through()`.
 
+Runtime mode is explicit for capture, profile, and diagnostic task entry
+points. Real hardware tasks default to hardware runtime mode. Fake devices,
+missing required hardware, raw fallback, and test-settle overrides must be
+explicit non-hardware/diagnostic choices. No-TLS positive wavelength labels are
+allowed only in non-hardware contexts. TLS zero-order pass-through requires a
+real TLS adapter in hardware mode.
+
 ## Relationship with LCD_forward
 
 `optic_system` should produce experimental data.

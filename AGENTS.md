@@ -283,6 +283,13 @@ coordinate-frame helpers. New measured-artifact modules should use this layer
 instead of reimplementing frame-source parsing, manifest JSON handling, or
 coordinate validation.
 
+Runtime mode is explicit for capture, profile, and diagnostic task entry
+points. Real hardware tasks default to hardware runtime mode. Fake devices,
+missing required hardware, raw fallback, and test-settle overrides must be
+explicit non-hardware/diagnostic choices. No-TLS positive wavelength labels are
+allowed only in non-hardware contexts. TLS zero-order pass-through requires a
+real TLS adapter in hardware mode.
+
 Before reusing any old task:
 
 1. audit whether it uses `control -> devices`

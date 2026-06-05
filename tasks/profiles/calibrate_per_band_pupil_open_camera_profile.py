@@ -4,9 +4,19 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Protocol
 
 import numpy as np
+
+from tasks.runtime_mode import (
+    RuntimePolicy,
+    RuntimeModeError,
+    normalize_runtime_policy,
+    validate_lcd_settle_policy,
+    validate_no_fake_devices,
+    validate_required_devices,
+)
 
 from .camera_profile import (
     MONOCHROMATIC,
@@ -115,9 +125,10 @@ class PerBandPupilOpenCalibrationPlan:
 class PerBandPupilOpenCalibrationResult:
     camera_profile: CameraProfile
     probe_results_by_wavelength: dict[str, list[ExposureProbeResult]]
+    runtime_policy: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "artifact_type": "per_band_pupil_open_camera_calibration_result",
             "camera_profile": self.camera_profile.to_dict(),
             "probe_results_by_wavelength": {
@@ -125,6 +136,10 @@ class PerBandPupilOpenCalibrationResult:
                 for key, rows in sorted(self.probe_results_by_wavelength.items())
             },
         }
+        if self.runtime_policy is not None:
+            result["runtime_policy"] = dict(self.runtime_policy)
+            result["runtime_mode"] = self.runtime_policy.get("mode")
+        return result
 
     def write_json(self, path: str | Path) -> None:
         Path(path).write_text(
@@ -141,7 +156,23 @@ def calibrate_per_band_pupil_open_camera_profile(
     lcd: PerBandLCD,
     tls: PerBandTLS | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    runtime_policy: RuntimePolicy | str | None = None,
 ) -> PerBandPupilOpenCalibrationResult:
+    policy = normalize_runtime_policy(runtime_policy)
+    devices = SimpleNamespace(camera=camera, lcd=lcd, tls=tls)
+    validate_required_devices(
+        devices,
+        policy=policy,
+        require_camera=True,
+        require_lcd=True,
+        require_tls=True,
+    )
+    validate_no_fake_devices(devices, policy=policy)
+    _validate_test_settle_override(
+        allow_test_override=plan.allow_test_lcd_settle_below_refresh,
+        lcd_settle_ms=plan.lcd_settle_ms,
+        policy=policy,
+    )
     if plan.pupil_profile_id != pupil_profile.pupil_profile_id:
         raise PerBandCalibrationError("plan pupil_profile_id does not match PupilProfile")
     if not plan.wavelengths:
@@ -232,6 +263,7 @@ def calibrate_per_band_pupil_open_camera_profile(
     return PerBandPupilOpenCalibrationResult(
         camera_profile=profile,
         probe_results_by_wavelength=probe_results,
+        runtime_policy=policy.to_dict(),
     )
 
 
@@ -259,3 +291,20 @@ def _settle_lcd(settle_ms: float, *, allow_test_below_refresh: bool = False) -> 
         raise PerBandCalibrationError("lcd_settle_ms must be at least 20 ms")
     if float(settle_ms) > 0.0:
         time.sleep(float(settle_ms) / 1000.0)
+
+
+def _validate_test_settle_override(
+    *,
+    allow_test_override: bool,
+    lcd_settle_ms: float,
+    policy: RuntimePolicy,
+) -> None:
+    if allow_test_override and not policy.allow_test_settle_override:
+        raise RuntimeModeError(
+            "allow_test_lcd_settle_below_refresh requires explicit non-hardware runtime mode"
+        )
+    validate_lcd_settle_policy(
+        lcd_settle_ms=lcd_settle_ms,
+        expected_min_settle_ms=20,
+        policy=policy,
+    )

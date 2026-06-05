@@ -140,6 +140,8 @@ class RawCaptureWriter:
         cap_grp.create_dataset("completed", shape=(n_cap,), dtype=bool, fillvalue=False)
         cap_grp.create_dataset("plan_json", data=_json_str(self._plan.to_dict()))
         cap_grp.create_dataset("plan_id", data=self._plan.plan_id)
+        cap_grp.create_dataset("runtime_mode", data="")
+        cap_grp.create_dataset("runtime_policy_json", data=_json_str({}))
 
         profile_grp = f.require_group("profiles")
         profile_requires = self._plan.requires
@@ -223,6 +225,13 @@ class RawCaptureWriter:
             }
         lcd_grp["mapping_policy_json"][0] = _json_str(mapping)
         lcd_grp["metadata_json"][0] = _json_str(lcd_meta)
+
+    def write_runtime_metadata(self, runtime_policy: dict[str, Any]) -> None:
+        _ensure_open(self._file)
+        cap_grp = self._file["capture"]
+        mode = str(runtime_policy.get("mode") or "")
+        cap_grp["runtime_mode"][()] = mode
+        cap_grp["runtime_policy_json"][()] = _json_str(runtime_policy)
 
     def append_capture(
         self,

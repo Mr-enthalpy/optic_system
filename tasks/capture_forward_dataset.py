@@ -35,6 +35,16 @@ from .illumination import (
     illumination_status_without_tls,
 )
 from .raw_capture_h5 import RawCaptureWriter, RawCaptureWriteError
+from .runtime_mode import (
+    RuntimePolicy,
+    RuntimeModeError,
+    hardware_runtime_policy,
+    no_hardware_runtime_policy,
+    normalize_runtime_policy,
+    validate_no_fake_devices,
+    validate_required_devices,
+    validate_tls_for_illumination,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +137,8 @@ class CaptureDeviceBundle(_Protocol):
 
 
 class FakeCamera:
+    is_fake = True
+
     def __init__(self, *, seed: int = 42, height: int = 480, width: int = 640,
                  exposure_us: float | None = None, gain_db: float | None = None):
         self._rng = np.random.default_rng(seed)
@@ -164,6 +176,8 @@ class FakeCamera:
 
 
 class FakeLCD:
+    is_fake = True
+
     def __init__(self, *, height: int = 60, width_phys: int = 180, subpixel_axis: int = 1):
         self._h = height
         self._w = width_phys
@@ -196,6 +210,8 @@ class FakeLCD:
 
 
 class FakeTLS:
+    is_fake = True
+
     def __init__(self):
         self._current_nm: float | None = None
         self._target_nm: float | None = None
@@ -230,6 +246,8 @@ class FakeTLS:
 
 
 class FakeDeviceBundle:
+    is_fake = True
+
     def __init__(
         self,
         camera: CameraCaptureProtocol | None = None,
@@ -374,8 +392,24 @@ def run_capture_forward_dataset(
     dry_run: bool = False,
     status_dir: Path | None = None,
     run_id: str | None = None,
+    runtime_policy: RuntimePolicy | str | None = None,
 ) -> Path:
     plan.validate()
+    policy = _resolve_runtime_policy(runtime_policy, dry_run=dry_run)
+    illuminations = [entry.resolved_illumination() for entry in plan.wavelengths]
+    require_tls = bool(enable_tls or any(_illumination_requires_tls(item) for item in illuminations))
+    validate_required_devices(
+        devices,
+        policy=policy,
+        require_camera=True,
+        require_lcd=True,
+        require_tls=require_tls,
+    )
+    validate_no_fake_devices(devices, policy=policy)
+    if dry_run and policy.mode.value == "hardware" and not policy.allow_dry_run_hardware_write:
+        raise RuntimeModeError("dry_run=True requires an explicit non-hardware runtime policy")
+    for illumination in illuminations:
+        validate_tls_for_illumination(illumination, devices.tls, policy=policy)
 
     if enable_tls and devices.tls is None:
         raise TLSUnavailableError()
@@ -388,6 +422,8 @@ def run_capture_forward_dataset(
     _safe_status_update(
         status,
         plan_id=plan.plan_id,
+        runtime_mode=policy.mode.value,
+        runtime_policy=policy.to_dict(),
         phase="starting",
         capture_index=0,
         n_captures=plan.n_captures,
@@ -401,6 +437,7 @@ def run_capture_forward_dataset(
     writer.open()
 
     try:
+        writer.write_runtime_metadata(policy.to_dict())
         writer.write_lcd_metadata(devices.lcd.metadata())
         writer.write_physical_masks(physical_masks)
 
@@ -421,7 +458,7 @@ def run_capture_forward_dataset(
 
         capture_idx = 0
         for wi, wl_entry in enumerate(plan.wavelengths):
-            illumination = wl_entry.resolved_illumination()
+            illumination = illuminations[wi]
             if enable_tls and devices.tls is not None:
                 tls = devices.tls
                 if wl_entry.grating is not None:
@@ -536,6 +573,22 @@ def _no_tls_illumination(spec: IlluminationSpec) -> IlluminationSpec:
             source_encoding=spec.source_encoding,
         )
     return spec
+
+
+def _resolve_runtime_policy(
+    value: RuntimePolicy | str | None,
+    *,
+    dry_run: bool,
+) -> RuntimePolicy:
+    if value is not None:
+        return normalize_runtime_policy(value)
+    if dry_run:
+        return no_hardware_runtime_policy()
+    return hardware_runtime_policy()
+
+
+def _illumination_requires_tls(spec: IlluminationSpec) -> bool:
+    return bool(spec.requires_tls_pass_through or spec.requires_tls_wavelength_move)
 
 
 def _validate_mask_shape(

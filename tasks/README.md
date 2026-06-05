@@ -51,6 +51,18 @@ CLI entry point:
 scripts/capture_forward_dataset.py
 ```
 
+## Active Runtime Mode Helpers
+
+| File | Status | Purpose |
+|------|--------|---------|
+| `tasks/runtime_mode.py` | **active** | Explicit `hardware`, `no_hardware`, `synthetic`, and `diagnostic` runtime validation policies. |
+
+Real hardware tasks default to hardware runtime mode.
+Fake devices, missing required hardware, raw fallback, and test-settle
+overrides must be explicit non-hardware/diagnostic choices.
+No-TLS positive wavelength labels are allowed only in non-hardware contexts.
+TLS zero-order pass-through requires a real TLS adapter in hardware mode.
+
 ## Active Profile Modules
 
 | File | Status | Purpose |
