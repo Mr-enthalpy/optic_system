@@ -7,6 +7,10 @@ from typing import Any
 import h5py
 import numpy as np
 
+from tasks.artifacts.coordinate_frame import (
+    camera_frame_extent_to_dict,
+    read_camera_frame_extent_from_group,
+)
 from tasks.profiles import CameraProfile, PupilProfile
 from .profile_requirements import validate_psf_profile_dependencies
 
@@ -100,24 +104,22 @@ def camera_frame_extent(
     *,
     frame_shape: tuple[int, int] | None,
 ) -> dict[str, Any]:
-    shape_hw = None if frame_shape is None else [int(frame_shape[0]), int(frame_shape[1])]
-    roi = _first_camera_roi(src)
-    if roi is not None:
-        x0, y0, width, height = roi
-        return {
-            "mode": "sensor_roi",
-            "origin_xy": [int(x0), int(y0)],
-            "shape_hw": [int(height), int(width)],
-            "sensor_shape_hw": None,
-        }
-    status_extent = _camera_status_extent(src, shape_hw=shape_hw)
-    if status_extent is not None:
-        return status_extent
+    if "camera" in src:
+        extent = read_camera_frame_extent_from_group(
+            src["camera"],
+            fallback_shape=frame_shape,
+        )
+        return camera_frame_extent_to_dict(extent)
+    if frame_shape is None:
+        shape_hw = None
+    else:
+        shape_hw = [int(frame_shape[0]), int(frame_shape[1])]
     return {
         "mode": "unknown",
         "origin_xy": [0, 0],
         "shape_hw": shape_hw,
         "sensor_shape_hw": None,
+        "source": "fallback_from_frame_shape",
     }
 
 
@@ -194,54 +196,3 @@ def _load_profile_manifest(cls: Any, path: str | Path) -> Any:
     return cls.load_json(profile_path)
 
 
-def _first_camera_roi(src: h5py.File) -> tuple[int, int, int, int] | None:
-    if "camera/roi_json" not in src:
-        return None
-    for value in src["camera/roi_json"]:
-        text = value.decode("utf-8") if isinstance(value, bytes) else str(value)
-        try:
-            roi = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(roi, list) and len(roi) == 4:
-            return int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3])
-    return None
-
-
-def _camera_status_extent(
-    src: h5py.File,
-    *,
-    shape_hw: list[int] | None,
-) -> dict[str, Any] | None:
-    if "camera/status_json" not in src:
-        return None
-    for value in src["camera/status_json"]:
-        text = value.decode("utf-8") if isinstance(value, bytes) else str(value)
-        try:
-            status = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(status, dict):
-            continue
-        explicit = status.get("camera_frame_extent")
-        if isinstance(explicit, dict) and isinstance(explicit.get("mode"), str):
-            return {
-                "mode": explicit.get("mode"),
-                "origin_xy": explicit.get("origin_xy", [0, 0]),
-                "shape_hw": explicit.get("shape_hw", shape_hw),
-                "sensor_shape_hw": explicit.get("sensor_shape_hw"),
-            }
-        sensor_shape = status.get("sensor_shape_hw")
-        if (
-            isinstance(sensor_shape, list)
-            and len(sensor_shape) == 2
-            and shape_hw is not None
-            and [int(sensor_shape[0]), int(sensor_shape[1])] == shape_hw
-        ):
-            return {
-                "mode": "full_sensor",
-                "origin_xy": [0, 0],
-                "shape_hw": shape_hw,
-                "sensor_shape_hw": shape_hw,
-            }
-    return None

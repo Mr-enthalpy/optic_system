@@ -11,6 +11,7 @@ from .coordinate_frame import (
     CameraFrameExtent,
     camera_frame_extent_from_dict,
     camera_frame_extent_to_dict,
+    read_camera_frame_extent_from_group,
     resolve_coordinate_frame,
 )
 from .errors import ArtifactIOError
@@ -77,16 +78,22 @@ def open_raw_frames_avg_source(h5: h5py.File, source_path: str | Path) -> FrameS
         raise ArtifactIOError("missing raw/frames_avg")
     frames = h5["raw/frames_avg"]
     frame_count, frame_shape = frame_dataset_count_and_shape(frames)
-    extent = camera_frame_extent_from_dict(
-        _fallback_extent({}, frame_shape),
-        fallback_shape=frame_shape,
-    )
+    if "camera" in h5:
+        extent = read_camera_frame_extent_from_group(
+            h5["camera"],
+            fallback_shape=frame_shape,
+        )
+    else:
+        extent = camera_frame_extent_from_dict(
+            _fallback_extent({}, frame_shape),
+            fallback_shape=frame_shape,
+        )
     descriptor = FrameSourceDescriptor(
         source_path=str(source_path),
         dataset_path="raw/frames_avg",
         frame_count=frame_count,
         frame_shape=frame_shape,
-        coordinate_frame="acquired_frame",
+        coordinate_frame=resolve_coordinate_frame(extent),
         camera_frame_extent=extent,
         mask_ids=tuple(_read_dataset_strings(h5, "raw/mask_id", frame_count, "entry")),
         wavelengths_nm=tuple(_read_raw_wavelengths(h5, frame_count)),
@@ -208,6 +215,7 @@ def _fallback_extent(data: dict[str, Any], frame_shape: tuple[int, int]) -> dict
         "origin_xy": [0, 0],
         "shape_hw": [int(frame_shape[0]), int(frame_shape[1])],
         "sensor_shape_hw": None,
+        "source": "fallback_from_frame_shape",
     }
 
 

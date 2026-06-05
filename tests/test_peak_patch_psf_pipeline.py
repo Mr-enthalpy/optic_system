@@ -33,7 +33,7 @@ def _raw_psf_capture(
     *,
     with_profiles: bool = True,
     wavelengths: list[float] | None = None,
-    camera_roi: list[int] | None = None,
+    legacy_camera_roi: list[int] | None = None,
     sensor_shape_hw: list[int] | None = None,
 ) -> Path:
     wavelengths = wavelengths or [450.0, 550.0]
@@ -76,7 +76,7 @@ def _raw_psf_capture(
                 frames=None,
                 frames_avg=frame,
                 camera_meta={
-                    "roi": camera_roi,
+                    "roi": legacy_camera_roi,
                     "status": (
                         {"sensor_shape_hw": sensor_shape_hw}
                         if sensor_shape_hw is not None
@@ -203,6 +203,7 @@ def test_derives_peak_layout_profile_from_survey(tmp_path: Path) -> None:
         "origin_xy": [0, 0],
         "shape_hw": [20, 20],
         "sensor_shape_hw": [20, 20],
+        "source": "camera_status_metadata",
     }
     assert layout.survey_mask_ids == ["mask_a", "mask_b"]
     assert layout.survey_wavelengths_nm == [450.0, 550.0]
@@ -262,7 +263,7 @@ def test_peak_patch_dictionary_rejects_profile_missing_raw_wavelength(tmp_path: 
 
 def test_peak_patch_dictionary_rejects_camera_frame_extent_mismatch(tmp_path: Path) -> None:
     _, _, layout_path = _survey_and_layout(tmp_path)
-    raw_path = _raw_psf_capture(tmp_path, camera_roi=[10, 20, 20, 20])
+    raw_path = _raw_psf_capture(tmp_path, legacy_camera_roi=[10, 20, 20, 20])
     pupil_manifest, camera_manifest = _write_profile_manifests(tmp_path)
 
     with pytest.raises(PeakPatchPSFDictionaryError, match="camera_frame_extent"):

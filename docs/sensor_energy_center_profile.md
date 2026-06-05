@@ -3,7 +3,7 @@
 `SensorEnergyCenterProfile` defines one global camera-sensor coordinate origin
 for PSF support analysis and future peak-cluster modelling.
 
-It is not a crop-window artifact. It does not define ROI extraction, ROI size
+It is not a crop-window artifact. It does not define crop extraction, crop-size
 selection, or training-ready PSF crops.
 
 ## Pipeline Position

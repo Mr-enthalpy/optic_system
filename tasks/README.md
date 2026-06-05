@@ -88,6 +88,11 @@ Profile-chain hardware rules are centralized in
 New measured-artifact modules should use `tasks/artifacts/` instead of
 reimplementing frame-source parsing or coordinate validation.
 
+Raw capture metadata should use camera frame extent terminology.
+`/camera/frame_extent_json` is the preferred raw HDF5 field.
+`/camera/roi_json` is a legacy compatibility alias for camera SDK ROI metadata
+and must not be used as a PSF crop or ROI-support concept.
+
 ## Active Illumination Helpers
 
 | File | Status | Purpose |

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+import h5py
+
 
 SUPPORTED_COORDINATE_FRAMES = {"sensor_full_frame", "acquired_frame"}
+CAMERA_FRAME_EXTENT_DATASET_PRIORITY = (
+    "frame_extent_json",
+    "acquired_frame_extent_json",
+    "roi_json",
+)
 
 
 @dataclass(frozen=True)
@@ -13,6 +21,7 @@ class CameraFrameExtent:
     origin_xy: tuple[int, int]
     shape_hw: tuple[int, int]
     sensor_shape_hw: tuple[int, int] | None = None
+    source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,11 +51,12 @@ def camera_frame_extent_from_dict(
             _int_pair(sensor_shape, "camera_frame_extent.sensor_shape_hw")
             if sensor_shape is not None else None
         ),
+        source=_optional_str(data.get("source")),
     )
 
 
 def camera_frame_extent_to_dict(extent: CameraFrameExtent) -> dict[str, Any]:
-    return {
+    result = {
         "mode": str(extent.mode),
         "origin_xy": [int(extent.origin_xy[0]), int(extent.origin_xy[1])],
         "shape_hw": [int(extent.shape_hw[0]), int(extent.shape_hw[1])],
@@ -55,6 +65,128 @@ def camera_frame_extent_to_dict(extent: CameraFrameExtent) -> dict[str, Any]:
             if extent.sensor_shape_hw is not None else None
         ),
     }
+    if extent.source is not None:
+        result["source"] = extent.source
+    return result
+
+
+def camera_frame_extent_json_dict(extent: CameraFrameExtent) -> dict[str, Any]:
+    return camera_frame_extent_to_dict(extent)
+
+
+def camera_frame_extent_from_camera_metadata(
+    metadata: Mapping[str, Any],
+    *,
+    fallback_shape: tuple[int, int] | None = None,
+) -> CameraFrameExtent:
+    for key in (
+        "camera_frame_extent",
+        "frame_extent",
+        "acquired_frame_extent",
+        "frame_extent_json",
+        "acquired_frame_extent_json",
+    ):
+        extent = _extent_from_possible_json(metadata.get(key))
+        if extent is not None:
+            extent.setdefault("source", "camera_metadata")
+            return camera_frame_extent_from_dict(extent, fallback_shape=fallback_shape)
+
+    status = metadata.get("status")
+    if isinstance(status, Mapping):
+        for key in ("camera_frame_extent", "frame_extent", "acquired_frame_extent"):
+            extent = _extent_from_possible_json(status.get(key))
+            if extent is not None:
+                extent.setdefault("source", "camera_status_metadata")
+                return camera_frame_extent_from_dict(
+                    extent,
+                    fallback_shape=fallback_shape,
+                )
+
+    roi = _normalize_roi_metadata(metadata.get("roi"), fallback_shape=fallback_shape)
+    if roi is None and isinstance(status, Mapping):
+        roi = _normalize_roi_metadata(status.get("roi"), fallback_shape=fallback_shape)
+    if roi is not None:
+        if roi.get("sensor_shape_hw") is None:
+            sensor_shape = _sensor_shape_from_metadata(metadata)
+            if sensor_shape is None and isinstance(status, Mapping):
+                sensor_shape = _sensor_shape_from_metadata(status)
+            if sensor_shape is not None:
+                roi["sensor_shape_hw"] = [int(sensor_shape[0]), int(sensor_shape[1])]
+        roi.setdefault("source", "camera_metadata")
+        return camera_frame_extent_from_dict(roi, fallback_shape=fallback_shape)
+
+    shape = _shape_from_metadata(metadata) or fallback_shape
+    if shape is None:
+        raise ValueError("camera_frame_extent.shape_hw is required")
+
+    sensor_shape = _sensor_shape_from_metadata(metadata)
+    if sensor_shape is None and isinstance(status, Mapping):
+        sensor_shape = _sensor_shape_from_metadata(status)
+    mode = (
+        "full_sensor"
+        if sensor_shape is not None and tuple(sensor_shape) == tuple(shape)
+        else "unknown"
+    )
+    source = (
+        "camera_status_metadata"
+        if sensor_shape is not None and isinstance(status, Mapping)
+        else "fallback_from_frame_shape"
+    )
+    return CameraFrameExtent(
+        mode=mode,
+        origin_xy=(0, 0),
+        shape_hw=(int(shape[0]), int(shape[1])),
+        sensor_shape_hw=(
+            (int(sensor_shape[0]), int(sensor_shape[1]))
+            if sensor_shape is not None else None
+        ),
+        source=source,
+    )
+
+
+def read_camera_frame_extent_from_group(
+    group: h5py.Group,
+    *,
+    fallback_shape: tuple[int, int] | None = None,
+) -> CameraFrameExtent:
+    for name in CAMERA_FRAME_EXTENT_DATASET_PRIORITY:
+        if name not in group:
+            continue
+        for data in _iter_json_dataset_objects(group[name]):
+            extent = _normalize_extent_payload(
+                data,
+                source=(
+                    "legacy_roi_json"
+                    if name == "roi_json" else f"camera/{name}"
+                ),
+                fallback_shape=fallback_shape,
+            )
+            if extent is not None:
+                return camera_frame_extent_from_dict(
+                    extent,
+                    fallback_shape=fallback_shape,
+                )
+
+    if "status_json" in group:
+        for status in _iter_json_dataset_objects(group["status_json"]):
+            if isinstance(status, Mapping):
+                try:
+                    return camera_frame_extent_from_camera_metadata(
+                        {"status": status},
+                        fallback_shape=fallback_shape,
+                    )
+                except ValueError:
+                    continue
+
+    if fallback_shape is None:
+        raise ValueError("camera_frame_extent.shape_hw is required")
+    return CameraFrameExtent(
+        mode="unknown",
+        origin_xy=(0, 0),
+        shape_hw=(int(fallback_shape[0]), int(fallback_shape[1])),
+        sensor_shape_hw=None,
+        source="fallback_from_frame_shape",
+    )
 
 
 def resolve_coordinate_frame(
@@ -88,3 +220,121 @@ def _int_pair(value: Any, name: str) -> tuple[int, int]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ValueError(f"{name} must contain two integers")
     return (int(value[0]), int(value[1]))
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _extent_from_possible_json(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, Mapping):
+        return dict(value)
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    if isinstance(value, str) and value.strip():
+        try:
+            data = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return dict(data) if isinstance(data, Mapping) else None
+    return None
+
+
+def _normalize_roi_metadata(
+    roi: Any,
+    *,
+    fallback_shape: tuple[int, int] | None,
+) -> dict[str, Any] | None:
+    if roi is None:
+        return None
+    if isinstance(roi, Mapping):
+        if {"mode", "origin_xy", "shape_hw"} & set(roi):
+            data = dict(roi)
+            data.setdefault("mode", "sensor_roi")
+            return data
+        x0 = roi.get("x", roi.get("offset_x", roi.get("origin_x", 0)))
+        y0 = roi.get("y", roi.get("offset_y", roi.get("origin_y", 0)))
+        width = roi.get("width", roi.get("w"))
+        height = roi.get("height", roi.get("h"))
+        sensor_shape = roi.get("sensor_shape_hw")
+        if sensor_shape is None and {"sensor_height", "sensor_width"} <= set(roi):
+            sensor_shape = [roi["sensor_height"], roi["sensor_width"]]
+        if width is None or height is None:
+            if fallback_shape is None:
+                return None
+            height, width = fallback_shape
+        return {
+            "mode": "sensor_roi",
+            "origin_xy": [int(x0), int(y0)],
+            "shape_hw": [int(height), int(width)],
+            "sensor_shape_hw": sensor_shape,
+        }
+    if isinstance(roi, (list, tuple)) and len(roi) == 4:
+        x0, y0, width, height = roi
+        return {
+            "mode": "sensor_roi",
+            "origin_xy": [int(x0), int(y0)],
+            "shape_hw": [int(height), int(width)],
+            "sensor_shape_hw": None,
+        }
+    return None
+
+
+def _shape_from_metadata(metadata: Mapping[str, Any]) -> tuple[int, int] | None:
+    for key in ("shape_hw", "frame_shape", "acquired_shape_hw"):
+        value = metadata.get(key)
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            return (int(value[0]), int(value[1]))
+    return None
+
+
+def _sensor_shape_from_metadata(metadata: Mapping[str, Any]) -> tuple[int, int] | None:
+    value = metadata.get("sensor_shape_hw")
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        return (int(value[0]), int(value[1]))
+    if {"sensor_height", "sensor_width"} <= set(metadata):
+        return (int(metadata["sensor_height"]), int(metadata["sensor_width"]))
+    return None
+
+
+def _iter_json_dataset_objects(dataset: h5py.Dataset) -> list[Any]:
+    raw = dataset[()]
+    if getattr(dataset, "shape", ()) == ():
+        return [_loads_json_h5_string(raw)]
+    if not isinstance(raw, (list, tuple)) and getattr(raw, "ndim", 0) == 0:
+        return [_loads_json_h5_string(raw)]
+    return [_loads_json_h5_string(item) for item in raw]
+
+
+def _loads_json_h5_string(value: Any) -> Any:
+    if isinstance(value, bytes):
+        text = value.decode("utf-8")
+    elif hasattr(value, "decode"):
+        text = value.decode("utf-8")
+    else:
+        text = str(value)
+    if not text.strip():
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _normalize_extent_payload(
+    data: Any,
+    *,
+    source: str,
+    fallback_shape: tuple[int, int] | None,
+) -> dict[str, Any] | None:
+    if isinstance(data, Mapping):
+        extent = dict(data)
+        extent.setdefault("source", source)
+        return extent
+    extent = _normalize_roi_metadata(data, fallback_shape=fallback_shape)
+    if extent is not None:
+        extent.setdefault("source", source)
+    return extent

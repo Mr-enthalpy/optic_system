@@ -10,7 +10,11 @@ import numpy as np
 
 from tasks.illumination import illumination_from_legacy_wavelength_nm
 
-from .camera_profile import BROADBAND_PASSTHROUGH, CameraProfile, IlluminationSpec
+from .camera_profile import (
+    BROADBAND_PASSTHROUGH,
+    CameraProfile,
+    CameraProfileIllumination,
+)
 from .exposure_search import (
     ExposureCandidate,
     ExposureGainSearchConfig,
@@ -141,7 +145,7 @@ def calibrate_broadband_camera_profile(
     profile = CameraProfile(
         camera_profile_id=plan.camera_profile_id,
         profile_family=BROADBAND_PASSTHROUGH,
-        illumination=IlluminationSpec(
+        illumination=CameraProfileIllumination(
             mode=BROADBAND_PASSTHROUGH,
             tls_setpoint_nm=0.0,
             effective_wavelength_nm=None,
