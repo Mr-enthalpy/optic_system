@@ -204,7 +204,7 @@ def build_full_frame_psf_survey(
             ]
             entry_wavelengths = [
                 _wavelength_from_illumination_json(
-                    _index_str(illumination_by_index, int(wavelength_indices[row]))
+                    index_string(illumination_by_index, int(wavelength_indices[row]))
                 )
                 for row in valid_rows
             ]
@@ -245,6 +245,8 @@ def build_full_frame_psf_survey(
                 notes=notes,
             )
         except PSFArtifactError as exc:
+            raise FullFramePSFSurveyError(str(exc)) from exc
+        except ValueError as exc:
             raise FullFramePSFSurveyError(str(exc)) from exc
         except ValueError as exc:
             raise FullFramePSFSurveyError(str(exc)) from exc
@@ -383,12 +385,6 @@ def _require_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise FullFramePSFSurveyError(f"{key} must be a mapping")
     return value
-
-
-def _index_str(values: list[str], index: int) -> str:
-    if 0 <= index < len(values):
-        return values[index]
-    return "{}"
 
 
 def _wavelength_from_illumination_json(illumination_str: str) -> float:

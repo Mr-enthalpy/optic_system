@@ -212,7 +212,7 @@ def build_peak_patch_psf_dictionary(
                 illumination_by_index = _read_raw_illumination_json_by_index(src, plan=plan)
             entry_wavelengths = [
                 _wavelength_from_illumination_json(
-                    _index_str(illumination_by_index, wl_idx)
+                    index_string(illumination_by_index, wl_idx)
                 )
                 for _, wl_idx in sorted_keys
             ]
@@ -252,6 +252,8 @@ def build_peak_patch_psf_dictionary(
                 notes=notes,
             )
         except PSFArtifactError as exc:
+            raise PeakPatchPSFDictionaryError(str(exc)) from exc
+        except ValueError as exc:
             raise PeakPatchPSFDictionaryError(str(exc)) from exc
 
         _write_dictionary_h5(
@@ -475,12 +477,6 @@ def _require_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
 
 def _int_pairs(data: dict[str, Any], key: str) -> list[list[int]]:
     return [[int(pair[0]), int(pair[1])] for pair in _require_list(data, key)]
-
-
-def _index_str(values: list[str], index: int) -> str:
-    if 0 <= index < len(values):
-        return values[index]
-    return "{}"
 
 
 def _wavelength_from_illumination_json(illumination_str: str) -> float:

@@ -53,10 +53,26 @@ def test_reads_full_frame_survey_2d_as_one_entry(tmp_path):
         group = f.create_group("full_frame_survey")
         group.create_dataset("frames_avg", data=np.zeros((3, 4), dtype=np.float64))
         group.create_dataset(
+            "entry_mask_ids",
+            data=np.asarray(["entry_0000"], dtype=object),
+            dtype=h5py.string_dtype(),
+        )
+        group.create_dataset("entry_wavelength_nm", data=np.asarray([float("nan")]))
+        group.create_dataset(
             "entry_illumination_json",
             data=np.asarray([
                 json.dumps({"mode": "unknown"})
             ], dtype=object),
+            dtype=h5py.string_dtype(),
+        )
+        group.create_dataset(
+            "camera_frame_extent_json",
+            data=json.dumps({
+                "mode": "unknown",
+                "origin_xy": [0, 0],
+                "shape_hw": [3, 4],
+                "sensor_shape_hw": None,
+            }),
             dtype=h5py.string_dtype(),
         )
         group.create_dataset(

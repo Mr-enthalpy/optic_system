@@ -233,7 +233,7 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 /raw/frames_avg              [N_capture, H, W] policy dtype, default float32
 /raw/frames                  [N_capture, K, H, W] policy dtype, default input dtype
                              (only if store_burst=True)
-/raw attrs: storage_policy_json, stores_burst, frames_per_capture,
+/raw attrs: storage_policy_json, store_burst, frames_per_capture,
             average_compute_dtype, frames_avg_stored_dtype, burst_stored_dtype,
             frame_height, frame_width, frames_avg_input_dtype
 /raw attrs: burst_input_dtype (only if store_burst=True)

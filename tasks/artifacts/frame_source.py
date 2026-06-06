@@ -99,9 +99,6 @@ def read_frame_entry(dataset: h5py.Dataset, entry_index: int) -> np.ndarray:
 def _read_survey_mask_ids(h5: h5py.File, group: h5py.Group, n: int) -> list[str]:
     if "full_frame_survey/entry_mask_ids" in h5:
         return _read_dataset_strings(h5, "full_frame_survey/entry_mask_ids", n, "entry")
-    manifest = read_json_dataset_or_attr(group, "manifest_json")
-    if isinstance(manifest.get("entry_mask_ids"), list):
-        return [str(x) for x in manifest["entry_mask_ids"][:n]]
     raise ArtifactIOError("missing full_frame_survey/entry_mask_ids")
 
 
@@ -109,18 +106,12 @@ def _read_survey_wavelengths(h5: h5py.File, group: h5py.Group, n: int) -> list[f
     if "entry_wavelength_nm" in group:
         arr = np.asarray(group["entry_wavelength_nm"], dtype=np.float64)
         return [float(x) for x in arr[:n]]
-    manifest = read_json_dataset_or_attr(group, "manifest_json")
-    if isinstance(manifest.get("entry_wavelengths_nm"), list):
-        return [float(x) for x in manifest["entry_wavelengths_nm"][:n]]
     raise ArtifactIOError("missing full_frame_survey/entry_wavelength_nm")
 
 
 def _read_survey_illumination_json(h5: h5py.File, group: h5py.Group, n: int) -> list[str]:
     if "entry_illumination_json" in group:
         return _read_dataset_strings(h5, "full_frame_survey/entry_illumination_json", n, "illumination")
-    manifest = read_json_dataset_or_attr(group, "manifest_json")
-    if isinstance(manifest.get("entry_illumination_json"), list):
-        return [str(x) for x in manifest["entry_illumination_json"][:n]]
     raise ArtifactIOError("missing full_frame_survey/entry_illumination_json")
 
 
