@@ -9,6 +9,10 @@ profiles, and adaptive peak-cluster dictionaries.
 This directory is intentionally non-functional. It reserves a future handoff
 boundary only.
 
+The current peak-patch measured-evidence HDF5 publisher is a v1 compatibility
+artifact derived from the existing `PeakPatchPSFDictionary` path. It does not
+define the final external `MeasuredEvidenceHandoff` schema.
+
 Rules:
 
 - do not import `LCD_forward`;

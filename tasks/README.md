@@ -58,6 +58,10 @@ Profile-chain hardware rules are centralized in
 | `tasks/psf/publish_measured_evidence_handoff.py` | **active** | Publishes peak-patch measured-evidence handoffs for downstream operator modelling. |
 | `tasks/psf/compact_dense_export.py` | **active** | Diagnostic dense canvas rendering from peak patches and recorded coordinates. |
 
+The current peak-patch measured-evidence HDF5 publisher is a v1 compatibility
+artifact derived from the existing `PeakPatchPSFDictionary` path. It does not
+define the final external `MeasuredEvidenceHandoff` schema.
+
 ## Active Shared Artifact Helpers
 
 | File | Status | Purpose |
