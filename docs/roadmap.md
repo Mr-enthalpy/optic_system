@@ -224,7 +224,7 @@ Artifacts and tasks:
 FullFramePSFSurvey
 first-pass PeakLayoutProfile
 fixed-size PeakPatchPSFDictionary
-peak-patch LCD_forward-readable export
+peak-patch measured-evidence handoff export
 ```
 
 Phase 3B is a baseline data contract, not the final peak-cluster algorithm. The

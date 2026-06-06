@@ -7,7 +7,7 @@ from typing import Any
 import h5py
 import numpy as np
 
-from tasks.artifacts.json_io import h5_string_dtype, read_scalar_string
+from tasks.artifacts.json_io import read_scalar_string
 from .build_peak_patch_psf_dictionary import (
     PeakPatchPSFDictionaryError,
     PeakPatchPSFDictionaryManifest,
@@ -15,11 +15,11 @@ from .build_peak_patch_psf_dictionary import (
 from .compact_dense_export import render_peak_patch_dense_view
 
 
-class PeakPatchDictionaryExportError(ValueError):
+class MeasuredEvidenceHandoffError(ValueError):
     pass
 
 
-def export_peak_patch_dictionary_to_lcd_forward(
+def publish_measured_evidence_handoff(
     *,
     dictionary_h5: str | Path,
     output_h5: str | Path,
@@ -28,7 +28,6 @@ def export_peak_patch_dictionary_to_lcd_forward(
     dictionary_path = Path(dictionary_h5)
     output_path = Path(output_h5)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    string_dtype = h5_string_dtype()
 
     with h5py.File(dictionary_path, "r") as src:
         _require_paths(
@@ -53,7 +52,7 @@ def export_peak_patch_dictionary_to_lcd_forward(
         patch_origin_xy = np.asarray(src["peak_patch_dictionary/patch_origin_xy"], dtype=np.int64)
 
         with h5py.File(output_path, "w") as dst:
-            dst.attrs["export_type"] = "lcd_forward_peak_patch_psf_dictionary"
+            dst.attrs["export_type"] = "measured_evidence_peak_patch_psf_dictionary"
             dst.attrs["source_dictionary_h5"] = str(dictionary_path)
             out_patches = dst.create_dataset(
                 "psf_peak_patches",
@@ -129,16 +128,16 @@ def _read_manifest(src: h5py.File) -> PeakPatchPSFDictionaryManifest:
     try:
         data = json.loads(text)
         if not isinstance(data, dict):
-            raise PeakPatchDictionaryExportError("manifest_json must decode to a mapping")
+            raise MeasuredEvidenceHandoffError("manifest_json must decode to a mapping")
         return PeakPatchPSFDictionaryManifest.from_dict(data)
     except (json.JSONDecodeError, PeakPatchPSFDictionaryError) as exc:
-        raise PeakPatchDictionaryExportError(str(exc)) from exc
+        raise MeasuredEvidenceHandoffError(str(exc)) from exc
 
 
 def _require_paths(src: h5py.File, paths: list[str]) -> None:
     for path in paths:
         if path not in src:
-            raise PeakPatchDictionaryExportError(f"dictionary missing {path}")
+            raise MeasuredEvidenceHandoffError(f"dictionary missing {path}")
 
 
 def _copy_dataset(src: h5py.File, dst: h5py.File, src_path: str, dst_path: str) -> None:

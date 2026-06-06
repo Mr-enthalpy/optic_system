@@ -15,7 +15,7 @@ from tasks.psf import (
     build_full_frame_psf_survey,
     build_peak_patch_psf_dictionary,
     derive_peak_layout_profile,
-    export_peak_patch_dictionary_to_lcd_forward,
+    publish_measured_evidence_handoff,
     render_peak_patch_dense_view,
 )
 from tasks.psf.derive_peak_layout_profile import PeakLayoutProfileError
@@ -372,7 +372,7 @@ def test_peak_patch_dictionary_rejects_camera_frame_extent_mismatch(tmp_path: Pa
         )
 
 
-def test_exports_peak_patch_dictionary_to_lcd_forward(tmp_path: Path) -> None:
+def test_publishes_peak_patch_measured_evidence_handoff(tmp_path: Path) -> None:
     raw_path, _, layout_path = _survey_and_layout(tmp_path)
     pupil_manifest, camera_manifest = _write_profile_manifests(tmp_path)
     dictionary_path = tmp_path / "peak_patch_dictionary.h5"
@@ -383,15 +383,16 @@ def test_exports_peak_patch_dictionary_to_lcd_forward(tmp_path: Path) -> None:
         pupil_profile_manifest=pupil_manifest,
         camera_profile_manifest=camera_manifest,
     )
-    output_path = tmp_path / "lcd_forward_peak_patch.h5"
+    output_path = tmp_path / "measured_evidence_peak_patch.h5"
 
-    export_peak_patch_dictionary_to_lcd_forward(
+    publish_measured_evidence_handoff(
         dictionary_h5=dictionary_path,
         output_h5=output_path,
         include_dense_diagnostic=True,
     )
 
     with h5py.File(output_path, "r") as f:
+        assert f.attrs["export_type"] == "measured_evidence_peak_patch_psf_dictionary"
         assert f["psf_peak_patches"].shape == (4, 2, 5, 5)
         assert f["peak_table/patch_origin_xy"].shape == (2, 2)
         assert _h5_str(f["peak_table/coordinate_frame"]) == "sensor_full_frame"
