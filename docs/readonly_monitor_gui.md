@@ -44,7 +44,9 @@ the capture task, not by making the monitor connect to camera hardware.
 `scripts/capture_forward_dataset.py` publishes a raw `.npy` latest-frame
 preview, `frame_stats.json`, and a camera log row after every completed burst.
 `frame_stats.json` is computed from the burst data and includes the maximum
-pixel value and saturated-pixel fraction for fast overexposure visibility.
+pixel value and saturated-pixel fraction for fast overexposure visibility. It
+is a run-status visibility diagnostic, not a complete saturation-audit
+artifact.
 
 ## Usage
 
@@ -134,6 +136,11 @@ This monitor is infrastructure only. Capture and calibration tasks must
 explicitly publish richer diagnostics by calling `write_frame_preview(...)`,
 `write_frame_stats(...)`, and `append_log(...)`. Future task integrations
 should add those calls where live diagnostics are useful.
+
+If a future task treats `frame_stats.json` as a persistent experiment-audit
+artifact, it should define a stricter schema with explicit non-finite
+status/count fields and an explicit full-scale source instead of depending on
+display-oriented full-scale inference.
 
 ## Dependencies
 

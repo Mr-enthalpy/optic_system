@@ -89,6 +89,10 @@ Rules:
 - Capture records should preserve raw dtype, shape, requested/readback
   exposure and gain, timestamps, frame statistics, and saturation diagnostics.
   Diagnostic fields must not rewrite or reinterpret the acquired frame facts.
+- Run-status `frame_stats.json` is a live visibility diagnostic unless a task
+  explicitly promotes it into a measured audit artifact. If promoted, it must
+  record strict non-finite status/count fields and explicit full-scale source
+  semantics instead of relying on inferred full scale from floating arrays.
 - Safety decisions, bad-pixel exclusion, and full-frame audit are separate
   layers.  A valid-pixel mask may define the safety decision domain, but
   excluded-domain saturation or non-finite pixels must still be recorded as
