@@ -13,31 +13,33 @@ is to:
   tasks consume;
 - construct measured artifacts from acquired data, such as surveys, support
   or layout diagnostics, and exportable measured dictionaries;
-- export metadata-rich artifacts toward the downstream learning repository
-  `LCD_forward`.
+- publish measured evidence and measured response handoffs toward external
+  modelling and reconstruction repositories.
 
 The repository prioritises reproducibility, explicit data contracts,
 provenance, safety checks, and full measurement context.  It does not train
 models, reconstruct scenes, or optimise masks.
 
-## 2. Boundary with downstream modelling repositories
+## 2. Boundary with peer repositories
 
-`optic_system` stops at measured artifacts and metadata-rich exports.
-Its downstream learning repository is `LCD_forward`.
+`optic_system` stops at measured artifacts, diagnostics, and handoff
+publication. It participates in a four-repository system:
 
-| `optic_system` (this repo) | `LCD_forward` |
+| Repository | Role |
 |---|---|
-| Hardware orchestration and raw capture | Training forward surrogates |
-| Profile / survey / support / peak-cluster artifacts | Multi-frame reconstruction |
-| Data validation, schema enforcement, diagnostics | Learned inverse solvers |
-| Explicit HDF5 export boundary | Differentiable mask / GenerMask optimisation |
+| `lcd_mask_families` | mask family/spec definitions, physical mask generation rules, quantization/projection, identity/versioning |
+| `optic_system` | hardware integration, visualization, synchronized acquisition, raw capture preservation, measured artifacts, diagnostics, handoff publication |
+| `LCD_forward` | measured-response/operator modelling, LCD-to-response surrogate learning, mask-family/operator evaluation and design, H-matrix/operator diagnostics |
+| `reconstruction` | inverse-problem solving, forward/adjoint consumption, reconstruction pipelines, learned reconstruction, task-level evaluation |
 
 Rules:
 
 - Do not implement forward surrogates, reconstruction networks, inverse
   solvers, mask-optimisation loops, or training pipelines.
 - Do not add hidden calls into downstream modelling packages.
-- Export toward `LCD_forward` must be explicit and traceable.
+- Do not implement `lcd_mask_families`, `LCD_forward`, or `reconstruction`
+  clients, adapters, imports, or final schemas until those contracts exist.
+- Handoff publication must be explicit and traceable.
 - If a change's primary purpose is to learn from artifacts rather than to
   produce, validate, or preserve them, it belongs outside this repository.
 
@@ -154,14 +156,16 @@ The following kinds of work belong in `optic_system`:
 
 ## 8. Work to reject or redirect
 
-The following must be redirected to `LCD_forward` or a dedicated
-experiment layer:
+The following must be redirected to `lcd_mask_families`, `LCD_forward`,
+`reconstruction`, or a dedicated experiment layer:
 
 - forward surrogate model training;
 - differentiable renderers or PSF emulators;
 - reconstruction networks or learned inverse solvers;
 - mask-optimisation loops;
 - GenerMask parameter learning;
+- mask-family design systems;
+- operator package generation;
 - evaluation metrics whose primary object is reconstruction quality rather
   than measured-system validity.
 
@@ -172,6 +176,7 @@ When uncertain whether a piece of work belongs here, ask:
 > Is this preserving, validating, organising, or diagnosing measured
 > experimental facts?
 
-If yes, it likely belongs in `optic_system`.  If the main purpose is to
-learn from artifacts, synthesise observations, reconstruct scenes, or
-optimise masks, it likely belongs in `LCD_forward`.
+If yes, it likely belongs in `optic_system`.  If the main purpose is to design
+mask families, learn operators, reconstruct scenes, or optimize masks, it
+belongs in `lcd_mask_families`, `LCD_forward`, `reconstruction`, or another
+external experiment layer.

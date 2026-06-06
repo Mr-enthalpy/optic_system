@@ -120,10 +120,16 @@ non-idealities can be measured, modeled, and optimized.
 
 ## Repository boundary
 
-`optic_system` supports this route by controlling hardware, preserving raw
-captures, building profile artifacts, storing full-frame PSF scout surveys,
-deriving peak layout profiles, building support reports, building measured
-peak-cluster dictionaries, recording metadata, and exporting diagnostics.
+This research route is a cross-repository loop, not an `optic_system`
+monolith.
+
+`optic_system` supports the route by controlling hardware, visualizing and
+synchronizing acquisition, preserving raw captures, building profile artifacts,
+storing full-frame PSF scout surveys, deriving support and layout evidence,
+building measured peak-cluster dictionary evidence, recording diagnostics, and
+publishing measured handoffs. It stops at measured artifacts, support evidence,
+layout evidence, adaptive peak-cluster dictionary evidence, diagnostics, and
+handoff publication.
 
 The current peak layout derivation is a replaceable first-pass implementation.
 It provides an auditable threshold-and-component baseline for estimating peak
@@ -131,10 +137,34 @@ patch geometry, not the final peak tracking or diffraction-order modelling
 method. Its detection policy is explicitly marked as a high-energy layout
 baseline because it may miss low-energy but stable far-field diffraction peaks.
 
-`LCD_forward` owns the learning-side work: LCD-to-PSF forward modelling,
-multi-frame rendering, joint reconstruction, and differentiable mask or
-`GenerMask` optimization.
+`lcd_mask_families` owns shared mask-family and mask-spec definitions:
+mask family identity, mask instance specs, mask sequence specs, physical mask
+generation rules, quantization/projection rules, and versioning. `optic_system`
+may consume explicit masks or mask specs from that repository once it exists,
+but it does not own mask-family design.
+
+`LCD_forward` owns mask-to-operator work: LCD mask-to-peak-cluster/operator
+surrogate modelling, LCD-to-measured-response learning, mask-family/operator
+evaluation and design from measured evidence, peak-cluster operator package
+generation, and H-matrix/operator diagnostics.
+
+`reconstruction` owns inverse problems: forward/adjoint consumption,
+multi-frame joint reconstruction, reconstruction pipelines, learned
+reconstruction, task-level evaluation, and reconstruction-driven capture-plan
+proposals.
+
+End-to-end optimization is therefore a cross-repository research loop:
+
+```text
+lcd_mask_families
+  -> mask specs / physical mask generation rules
+  -> optic_system measured acquisition
+  -> LCD_forward measured-response/operator learning and design
+  -> reconstruction inverse-problem evaluation
+  -> capture-plan or mask-family feedback
+```
 
 `optic_system` must not train peak-cluster forward models, differentiable
-forward surrogates, reconstruction networks, or mask-optimization loops. Those
-belong in `LCD_forward` or another learning-side repository.
+forward surrogates, reconstruction networks, or mask-optimization loops. It
+must also not implement cross-repository APIs before those repository contracts
+exist.

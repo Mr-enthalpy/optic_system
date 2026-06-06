@@ -13,7 +13,7 @@ The existing production flow remains:
 FullFramePSFSurvey
   -> PeakLayoutProfile
   -> PeakPatchPSFDictionary
-  -> LCD_forward-readable peak-patch export
+  -> measured evidence handoff for operator modelling
 ```
 
 Support analysis consumes the survey and writes a separate report. It does not

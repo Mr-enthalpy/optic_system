@@ -55,7 +55,7 @@ Profile-chain hardware rules are centralized in
 | `tasks/psf/sensor_energy_center.py` | **active** | Sensor energy center profile derivation for center-relative PSF / peak-cluster coordinates. |
 | `tasks/psf/derive_peak_layout_profile.py` | **active** | Peak layout profile derivation from scout survey data. |
 | `tasks/psf/build_peak_patch_psf_dictionary.py` | **active** | Profile-dependent peak-patch PSF dictionary builder. |
-| `tasks/psf/export_peak_patch_dictionary_to_lcd_forward.py` | **active** | Peak-patch dictionary export with LCD_forward-readable metadata. |
+| `tasks/psf/export_peak_patch_dictionary_to_lcd_forward.py` | **active** | Existing peak-patch measured-evidence export for downstream operator modelling. |
 | `tasks/psf/compact_dense_export.py` | **active** | Diagnostic dense canvas rendering from peak patches and recorded coordinates. |
 
 ## Active Shared Artifact Helpers

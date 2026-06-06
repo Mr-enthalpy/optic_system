@@ -37,9 +37,9 @@ Not yet started:
 
 ```text
 adaptive per-cluster-radius PSF dictionary as production format;
-LCD-to-PSF peak-cluster forward model training;
-multi-frame joint reconstruction;
-differentiable mask / GenerMask optimization.
+LCD-to-operator / measured-response modelling in LCD_forward;
+multi-frame joint reconstruction in reconstruction;
+mask-family design and optimization through lcd_mask_families / LCD_forward / reconstruction.
 ```
 
 The current mainline has a working baseline data contract and a first support
@@ -65,25 +65,35 @@ builds measured peak-cluster dictionaries;
 exports metadata-rich artifacts.
 ```
 
-`LCD_forward` is responsible for learning and inverse problems:
+Peer repositories are responsible for the remaining research loop:
 
 ```text
-trains LCD-to-PSF forward models;
-renders multi-frame observations;
-solves or trains multi-frame joint reconstruction;
-optimizes differentiable masks and GenerMask parameters.
+lcd_mask_families:
+  mask family/spec identity and physical mask generation rules
+
+LCD_forward:
+  measured-response/operator modelling
+  mask-family/operator evaluation and design from evidence
+  H-matrix/operator diagnostics
+
+reconstruction:
+  inverse-problem solving
+  forward/adjoint consumption
+  reconstruction pipelines and evaluation
 ```
 
-`optic_system` must not train forward surrogates, reconstruction networks, or
+`optic_system` must not train forward surrogates, generate operator packages,
+own mask-family design, build reconstruction networks, or run
 mask-optimization loops. It may generate the measured, metadata-rich artifacts
-that make those downstream tasks possible.
+and handoffs that make those external tasks possible.
 
 ---
 
 ## Long-Term Path
 
 The mainline path is staged from reproducible hardware capture to adaptive
-peak-cluster data artifacts, then to learning-side forward modelling:
+peak-cluster data artifacts, then to cross-repository modelling and
+reconstruction:
 
 ```text
 Phase 2
@@ -91,9 +101,9 @@ Phase 2
   -> Phase 3.5
   -> Phase 3.6
   -> Phase 4 in LCD_forward
-  -> Phase 5 in LCD_forward
-  -> Phase 6 in LCD_forward
-  -> Phase 7 long-term joint optimization
+  -> Phase 5 in reconstruction
+  -> Phase 6 across lcd_mask_families / LCD_forward / reconstruction
+  -> Phase 7 cross-repository joint optimization
 ```
 
 The intended representation shift is:
@@ -347,10 +357,10 @@ Completion criteria:
 
 ---
 
-## Phase 4 -- LCD_forward Peak-Cluster Forward Modelling
+## Phase 4 -- LCD_forward Peak-Cluster Operator Modelling
 
 Purpose: move from measured data artifacts to a learnable differentiable
-forward model.
+operator or measured-response model.
 
 This phase belongs primarily to `LCD_forward`, not `optic_system`.
 
@@ -415,11 +425,12 @@ regularized least-squares baseline
 learned reconstruction baseline
 ```
 
-This phase belongs to `LCD_forward` or a learning-side experiment workspace.
+This phase belongs to `reconstruction` or a reconstruction-side experiment
+workspace.
 
 ---
 
-## Phase 6 -- Differentiable Mask and GenerMask Optimization
+## Phase 6 -- Mask-Family and GenerMask Optimization
 
 Purpose: optimize mask families under real LCD constraints.
 
@@ -438,7 +449,8 @@ Rules:
 - Mask optimization must preserve display feasibility, perturbation robustness,
   throughput, and support stability.
 
-This phase belongs primarily to `LCD_forward`.
+This phase belongs across `lcd_mask_families`, `LCD_forward`, and
+`reconstruction`, not to `optic_system`.
 
 ---
 
@@ -447,7 +459,8 @@ This phase belongs primarily to `LCD_forward`.
 Purpose: jointly optimize mask family, dynamic coding sequence, forward model,
 and reconstruction under the low-cost LCD system constraints.
 
-This is the long-term target, not the current `optic_system` responsibility.
+This is the long-term cross-repository target, not the current `optic_system`
+responsibility.
 
 ---
 
@@ -468,7 +481,8 @@ Future diagnostics / conversion:
 
 ```text
 compute_h_matrix_diagnostic
-convert_raw_to_lcd_forward
+publish_measured_evidence_handoff
+publish_measured_response_handoff
 ```
 
 ---
@@ -487,5 +501,6 @@ both tracks.
 5. hardware-data-driven profile task fixes
 ```
 
-Training and validation of the peak-cluster forward model are explicitly
-deferred to `LCD_forward`.
+Training and validation of the peak-cluster operator model are explicitly
+deferred to `LCD_forward`; reconstruction is deferred to `reconstruction`;
+mask-family definitions are deferred to `lcd_mask_families`.
