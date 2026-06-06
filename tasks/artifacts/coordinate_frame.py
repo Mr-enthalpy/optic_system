@@ -220,6 +220,47 @@ def _extent_from_possible_json(value: Any) -> dict[str, Any] | None:
     return None
 
 
+def camera_frame_extent_from_hdf5(
+    src: h5py.File,
+    *,
+    frame_shape: tuple[int, int] | None,
+) -> dict[str, Any]:
+    """Read camera frame extent from a raw capture HDF5 file."""
+    if "camera" in src:
+        extent = read_camera_frame_extent_from_group(
+            src["camera"],
+            fallback_shape=frame_shape,
+        )
+        return camera_frame_extent_to_dict(extent)
+    if frame_shape is None:
+        shape_hw = None
+    else:
+        shape_hw = [int(frame_shape[0]), int(frame_shape[1])]
+    return {
+        "mode": "unknown",
+        "origin_xy": [0, 0],
+        "shape_hw": shape_hw,
+        "sensor_shape_hw": None,
+        "source": "fallback_from_frame_shape",
+    }
+
+
+def require_full_sensor_extent(
+    extent: dict[str, Any],
+    *,
+    allow_acquired_frame_only: bool,
+    artifact_name: str,
+) -> None:
+    if extent.get("mode") == "full_sensor":
+        return
+    if allow_acquired_frame_only:
+        return
+    raise ValueError(
+        f"cannot confirm full-sensor acquisition for {artifact_name}; pass "
+        "allow_acquired_frame_only to record acquired-frame coordinates explicitly"
+    )
+
+
 def _shape_from_metadata(metadata: Mapping[str, Any]) -> tuple[int, int] | None:
     for key in ("shape_hw", "frame_shape", "acquired_shape_hw"):
         value = metadata.get(key)

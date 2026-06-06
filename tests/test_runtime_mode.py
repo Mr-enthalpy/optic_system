@@ -8,12 +8,12 @@ import h5py
 import numpy as np
 import pytest
 
-from tasks.capture_forward_dataset import (
+from tasks.capture_forward_dataset import run_capture_forward_dataset
+from tasks.testing import (
     FakeCamera,
     FakeDeviceBundle,
     FakeLCD,
     FakeTLS,
-    run_capture_forward_dataset,
 )
 from tasks.capture_plan import CapturePlan
 from tasks.illumination import IlluminationSpec

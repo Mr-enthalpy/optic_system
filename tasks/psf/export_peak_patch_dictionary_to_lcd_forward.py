@@ -7,7 +7,7 @@ from typing import Any
 import h5py
 import numpy as np
 
-from ._support_utils import h5_string_dtype, read_scalar_string
+from tasks.artifacts.json_io import h5_string_dtype, read_scalar_string
 from .build_peak_patch_psf_dictionary import (
     PeakPatchPSFDictionaryError,
     PeakPatchPSFDictionaryManifest,

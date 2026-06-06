@@ -8,12 +8,12 @@ import numpy as np
 import pytest
 
 from tasks.capture_plan import CapturePlan, CapturePlanError
-from tasks.capture_forward_dataset import (
+from tasks.capture_forward_dataset import run_capture_forward_dataset
+from tasks.testing import (
     FakeCamera,
     FakeDeviceBundle,
     FakeLCD,
     FakeTLS,
-    run_capture_forward_dataset,
 )
 
 
@@ -244,10 +244,8 @@ class TestCaptureForwardDatasetDryRun:
             sys.modules.pop(mod, None)
 
         try:
-            from tasks.capture_forward_dataset import (
-                FakeDeviceBundle,
-                run_capture_forward_dataset,
-            )
+            from tasks.capture_forward_dataset import run_capture_forward_dataset
+            from tasks.testing import FakeDeviceBundle
         except ImportError as e:
             pytest.fail(f"imports should be hardware-free: {e}")
 

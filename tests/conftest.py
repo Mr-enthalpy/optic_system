@@ -14,7 +14,7 @@ from tasks.capture_plan import (
     IlluminationEntry,
     LCDMaskEntry,
 )
-from tasks.capture_forward_dataset import (
+from tasks.testing import (
     FakeCamera,
     FakeDeviceBundle,
     FakeLCD,

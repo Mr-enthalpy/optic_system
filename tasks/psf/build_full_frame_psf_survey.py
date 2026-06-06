@@ -8,20 +8,24 @@ from typing import Any
 import h5py
 import numpy as np
 
-from ._support_utils import (
-    PSFArtifactError,
-    camera_frame_extent,
+from tasks.artifacts.coordinate_frame import (
+    camera_frame_extent_from_hdf5,
+    require_full_sensor_extent,
+)
+from tasks.artifacts.json_io import (
     h5_string_dtype,
-    illumination_mode,
     index_string,
     loads_json_object,
     read_mask_arrays,
     read_optional_dataset_string,
     read_scalar_string,
     read_string_array,
-    require_full_sensor_extent,
-    require_paths,
     unique_preserve_order,
+)
+from .profile_requirements import (
+    PSFArtifactError,
+    illumination_mode,
+    require_paths,
     validate_policy_none,
     validate_profile_manifests,
 )
@@ -126,6 +130,8 @@ def build_full_frame_psf_survey(
         validate_policy_none(normalization_policy, "normalization_policy")
     except PSFArtifactError as exc:
         raise FullFramePSFSurveyError(str(exc)) from exc
+    except ValueError as exc:
+        raise FullFramePSFSurveyError(str(exc)) from exc
 
     source_path = Path(source_raw_capture_h5)
     output_path = Path(output_h5)
@@ -175,7 +181,7 @@ def build_full_frame_psf_survey(
                 max_total_pixels=max_total_pixels,
                 allow_large_survey=allow_large_survey,
             )
-            extent = camera_frame_extent(src, frame_shape=frame_shape)
+            extent = camera_frame_extent_from_hdf5(src, frame_shape=frame_shape)
             require_full_sensor_extent(
                 extent,
                 allow_acquired_frame_only=allow_acquired_frame_only,
@@ -239,6 +245,8 @@ def build_full_frame_psf_survey(
                 notes=notes,
             )
         except PSFArtifactError as exc:
+            raise FullFramePSFSurveyError(str(exc)) from exc
+        except ValueError as exc:
             raise FullFramePSFSurveyError(str(exc)) from exc
 
         _write_survey_h5(

@@ -6,11 +6,11 @@ from pathlib import Path
 import h5py
 import pytest
 
-from tasks.capture_forward_dataset import (
+from tasks.capture_forward_dataset import run_capture_forward_dataset
+from tasks.testing import (
     FakeCamera,
     FakeDeviceBundle,
     FakeLCD,
-    run_capture_forward_dataset,
 )
 from tasks.capture_plan import CapturePlan, CapturePlanError
 from tasks.illumination import (

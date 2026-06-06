@@ -133,12 +133,12 @@ def main(argv: list[str] | None = None) -> int:
     _ensure_repo_on_path()
 
     from tasks.capture_plan import CapturePlan, CapturePlanError
-    from tasks.capture_forward_dataset import (
+    from tasks.capture_forward_dataset import run_capture_forward_dataset
+    from tasks.testing import (
         FakeCamera,
         FakeDeviceBundle,
         FakeLCD,
         FakeTLS,
-        run_capture_forward_dataset,
     )
 
     plan_path = Path(args.plan)

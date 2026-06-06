@@ -13,9 +13,9 @@ if str(_repo_root) not in sys.path:
 
 from tasks.capture_forward_dataset import (
     CameraCaptureAdapter,
-    FakeCamera,
     CaptureFrames,
 )
+from tasks.testing import FakeCamera
 
 
 class FakeCaptureHelper:

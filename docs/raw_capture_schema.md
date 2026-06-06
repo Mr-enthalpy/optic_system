@@ -60,7 +60,6 @@ Schema version: 2.
 | Dataset | Shape | Dtype | Description |
 |---------|-------|-------|-------------|
 | `illumination_json` | `[N_illumination]` | string | Full illumination spec as JSON |
-| `nominal_wavelength_nm` | `[N_illumination]` | float64 | Row label wavelength (NaN for broadband) |
 | `tls_setpoint_nm` | `[N_illumination]` | float64 | TLS setpoint value (0.0 for pass-through, NaN if N/A) |
 | `effective_wavelength_nm` | `[N_illumination]` | float64 | Effective wavelength (NaN for broadband) |
 

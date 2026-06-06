@@ -8,20 +8,24 @@ from typing import Any
 import h5py
 import numpy as np
 
-from ._support_utils import (
-    PSFArtifactError,
-    camera_frame_extent,
+from tasks.artifacts.coordinate_frame import (
+    camera_frame_extent_from_hdf5,
+    require_full_sensor_extent,
+)
+from tasks.artifacts.json_io import (
     h5_string_dtype,
-    illumination_mode,
     index_string,
     loads_json_object,
     read_mask_arrays,
     read_optional_dataset_string,
     read_scalar_string,
     read_string_array,
-    require_full_sensor_extent,
-    require_paths,
     unique_preserve_order,
+)
+from .profile_requirements import (
+    PSFArtifactError,
+    illumination_mode,
+    require_paths,
     validate_policy_none,
     validate_profile_manifests,
 )
@@ -129,6 +133,8 @@ def build_peak_patch_psf_dictionary(
         validate_policy_none(normalization_policy, "normalization_policy")
     except PSFArtifactError as exc:
         raise PeakPatchPSFDictionaryError(str(exc)) from exc
+    except ValueError as exc:
+        raise PeakPatchPSFDictionaryError(str(exc)) from exc
     dtype = _output_dtype(output_dtype)
 
     source_path = Path(source_raw_capture_h5)
@@ -178,7 +184,7 @@ def build_peak_patch_psf_dictionary(
                     f"raw frame_shape {frame_shape} does not match PeakLayoutProfile {layout.frame_shape}"
                 )
             _validate_fixed_patch_layout(layout, frame_shape=frame_shape)
-            extent = camera_frame_extent(src, frame_shape=frame_shape)
+            extent = camera_frame_extent_from_hdf5(src, frame_shape=frame_shape)
             require_full_sensor_extent(
                 extent,
                 allow_acquired_frame_only=allow_acquired_frame_only,

@@ -102,13 +102,6 @@ class CaptureDeviceBundle(_Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Fake devices — imported from tasks.testing
-# ---------------------------------------------------------------------------
-
-from .testing import FakeCamera, FakeDeviceBundle, FakeLCD, FakeTLS
-
-
-# ---------------------------------------------------------------------------
 # Real-device adapters  (wrap existing device services)
 # ---------------------------------------------------------------------------
 
