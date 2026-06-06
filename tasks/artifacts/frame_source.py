@@ -26,7 +26,7 @@ class FrameSourceDescriptor:
     coordinate_frame: str
     camera_frame_extent: CameraFrameExtent
     mask_ids: tuple[str, ...]
-    wavelengths_nm: tuple[float, ...]
+    entry_wavelengths_nm: tuple[float, ...]
     entry_illumination_json: tuple[str, ...]
     source_kind: str
 
@@ -52,8 +52,6 @@ def open_full_frame_survey_source(h5: h5py.File, source_path: str | Path) -> Fra
     frame_count, frame_shape = frame_dataset_count_and_shape(frames)
     manifest = read_json_dataset_or_attr(group, "manifest_json")
     extent_data = read_json_dataset_or_attr(group, "camera_frame_extent_json")
-    if not extent_data and isinstance(manifest.get("camera_frame_extent"), dict):
-        extent_data = dict(manifest["camera_frame_extent"])
     if not extent_data:
         raise ArtifactIOError("missing camera_frame_extent_json in survey artifact")
     extent = camera_frame_extent_from_dict(
@@ -68,7 +66,7 @@ def open_full_frame_survey_source(h5: h5py.File, source_path: str | Path) -> Fra
         coordinate_frame=resolve_coordinate_frame(extent, manifest),
         camera_frame_extent=extent,
         mask_ids=tuple(_read_survey_mask_ids(h5, group, frame_count)),
-        wavelengths_nm=tuple(_read_survey_wavelengths(h5, group, frame_count)),
+        entry_wavelengths_nm=tuple(_read_survey_wavelengths(h5, group, frame_count)),
         entry_illumination_json=tuple(
             _read_survey_illumination_json(h5, group, frame_count)
         ),
@@ -129,7 +127,7 @@ def _read_dataset_strings(
 def _validate_lengths(descriptor: FrameSourceDescriptor) -> None:
     if len(descriptor.mask_ids) != int(descriptor.frame_count):
         raise ArtifactIOError("mask id count does not match frame count")
-    if len(descriptor.wavelengths_nm) != int(descriptor.frame_count):
+    if len(descriptor.entry_wavelengths_nm) != int(descriptor.frame_count):
         raise ArtifactIOError("wavelength count does not match frame count")
     if len(descriptor.entry_illumination_json) != int(descriptor.frame_count):
         raise ArtifactIOError("illumination count does not match frame count")

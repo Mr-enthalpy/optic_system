@@ -25,8 +25,6 @@ def main() -> int:
     parser.add_argument("--manifest-path")
     parser.add_argument("--pupil-profile-manifest")
     parser.add_argument("--camera-profile-manifest")
-    parser.add_argument("--allow-acquired-frame-only", action="store_true")
-    parser.add_argument("--allow-profile-id-only", action="store_true")
     parser.add_argument("--notes")
     args = parser.parse_args()
 
@@ -40,8 +38,6 @@ def main() -> int:
         manifest_path=args.manifest_path,
         pupil_profile_manifest=args.pupil_profile_manifest,
         camera_profile_manifest=args.camera_profile_manifest,
-        allow_acquired_frame_only=args.allow_acquired_frame_only,
-        allow_profile_id_only=args.allow_profile_id_only,
         notes=args.notes,
     )
     return 0

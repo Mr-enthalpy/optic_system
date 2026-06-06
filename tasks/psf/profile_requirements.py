@@ -178,18 +178,14 @@ def validate_profile_manifests(
     wavelengths_nm: list[float],
     pupil_profile_manifest: str | Path | None,
     camera_profile_manifest: str | Path | None,
-    allow_profile_id_only: bool,
 ) -> None:
     if not pupil_profile_id or not camera_profile_id:
         raise PSFArtifactError(
             "PSF artifacts require pupil_profile_id and camera_profile_id"
         )
     if pupil_profile_manifest is None or camera_profile_manifest is None:
-        if allow_profile_id_only:
-            return
         raise PSFArtifactError(
-            "pupil_profile_manifest and camera_profile_manifest are required; "
-            "pass allow_profile_id_only only for legacy metadata"
+            "pupil_profile_manifest and camera_profile_manifest are required"
         )
     try:
         pupil = _load_profile_manifest(PupilProfile, pupil_profile_manifest)

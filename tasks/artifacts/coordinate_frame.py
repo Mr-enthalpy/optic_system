@@ -226,23 +226,15 @@ def camera_frame_extent_from_hdf5(
     frame_shape: tuple[int, int] | None,
 ) -> dict[str, Any]:
     """Read camera frame extent from a raw capture HDF5 file."""
-    if "camera" in src:
-        extent = read_camera_frame_extent_from_group(
-            src["camera"],
-            fallback_shape=frame_shape,
+    if "camera" not in src:
+        raise ValueError(
+            "missing /camera group in raw capture; cannot determine frame extent"
         )
-        return camera_frame_extent_to_dict(extent)
-    if frame_shape is None:
-        shape_hw = None
-    else:
-        shape_hw = [int(frame_shape[0]), int(frame_shape[1])]
-    return {
-        "mode": "unknown",
-        "origin_xy": [0, 0],
-        "shape_hw": shape_hw,
-        "sensor_shape_hw": None,
-        "source": "fallback_from_frame_shape",
-    }
+    extent = read_camera_frame_extent_from_group(
+        src["camera"],
+        fallback_shape=frame_shape,
+    )
+    return camera_frame_extent_to_dict(extent)
 
 
 def require_full_sensor_extent(

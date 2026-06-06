@@ -262,9 +262,9 @@ def derive_sensor_energy_center_profile(
     deviations = np.linalg.norm(center_arr - np.asarray(global_center)[None, :], axis=1)
     per_wavelength_mean: dict[str, tuple[float, float]] = {}
     per_wavelength_std: dict[str, tuple[float, float]] = {}
-    for wavelength in _unique_preserve_order(list(descriptor.wavelengths_nm)):
+    for wavelength in _unique_preserve_order(list(descriptor.entry_wavelengths_nm)):
         key = _wavelength_key(wavelength)
-        idx = [i for i, value in enumerate(descriptor.wavelengths_nm) if float(value) == float(wavelength)]
+        idx = [i for i, value in enumerate(descriptor.entry_wavelengths_nm) if float(value) == float(wavelength)]
         values = center_arr[idx, :]
         per_wavelength_mean[key] = tuple(float(v) for v in np.mean(values, axis=0))
         per_wavelength_std[key] = tuple(float(v) for v in np.std(values, axis=0))
@@ -300,7 +300,7 @@ def derive_sensor_energy_center_profile(
         notes=notes,
         per_entry_center_xy=[(float(x), float(y)) for x, y in centers],
         per_entry_mask_ids=list(descriptor.mask_ids),
-        per_entry_wavelengths_nm=[float(v) for v in descriptor.wavelengths_nm],
+        per_entry_wavelengths_nm=[float(v) for v in descriptor.entry_wavelengths_nm],
         per_entry_background_value=[float(v) for v in background_values],
         per_entry_total_corr_energy=[float(v) for v in total_energy],
         per_entry_fallback_used=[bool(v) for v in fallback_used],

@@ -99,7 +99,7 @@ class PeakSupportAnalysisManifest:
 @dataclass
 class SurveyMetadata:
     mask_ids: list[str]
-    wavelengths_nm: list[float]
+    entry_wavelengths_nm: list[float]
     frame_shape: tuple[int, int]
     coordinate_frame: str
     camera_frame_extent: dict[str, Any]
@@ -244,7 +244,7 @@ def analyze_diffraction_support(
                             min_component_area=int(resolved_min_component_area),
                             connectivity=int(resolved_connectivity),
                             mask_id=survey.mask_ids[entry_index],
-                            wavelength_nm=survey.wavelengths_nm[entry_index],
+                            wavelength_nm=survey.entry_wavelengths_nm[entry_index],
                             energy_center_xy=center,
                         )
                 )
@@ -284,7 +284,7 @@ def analyze_diffraction_support(
             "frame_read_policy": "hdf5_entry_streaming",
         },
         entry_mask_ids=survey.mask_ids,
-        entry_wavelengths_nm=survey.wavelengths_nm,
+        entry_wavelengths_nm=survey.entry_wavelengths_nm,
         notes=notes,
     )
 
@@ -323,7 +323,7 @@ def _open_survey_frame_source(
     descriptor = source.descriptor
     return source.dataset, SurveyMetadata(
         mask_ids=list(descriptor.mask_ids),
-        wavelengths_nm=[float(v) for v in descriptor.wavelengths_nm],
+        entry_wavelengths_nm=[float(v) for v in descriptor.entry_wavelengths_nm],
         frame_shape=descriptor.frame_shape,
         coordinate_frame=descriptor.coordinate_frame,
         camera_frame_extent=descriptor.camera_frame_extent_dict(),
