@@ -196,7 +196,6 @@ class TestRawCaptureWriter:
             assert float(cam["readback_exposure_us"][0]) == 10000.0
 
             illum_ds = f["illumination"]
-            assert float(illum_ds["nominal_wavelength_nm"][0]) == 532.0
             raw_illumination = illum_ds["illumination_json"][0]
             illumination = json.loads(
                 raw_illumination.decode("utf-8")
@@ -204,7 +203,7 @@ class TestRawCaptureWriter:
                 else str(raw_illumination)
             )
             assert illumination["mode"] == "monochromatic"
-            assert illumination["nominal_wavelength_nm"] == 532.0
+            assert illumination["effective_wavelength_nm"] == 532.0
 
     def test_writes_camera_frame_extent_without_legacy_alias(
         self, sample_plan: CapturePlan, tmp_h5_path: Path

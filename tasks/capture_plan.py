@@ -10,7 +10,6 @@ import numpy as np
 from .illumination import (
     IlluminationSpec,
     IlluminationSpecError,
-    illumination_nominal_wavelength_nm,
     normalize_illumination_spec,
 )
 
@@ -22,7 +21,6 @@ class CapturePlanError(ValueError):
 @dataclass
 class CameraCaptureConfig:
     frames_per_capture: int = 1
-    average_burst: bool = True
     exposure_us: float | None = None
     gain_db: float | None = None
     frame_extent: dict[str, Any] | None = None
@@ -35,10 +33,14 @@ class CameraCaptureConfig:
                 "camera.roi / camera.camera_roi are no longer supported; "
                 "use camera.frame_extent"
             )
+        if "average_burst" in d:
+            raise CapturePlanError(
+                "camera.average_burst is no longer supported; "
+                "use store_burst at plan level"
+            )
         extent_value = d.get("frame_extent")
         return cls(
             frames_per_capture=int(d.get("frames_per_capture", 1)),
-            average_burst=bool(d.get("average_burst", True)),
             exposure_us=_optional_float(d.get("exposure_us")),
             gain_db=_optional_float(d.get("gain_db")),
             frame_extent=_optional_camera_frame_extent(extent_value),
@@ -48,7 +50,6 @@ class CameraCaptureConfig:
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "frames_per_capture": self.frames_per_capture,
-            "average_burst": self.average_burst,
         }
         if self.exposure_us is not None:
             result["exposure_us"] = self.exposure_us
@@ -106,10 +107,6 @@ class IlluminationEntry:
     grating: int | None = None
     settle_ms: int = 2000
     extra: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def nominal_wavelength_nm(self) -> float:
-        return illumination_nominal_wavelength_nm(self.illumination)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> IlluminationEntry:
@@ -252,13 +249,14 @@ class CapturePlan:
             if not m.mask_id:
                 raise CapturePlanError(f"masks[{i}].mask_id must not be empty")
 
-        seen_wavelengths: set[float] = set()
+        seen_wavelengths: set[str] = set()
         for w in self.wavelengths:
-            if w.nominal_wavelength_nm in seen_wavelengths:
+            key = _illumination_identity_key(w.illumination)
+            if key in seen_wavelengths:
                 raise CapturePlanError(
-                    f"duplicate wavelength {w.nominal_wavelength_nm} in plan"
+                    f"duplicate illumination {key!r} in plan"
                 )
-            seen_wavelengths.add(w.nominal_wavelength_nm)
+            seen_wavelengths.add(key)
 
         seen_mask_ids: set[str] = set()
         for m in self.masks:
@@ -282,6 +280,14 @@ class CapturePlan:
 
     def resolved_illumination_specs(self) -> list[IlluminationSpec]:
         return [entry.illumination for entry in self.wavelengths]
+
+
+def _illumination_identity_key(spec: IlluminationSpec) -> str:
+    if spec.is_broadband_passthrough:
+        return "broadband_passthrough"
+    if spec.effective_wavelength_nm is not None:
+        return f"monochromatic:{spec.effective_wavelength_nm}"
+    return f"monochromatic:{spec.wavelength_label_nm}"
 
 
 def _require_key(d: dict[str, Any], key: str) -> Any:

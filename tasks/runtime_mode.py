@@ -23,7 +23,6 @@ class RuntimePolicy:
     allow_missing_tls: bool = False
     allow_missing_lcd: bool = False
     allow_missing_camera: bool = False
-    allow_raw_fallback: bool = False
     allow_test_settle_override: bool = False
     allow_dry_run_hardware_write: bool = False
 
@@ -34,7 +33,6 @@ class RuntimePolicy:
             "allow_missing_tls": bool(self.allow_missing_tls),
             "allow_missing_lcd": bool(self.allow_missing_lcd),
             "allow_missing_camera": bool(self.allow_missing_camera),
-            "allow_raw_fallback": bool(self.allow_raw_fallback),
             "allow_test_settle_override": bool(self.allow_test_settle_override),
             "allow_dry_run_hardware_write": bool(self.allow_dry_run_hardware_write),
         }
@@ -62,7 +60,6 @@ def synthetic_runtime_policy() -> RuntimePolicy:
         allow_missing_tls=True,
         allow_missing_lcd=True,
         allow_missing_camera=True,
-        allow_raw_fallback=True,
         allow_test_settle_override=True,
     )
 
@@ -71,7 +68,6 @@ def diagnostic_runtime_policy() -> RuntimePolicy:
     return RuntimePolicy(
         mode=RuntimeMode.DIAGNOSTIC,
         allow_missing_tls=True,
-        allow_raw_fallback=True,
     )
 
 
@@ -159,17 +155,6 @@ def validate_tls_for_illumination(
             raise RuntimeModeError(
                 "monochromatic illumination requires tls_setpoint_nm in hardware mode"
             )
-
-
-def validate_raw_fallback_allowed(
-    *,
-    allow_raw_fallback: bool,
-    policy: RuntimePolicy,
-) -> None:
-    if allow_raw_fallback and not policy.allow_raw_fallback:
-        raise RuntimeModeError(
-            "allow_raw_fallback=True requires diagnostic or synthetic runtime mode"
-        )
 
 
 def validate_lcd_settle_policy(

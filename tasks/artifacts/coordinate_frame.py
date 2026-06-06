@@ -220,6 +220,35 @@ def _extent_from_possible_json(value: Any) -> dict[str, Any] | None:
     return None
 
 
+def camera_frame_extent_from_hdf5(
+    src: h5py.File,
+    *,
+    frame_shape: tuple[int, int] | None,
+) -> dict[str, Any]:
+    """Read camera frame extent from a raw capture HDF5 file."""
+    if "camera" not in src:
+        raise ValueError(
+            "missing /camera group in raw capture; cannot determine frame extent"
+        )
+    extent = read_camera_frame_extent_from_group(
+        src["camera"],
+        fallback_shape=frame_shape,
+    )
+    return camera_frame_extent_to_dict(extent)
+
+
+def require_full_sensor_extent(
+    extent: dict[str, Any],
+    *,
+    artifact_name: str,
+) -> None:
+    if extent.get("mode") == "full_sensor":
+        return
+    raise ValueError(
+        f"full-sensor camera frame extent is required for {artifact_name}"
+    )
+
+
 def _shape_from_metadata(metadata: Mapping[str, Any]) -> tuple[int, int] | None:
     for key in ("shape_hw", "frame_shape", "acquired_shape_hw"):
         value = metadata.get(key)

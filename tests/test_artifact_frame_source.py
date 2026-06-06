@@ -24,7 +24,7 @@ def test_reads_full_frame_survey_3d(tmp_path):
                 "sensor_shape_hw": [3, 4],
             }),
         )
-        group.create_dataset("entry_mask_id", data=np.asarray(["m0", "m1"], dtype=object), dtype=h5py.string_dtype())
+        group.create_dataset("entry_mask_ids", data=np.asarray(["m0", "m1"], dtype=object), dtype=h5py.string_dtype())
         group.create_dataset("entry_wavelength_nm", data=np.asarray([500.0, 600.0]))
         group.create_dataset(
             "entry_illumination_json",
@@ -53,6 +53,29 @@ def test_reads_full_frame_survey_2d_as_one_entry(tmp_path):
         group = f.create_group("full_frame_survey")
         group.create_dataset("frames_avg", data=np.zeros((3, 4), dtype=np.float64))
         group.create_dataset(
+            "entry_mask_ids",
+            data=np.asarray(["entry_0000"], dtype=object),
+            dtype=h5py.string_dtype(),
+        )
+        group.create_dataset("entry_wavelength_nm", data=np.asarray([float("nan")]))
+        group.create_dataset(
+            "entry_illumination_json",
+            data=np.asarray([
+                json.dumps({"mode": "unknown"})
+            ], dtype=object),
+            dtype=h5py.string_dtype(),
+        )
+        group.create_dataset(
+            "camera_frame_extent_json",
+            data=json.dumps({
+                "mode": "unknown",
+                "origin_xy": [0, 0],
+                "shape_hw": [3, 4],
+                "sensor_shape_hw": None,
+            }),
+            dtype=h5py.string_dtype(),
+        )
+        group.create_dataset(
             "manifest_json",
             data=json.dumps({
                 "coordinate_frame": "acquired_frame",
@@ -62,6 +85,9 @@ def test_reads_full_frame_survey_2d_as_one_entry(tmp_path):
                     "shape_hw": [3, 4],
                     "sensor_shape_hw": None,
                 },
+                "entry_mask_ids": ["entry_0000"],
+                "entry_wavelengths_nm": [float("nan")],
+                "entry_illumination_json": [json.dumps({"mode": "unknown"})],
             }),
         )
 
@@ -70,7 +96,6 @@ def test_reads_full_frame_survey_2d_as_one_entry(tmp_path):
 
         assert source.descriptor.frame_count == 1
         assert source.descriptor.frame_shape == (3, 4)
-        assert json.loads(source.descriptor.entry_illumination_json[0])["mode"] == "unknown"
         assert source.read_frame(0).shape == (3, 4)
         with pytest.raises(ArtifactIOError):
             source.read_frame(1)

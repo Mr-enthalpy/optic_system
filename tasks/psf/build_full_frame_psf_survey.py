@@ -8,20 +8,24 @@ from typing import Any
 import h5py
 import numpy as np
 
-from ._artifact_utils import (
-    PSFArtifactError,
-    camera_frame_extent,
+from tasks.artifacts.coordinate_frame import (
+    camera_frame_extent_from_hdf5,
+    require_full_sensor_extent,
+)
+from tasks.artifacts.h5_arrays import read_mask_arrays
+from tasks.artifacts.json_io import (
     h5_string_dtype,
-    illumination_mode,
     index_string,
     loads_json_object,
-    read_mask_arrays,
     read_optional_dataset_string,
     read_scalar_string,
     read_string_array,
-    require_full_sensor_extent,
-    require_paths,
     unique_preserve_order,
+)
+from .profile_requirements import (
+    PSFArtifactError,
+    illumination_mode,
+    require_paths,
     validate_policy_none,
     validate_profile_manifests,
 )
@@ -108,16 +112,23 @@ def build_full_frame_psf_survey(
     camera_profile_manifest: str | Path | None = None,
     background_policy: str = "none",
     normalization_policy: str = "none",
-    allow_acquired_frame_only: bool = False,
-    allow_profile_id_only: bool = False,
+    max_entries: int = 100,
+    max_total_pixels: int = 1_000_000,
+    allow_large_survey: bool = False,
     notes: str | None = None,
 ) -> FullFramePSFSurveyManifest:
-    """Build a small full-frame scout artifact from raw capture HDF5."""
+    """Build a small full-frame scout artifact from raw capture HDF5.
+
+    By default rejects surveys larger than 100 entries or 1M total pixels.
+    Pass allow_large_survey=True to override.
+    """
 
     try:
         validate_policy_none(background_policy, "background_policy")
         validate_policy_none(normalization_policy, "normalization_policy")
     except PSFArtifactError as exc:
+        raise FullFramePSFSurveyError(str(exc)) from exc
+    except ValueError as exc:
         raise FullFramePSFSurveyError(str(exc)) from exc
 
     source_path = Path(source_raw_capture_h5)
@@ -139,7 +150,7 @@ def build_full_frame_psf_survey(
                     "capture/mask_index",
                     "capture/capture_index",
                     "capture/plan_json",
-                    "illumination/nominal_wavelength_nm",
+                    "illumination/illumination_json",
                     "masks/mask_id",
                 ],
             )
@@ -161,22 +172,24 @@ def build_full_frame_psf_survey(
                     f"raw frames_avg entries must be 2D, got shape {first_frame.shape}"
                 )
             frame_shape = (int(first_frame.shape[0]), int(first_frame.shape[1]))
-            extent = camera_frame_extent(src, frame_shape=frame_shape)
+            _check_survey_size(
+                n_entries=len(valid_rows),
+                frame_shape=frame_shape,
+                max_entries=max_entries,
+                max_total_pixels=max_total_pixels,
+                allow_large_survey=allow_large_survey,
+            )
+            extent = camera_frame_extent_from_hdf5(src, frame_shape=frame_shape)
             require_full_sensor_extent(
                 extent,
-                allow_acquired_frame_only=allow_acquired_frame_only,
                 artifact_name="full-frame PSF survey",
             )
 
-            wavelengths_by_index = np.asarray(src["illumination/nominal_wavelength_nm"], dtype=np.float64)
+
             illumination_by_index = _read_raw_illumination_json_by_index(src, plan=None)
             mask_ids_by_index = read_string_array(src["masks/mask_id"])
             entry_mask_ids = [
                 index_string(mask_ids_by_index, int(mask_indices[row])) for row in valid_rows
-            ]
-            entry_wavelengths = [
-                float(wavelengths_by_index[int(wavelength_indices[row])])
-                for row in valid_rows
             ]
             source_plan_json = read_scalar_string(src["capture/plan_json"])
             plan = loads_json_object(source_plan_json)
@@ -184,6 +197,12 @@ def build_full_frame_psf_survey(
                 illumination_by_index = _read_raw_illumination_json_by_index(src, plan=plan)
             entry_illumination_json = [
                 index_string(illumination_by_index, int(wavelength_indices[row]))
+                for row in valid_rows
+            ]
+            entry_wavelengths = [
+                _wavelength_from_illumination_json(
+                    index_string(illumination_by_index, int(wavelength_indices[row]))
+                )
                 for row in valid_rows
             ]
             pupil_profile_id = read_optional_dataset_string(src, "profiles/pupil_profile_id")
@@ -196,7 +215,6 @@ def build_full_frame_psf_survey(
                 wavelengths_nm=unique_preserve_order(entry_wavelengths),
                 pupil_profile_manifest=pupil_profile_manifest,
                 camera_profile_manifest=camera_profile_manifest,
-                allow_profile_id_only=allow_profile_id_only,
             )
 
             manifest = FullFramePSFSurveyManifest(
@@ -216,10 +234,15 @@ def build_full_frame_psf_survey(
                     "role": "full_frame_scout_capture",
                     "applied_background_policy": background_policy,
                     "applied_normalization_policy": normalization_policy,
+                    "max_entries": max_entries,
+                    "max_total_pixels": max_total_pixels,
+                    "allow_large_survey": allow_large_survey,
                 },
                 notes=notes,
             )
         except PSFArtifactError as exc:
+            raise FullFramePSFSurveyError(str(exc)) from exc
+        except ValueError as exc:
             raise FullFramePSFSurveyError(str(exc)) from exc
 
         _write_survey_h5(
@@ -356,3 +379,43 @@ def _require_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise FullFramePSFSurveyError(f"{key} must be a mapping")
     return value
+
+
+def _wavelength_from_illumination_json(illumination_str: str) -> float:
+    try:
+        data = json.loads(illumination_str)
+    except (json.JSONDecodeError, TypeError):
+        return float("nan")
+    mode = data.get("mode") or ""
+    if mode == "broadband_passthrough":
+        return float("nan")
+    effective = data.get("effective_wavelength_nm")
+    if effective is not None:
+        return float(effective)
+    label = data.get("wavelength_label_nm")
+    if label is not None:
+        return float(label)
+    return float("nan")
+
+
+def _check_survey_size(
+    *,
+    n_entries: int,
+    frame_shape: tuple[int, int],
+    max_entries: int,
+    max_total_pixels: int,
+    allow_large_survey: bool,
+) -> None:
+    if allow_large_survey:
+        return
+    total_pixels = n_entries * frame_shape[0] * frame_shape[1]
+    if n_entries > max_entries:
+        raise FullFramePSFSurveyError(
+            f"survey has {n_entries} entries (max {max_entries}); "
+            "pass allow_large_survey=True to override"
+        )
+    if total_pixels > max_total_pixels:
+        raise FullFramePSFSurveyError(
+            f"survey total pixels {total_pixels} exceeds max {max_total_pixels}; "
+            "pass allow_large_survey=True to override"
+        )

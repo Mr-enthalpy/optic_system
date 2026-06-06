@@ -29,7 +29,14 @@ def _write_synthetic_survey(path: Path) -> None:
         g = f.require_group("full_frame_survey")
         g.create_dataset("frames_avg", data=frame[np.newaxis, :, :])
         g.create_dataset("entry_wavelength_nm", data=np.asarray([550.0], dtype=np.float64))
-        g.create_dataset("entry_mask_id", data=np.asarray(["mask_a"], dtype=object), dtype=string_dtype)
+        g.create_dataset("entry_mask_ids", data=np.asarray(["mask_a"], dtype=object), dtype=string_dtype)
+        g.create_dataset(
+            "entry_illumination_json",
+            data=np.asarray([
+                json.dumps({"mode": "monochromatic", "effective_wavelength_nm": 550.0}),
+            ], dtype=object),
+            dtype=string_dtype,
+        )
         g.create_dataset(
             "camera_frame_extent_json",
             data=json.dumps({

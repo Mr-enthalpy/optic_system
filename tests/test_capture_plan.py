@@ -51,13 +51,11 @@ class TestCameraCaptureConfig:
     def test_defaults(self) -> None:
         cfg = CameraCaptureConfig()
         assert cfg.frames_per_capture == 1
-        assert cfg.average_burst is True
         assert cfg.exposure_us is None
 
     def test_from_dict(self) -> None:
         cfg = CameraCaptureConfig.from_dict({
             "frames_per_capture": 10,
-            "average_burst": False,
             "exposure_us": 15000.0,
             "gain_db": 3.5,
             "frame_extent": {
@@ -67,7 +65,6 @@ class TestCameraCaptureConfig:
             },
         })
         assert cfg.frames_per_capture == 10
-        assert cfg.average_burst is False
         assert cfg.exposure_us == 15000.0
         assert cfg.gain_db == 3.5
         assert cfg.frame_extent == {
@@ -82,16 +79,20 @@ class TestCameraCaptureConfig:
         with pytest.raises(CapturePlanError, match="camera.frame_extent"):
             CameraCaptureConfig.from_dict({"camera_roi": [1, 2, 30, 40]})
 
+    def test_legacy_average_burst_input_rejected(self) -> None:
+        with pytest.raises(CapturePlanError, match="average_burst"):
+            CameraCaptureConfig.from_dict({"average_burst": False})
+
     def test_from_dict_empty(self) -> None:
         cfg = CameraCaptureConfig.from_dict({})
         assert cfg.frames_per_capture == 1
 
     def test_to_dict_roundtrip(self) -> None:
-        d = {"frames_per_capture": 7, "average_burst": True}
+        d = {"frames_per_capture": 7}
         cfg = CameraCaptureConfig.from_dict(d)
         out = cfg.to_dict()
         assert out["frames_per_capture"] == 7
-        assert out["average_burst"] is True
+        assert "average_burst" not in out
 
 
 class TestLCDMaskEntry:
@@ -122,12 +123,12 @@ class TestLCDMaskEntry:
 class TestIlluminationEntry:
     def test_from_dict(self) -> None:
         w = IlluminationEntry.from_dict(_mono_entry(532.0))
-        assert w.nominal_wavelength_nm == 532.0
+        assert w.illumination.effective_wavelength_nm == 532.0
         assert w.settle_ms == 2000
 
     def test_from_dict_full(self) -> None:
         w = IlluminationEntry.from_dict(_mono_entry(405.0, grating=2, settle_ms=5000))
-        assert w.nominal_wavelength_nm == 405.0
+        assert w.illumination.effective_wavelength_nm == 405.0
         assert w.grating == 2
         assert w.settle_ms == 5000
 
@@ -205,7 +206,7 @@ class TestCapturePlan:
             "masks": [{"mask_id": "m1"}],
         })
 
-        assert plan.wavelengths[0].nominal_wavelength_nm == 0.0
+        assert plan.wavelengths[0].illumination.mode == "broadband_passthrough"
         assert "wavelength_nm" not in plan.to_dict()["wavelengths"][0]
 
     def test_validate_frames_per_capture_fails(self) -> None:
@@ -227,7 +228,7 @@ class TestCapturePlan:
             })
 
     def test_validate_duplicate_wavelength_fails(self) -> None:
-        with pytest.raises(CapturePlanError, match="duplicate wavelength"):
+        with pytest.raises(CapturePlanError, match="duplicate illumination"):
             CapturePlan.from_dict({
                 "plan_id": "p",
                 "wavelengths": [

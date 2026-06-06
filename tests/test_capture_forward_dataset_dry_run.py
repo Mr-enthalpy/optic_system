@@ -8,12 +8,12 @@ import numpy as np
 import pytest
 
 from tasks.capture_plan import CapturePlan, CapturePlanError
-from tasks.capture_forward_dataset import (
+from tasks.capture_forward_dataset import run_capture_forward_dataset
+from tasks.testing import (
     FakeCamera,
     FakeDeviceBundle,
     FakeLCD,
     FakeTLS,
-    run_capture_forward_dataset,
 )
 
 
@@ -106,7 +106,7 @@ class TestCaptureForwardDatasetDryRun:
                 {"mask_id": "mask_a", "family_id": "f1"},
                 {"mask_id": "mask_b", "family_id": "f1"},
             ],
-            "camera": {"frames_per_capture": 5, "average_burst": True},
+            "camera": {"frames_per_capture": 5},
             "lcd_settle_ms": 500,
             "store_burst": False,
         })
@@ -129,8 +129,11 @@ class TestCaptureForwardDatasetDryRun:
 
         assert result == tmp_h5_path
         with h5py.File(tmp_h5_path, "r") as f:
-            wl = f["illumination/nominal_wavelength_nm"][()]
-            assert wl[0] > 0
+            illum_raw = f["illumination/illumination_json"][0]
+            illum = json.loads(
+                illum_raw.decode("utf-8") if isinstance(illum_raw, bytes) else str(illum_raw)
+            )
+            assert illum["effective_wavelength_nm"] > 0
 
     def test_dry_run_with_tls_pass_through(
         self, tmp_h5_path: Path
@@ -161,7 +164,7 @@ class TestCaptureForwardDatasetDryRun:
         assert tls._target_nm == 0.0
         assert tls._current_nm == 0.0
         with h5py.File(tmp_h5_path, "r") as f:
-            assert float(f["illumination"]["nominal_wavelength_nm"][0]) == 0.0
+            assert float(f["illumination"]["tls_setpoint_nm"][0]) == 0.0
             raw_status = f["tls/status_json"][0]
             status = json.loads(raw_status.decode() if isinstance(raw_status, bytes) else str(raw_status))
             assert float(status["target_wavelength_nm"]) == 0.0
@@ -241,10 +244,8 @@ class TestCaptureForwardDatasetDryRun:
             sys.modules.pop(mod, None)
 
         try:
-            from tasks.capture_forward_dataset import (
-                FakeDeviceBundle,
-                run_capture_forward_dataset,
-            )
+            from tasks.capture_forward_dataset import run_capture_forward_dataset
+            from tasks.testing import FakeDeviceBundle
         except ImportError as e:
             pytest.fail(f"imports should be hardware-free: {e}")
 
@@ -311,14 +312,14 @@ class TestCaptureForwardDatasetDryRun:
             assert int(avg_dset.shape[1]) == 240
             assert int(avg_dset.shape[2]) == 320
 
-    def test_average_burst_false_still_writes_2d_avg(
+    def test_writes_2d_avg_when_store_burst_false(
         self, tmp_h5_path: Path
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "noburst_avg_test",
             "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
-            "camera": {"frames_per_capture": 3, "average_burst": False},
+            "camera": {"frames_per_capture": 3},
             "store_burst": False,
         })
 

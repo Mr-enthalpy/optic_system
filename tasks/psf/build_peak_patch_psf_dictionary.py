@@ -8,20 +8,24 @@ from typing import Any
 import h5py
 import numpy as np
 
-from ._artifact_utils import (
-    PSFArtifactError,
-    camera_frame_extent,
+from tasks.artifacts.coordinate_frame import (
+    camera_frame_extent_from_hdf5,
+    require_full_sensor_extent,
+)
+from tasks.artifacts.h5_arrays import read_mask_arrays
+from tasks.artifacts.json_io import (
     h5_string_dtype,
-    illumination_mode,
     index_string,
     loads_json_object,
-    read_mask_arrays,
     read_optional_dataset_string,
     read_scalar_string,
     read_string_array,
-    require_full_sensor_extent,
-    require_paths,
     unique_preserve_order,
+)
+from .profile_requirements import (
+    PSFArtifactError,
+    illumination_mode,
+    require_paths,
     validate_policy_none,
     validate_profile_manifests,
 )
@@ -119,8 +123,6 @@ def build_peak_patch_psf_dictionary(
     background_policy: str = "none",
     normalization_policy: str = "none",
     output_dtype: str = "float32",
-    allow_acquired_frame_only: bool = False,
-    allow_profile_id_only: bool = False,
     allow_camera_frame_extent_mismatch: bool = False,
     notes: str | None = None,
 ) -> PeakPatchPSFDictionaryManifest:
@@ -128,6 +130,8 @@ def build_peak_patch_psf_dictionary(
         validate_policy_none(background_policy, "background_policy")
         validate_policy_none(normalization_policy, "normalization_policy")
     except PSFArtifactError as exc:
+        raise PeakPatchPSFDictionaryError(str(exc)) from exc
+    except ValueError as exc:
         raise PeakPatchPSFDictionaryError(str(exc)) from exc
     dtype = _output_dtype(output_dtype)
 
@@ -152,7 +156,7 @@ def build_peak_patch_psf_dictionary(
                     "capture/mask_index",
                     "capture/capture_index",
                     "capture/plan_json",
-                    "illumination/nominal_wavelength_nm",
+                    "illumination/illumination_json",
                     "masks/mask_id",
                 ],
             )
@@ -178,10 +182,9 @@ def build_peak_patch_psf_dictionary(
                     f"raw frame_shape {frame_shape} does not match PeakLayoutProfile {layout.frame_shape}"
                 )
             _validate_fixed_patch_layout(layout, frame_shape=frame_shape)
-            extent = camera_frame_extent(src, frame_shape=frame_shape)
+            extent = camera_frame_extent_from_hdf5(src, frame_shape=frame_shape)
             require_full_sensor_extent(
                 extent,
-                allow_acquired_frame_only=allow_acquired_frame_only,
                 artifact_name="peak-patch PSF dictionary",
             )
             _validate_layout_extent(
@@ -195,16 +198,21 @@ def build_peak_patch_psf_dictionary(
                 key = (int(mask_indices[row]), int(wavelength_indices[row]))
                 groups.setdefault(key, []).append(row)
             sorted_keys = sorted(groups)
-            wavelengths_by_index = np.asarray(src["illumination/nominal_wavelength_nm"], dtype=np.float64)
+            illumination_by_index = _read_raw_illumination_json_by_index(src, plan=None)
             mask_ids_by_index = read_string_array(src["masks/mask_id"])
             entry_mask_ids = [
                 index_string(mask_ids_by_index, mask_idx) for mask_idx, _ in sorted_keys
             ]
-            entry_wavelengths = [
-                float(wavelengths_by_index[wl_idx]) for _, wl_idx in sorted_keys
-            ]
             source_plan_json = read_scalar_string(src["capture/plan_json"])
             plan = loads_json_object(source_plan_json)
+            if not illumination_by_index:
+                illumination_by_index = _read_raw_illumination_json_by_index(src, plan=plan)
+            entry_wavelengths = [
+                _wavelength_from_illumination_json(
+                    index_string(illumination_by_index, wl_idx)
+                )
+                for _, wl_idx in sorted_keys
+            ]
             pupil_profile_id = read_optional_dataset_string(src, "profiles/pupil_profile_id")
             camera_profile_id = read_optional_dataset_string(src, "profiles/camera_profile_id")
             illum_mode = illumination_mode(plan)
@@ -215,7 +223,6 @@ def build_peak_patch_psf_dictionary(
                 wavelengths_nm=unique_preserve_order(entry_wavelengths),
                 pupil_profile_manifest=pupil_profile_manifest,
                 camera_profile_manifest=camera_profile_manifest,
-                allow_profile_id_only=allow_profile_id_only,
             )
 
             manifest = PeakPatchPSFDictionaryManifest(
@@ -241,6 +248,8 @@ def build_peak_patch_psf_dictionary(
                 notes=notes,
             )
         except PSFArtifactError as exc:
+            raise PeakPatchPSFDictionaryError(str(exc)) from exc
+        except ValueError as exc:
             raise PeakPatchPSFDictionaryError(str(exc)) from exc
 
         _write_dictionary_h5(
@@ -464,3 +473,41 @@ def _require_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
 
 def _int_pairs(data: dict[str, Any], key: str) -> list[list[int]]:
     return [[int(pair[0]), int(pair[1])] for pair in _require_list(data, key)]
+
+
+def _wavelength_from_illumination_json(illumination_str: str) -> float:
+    try:
+        data = json.loads(illumination_str)
+    except (json.JSONDecodeError, TypeError):
+        return float("nan")
+    mode = data.get("mode") or ""
+    if mode == "broadband_passthrough":
+        return float("nan")
+    effective = data.get("effective_wavelength_nm")
+    if effective is not None:
+        return float(effective)
+    label = data.get("wavelength_label_nm")
+    if label is not None:
+        return float(label)
+    return float("nan")
+
+
+def _read_raw_illumination_json_by_index(
+    src: h5py.File,
+    *,
+    plan: dict[str, Any] | None,
+) -> list[str]:
+    if "illumination/illumination_json" in src:
+        return [
+            value.decode("utf-8") if isinstance(value, bytes) else str(value)
+            for value in src["illumination/illumination_json"][()]
+        ]
+    if isinstance(plan, dict) and isinstance(plan.get("wavelengths"), list):
+        result: list[str] = []
+        for item in plan["wavelengths"]:
+            if isinstance(item, dict) and isinstance(item.get("illumination"), dict):
+                result.append(json.dumps(item["illumination"], sort_keys=True))
+            else:
+                result.append(json.dumps({"mode": "unknown"}, sort_keys=True))
+        return result
+    return []

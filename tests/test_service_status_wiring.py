@@ -56,7 +56,7 @@ def test_mask_id_appears_in_lcd_state(monkeypatch, tmp_path: Path):
 
 
 def test_fake_lcd_stores_mask_id():
-    from tasks.capture_forward_dataset import FakeLCD
+    from tasks.testing import FakeLCD
 
     lcd = FakeLCD()
     mask = np.zeros((60, 180), dtype=np.uint8)

@@ -14,7 +14,7 @@ from tasks.artifacts.coordinate_frame import (
 )
 from tasks.artifacts.json_io import read_json_dataset_or_attr
 
-from ._artifact_utils import PSFArtifactError
+from .profile_requirements import PSFArtifactError
 from .sensor_energy_center import (
     SensorEnergyCenterError,
     SensorEnergyCenterProfile,

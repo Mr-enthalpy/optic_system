@@ -27,8 +27,6 @@ def main() -> int:
     parser.add_argument("--pupil-profile-manifest")
     parser.add_argument("--camera-profile-manifest")
     parser.add_argument("--output-dtype", choices=["float32", "float64"], default="float32")
-    parser.add_argument("--allow-acquired-frame-only", action="store_true")
-    parser.add_argument("--allow-profile-id-only", action="store_true")
     parser.add_argument("--allow-camera-frame-extent-mismatch", action="store_true")
     parser.add_argument("--notes")
     args = parser.parse_args()
@@ -45,8 +43,6 @@ def main() -> int:
         pupil_profile_manifest=args.pupil_profile_manifest,
         camera_profile_manifest=args.camera_profile_manifest,
         output_dtype=args.output_dtype,
-        allow_acquired_frame_only=args.allow_acquired_frame_only,
-        allow_profile_id_only=args.allow_profile_id_only,
         allow_camera_frame_extent_mismatch=args.allow_camera_frame_extent_mismatch,
         notes=args.notes,
     )
