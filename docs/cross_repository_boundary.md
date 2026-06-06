@@ -6,9 +6,8 @@ final external schemas.
 
 ## Repository Roles
 
-`lcd_mask_families` owns mask family definitions, mask instance specs, mask
-sequence specs, physical mask generation rules, quantization/projection rules,
-and shared mask identity/versioning.
+`lcd_mask_families` owns reusable mask-family definitions, schemas, generators,
+projection rules, and versioned mask identity.
 
 `optic_system` owns hardware integration, visualization, device control,
 synchronized acquisition, raw capture preservation, profile-aware measured
@@ -16,9 +15,9 @@ artifacts, full-frame surveys, support/stability/layout diagnostics, and
 measured evidence handoff publication.
 
 `LCD_forward` owns LCD mask-to-peak-cluster/operator modelling,
-LCD-to-measured-response surrogate learning, mask-family evaluation/design from
-measured evidence, peak-cluster operator package generation, and
-H-matrix/operator diagnostics.
+LCD-to-measured-response surrogate learning, mask-family evaluation, parameter
+selection, operator-aware mask-sequence design from measured evidence,
+peak-cluster operator package generation, and H-matrix/operator diagnostics.
 
 `reconstruction` owns inverse-problem solving, forward/adjoint consumption,
 reconstruction pipelines, learned reconstruction, task-level evaluation, and

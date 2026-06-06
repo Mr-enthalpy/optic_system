@@ -7,9 +7,12 @@ It is the hardware-control and synchronized-capture frontend for the mono-LCD pr
 It participates in a four-repository system:
 
 ```text
-lcd_mask_families -- mask family/spec definitions and physical mask generation rules
+lcd_mask_families -- reusable mask-family definitions, schemas, generators,
+                     projection rules, and versioned mask identity
 optic_system      -- hardware control, synchronized capture, measured artifacts
-LCD_forward       -- measured-response/operator modelling and diagnostics
+LCD_forward       -- measured-response/operator modelling, mask-family
+                     evaluation, parameter selection, and operator-aware
+                     mask-sequence design from measured evidence
 reconstruction    -- inverse problems, reconstruction pipelines, evaluation
 ```
 

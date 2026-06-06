@@ -11,7 +11,7 @@ in [`cross_repository_boundary.md`](cross_repository_boundary.md).
 
 ```text
 lcd_mask_families
-  -> mask family/spec identity and physical mask generation rules
+  -> reusable mask-family definitions, schemas, generators, projection rules, and versioned mask identity
 
 optic_system
   -> hardware control, visualization, synchronized capture
@@ -20,7 +20,7 @@ optic_system
 
 LCD_forward
   -> measured-response and operator modelling
-  -> mask-family/operator evaluation and design from evidence
+  -> mask-family evaluation, parameter selection, operator-aware mask-sequence design, and operator diagnostics from evidence
 
 reconstruction
   -> inverse problems, reconstruction pipelines, evaluation

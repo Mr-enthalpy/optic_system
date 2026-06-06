@@ -137,16 +137,16 @@ patch geometry, not the final peak tracking or diffraction-order modelling
 method. Its detection policy is explicitly marked as a high-energy layout
 baseline because it may miss low-energy but stable far-field diffraction peaks.
 
-`lcd_mask_families` owns shared mask-family and mask-spec definitions:
-mask family identity, mask instance specs, mask sequence specs, physical mask
-generation rules, quantization/projection rules, and versioning. `optic_system`
-may consume explicit masks or mask specs from that repository once it exists,
-but it does not own mask-family design.
+`lcd_mask_families` owns reusable mask-family definitions, schemas, generators,
+projection rules, and versioned mask identity. `optic_system` may consume
+explicit masks or mask specs from that repository once it exists, but it does
+not own mask-family design.
 
 `LCD_forward` owns mask-to-operator work: LCD mask-to-peak-cluster/operator
-surrogate modelling, LCD-to-measured-response learning, mask-family/operator
-evaluation and design from measured evidence, peak-cluster operator package
-generation, and H-matrix/operator diagnostics.
+surrogate modelling, LCD-to-measured-response learning, mask-family evaluation,
+parameter selection, operator-aware mask-sequence design from measured
+evidence, peak-cluster operator package generation, and H-matrix/operator
+diagnostics.
 
 `reconstruction` owns inverse problems: forward/adjoint consumption,
 multi-frame joint reconstruction, reconstruction pipelines, learned

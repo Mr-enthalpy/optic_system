@@ -39,7 +39,8 @@ Not yet started:
 adaptive per-cluster-radius PSF dictionary as production format;
 LCD-to-operator / measured-response modelling in LCD_forward;
 multi-frame joint reconstruction in reconstruction;
-mask-family design and optimization through lcd_mask_families / LCD_forward / reconstruction.
+mask-family definitions in lcd_mask_families, with parameter and sequence
+selection loops through LCD_forward / reconstruction.
 ```
 
 The current mainline has a working baseline data contract and a first support
@@ -69,11 +70,11 @@ Peer repositories are responsible for the remaining research loop:
 
 ```text
 lcd_mask_families:
-  mask family/spec identity and physical mask generation rules
+  reusable mask-family definitions, schemas, generators, projection rules, and versioned mask identity
 
 LCD_forward:
   measured-response/operator modelling
-  mask-family/operator evaluation and design from evidence
+  mask-family evaluation, parameter selection, operator-aware mask-sequence design, and operator diagnostics from evidence
   H-matrix/operator diagnostics
 
 reconstruction:

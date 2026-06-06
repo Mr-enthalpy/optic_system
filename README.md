@@ -24,7 +24,7 @@ optic_system
 LCD_forward
   -> LCD mask-to-peak-cluster/operator modelling
   -> LCD-to-measured-response surrogate learning
-  -> mask-family evaluation/design from measured evidence
+  -> mask-family evaluation, parameter selection, and operator-aware mask-sequence design from measured evidence
   -> peak-cluster operator package generation
   -> H-matrix/operator diagnostics
 
@@ -216,8 +216,9 @@ optic_system
 
 The `LCD_forward` relationship is narrowed to measured-evidence consumption
 and capture-plan feedback. `LCD_forward` owns mask-to-operator surrogate
-modelling, measured-response learning, mask-family/operator design from
-evidence, and operator package publication.
+modelling, measured-response learning, mask-family evaluation, parameter
+selection, operator-aware mask-sequence design from measured evidence, and
+operator package publication.
 
 The `reconstruction` relationship is a future measured-response consumer and
 future capture-plan proposer. Reconstruction pipelines, learned reconstruction,

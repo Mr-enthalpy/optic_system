@@ -27,9 +27,9 @@ publication. It participates in a four-repository system:
 
 | Repository | Role |
 |---|---|
-| `lcd_mask_families` | mask family/spec definitions, physical mask generation rules, quantization/projection, identity/versioning |
+| `lcd_mask_families` | reusable mask-family definitions, schemas, generators, projection rules, and versioned mask identity |
 | `optic_system` | hardware integration, visualization, synchronized acquisition, raw capture preservation, measured artifacts, diagnostics, handoff publication |
-| `LCD_forward` | measured-response/operator modelling, LCD-to-response surrogate learning, mask-family/operator evaluation and design, H-matrix/operator diagnostics |
+| `LCD_forward` | measured-response/operator modelling, LCD-to-response surrogate learning, mask-family evaluation, parameter selection, operator-aware mask-sequence design, and H-matrix/operator diagnostics |
 | `reconstruction` | inverse-problem solving, forward/adjoint consumption, reconstruction pipelines, learned reconstruction, task-level evaluation |
 
 Rules:
