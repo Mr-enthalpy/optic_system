@@ -130,7 +130,7 @@ def illumination_status_without_tls(spec: IlluminationSpec) -> dict[str, Any]:
     if label is None:
         label = spec.effective_wavelength_nm
     if label is None and spec.is_broadband_passthrough:
-        label = 0.0
+        label = None
     return _status_with_illumination(
         {
             "connected": False,

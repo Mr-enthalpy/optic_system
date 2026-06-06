@@ -89,16 +89,16 @@ class CaptureFrames:
 # ---------------------------------------------------------------------------
 
 from .hardware_protocols import (
-    CameraBurstDevice as CameraCaptureProtocol,
-    LCDPhysicalMaskDevice as LCDDisplayProtocol,
-    TLSIlluminationDevice as TLSControlProtocol,
+    CameraBurstDevice,
+    LCDPhysicalMaskDevice,
+    TLSIlluminationDevice,
 )
 
 
 class CaptureDeviceBundle(_Protocol):
-    camera: CameraCaptureProtocol
-    lcd: LCDDisplayProtocol
-    tls: TLSControlProtocol | None
+    camera: CameraBurstDevice
+    lcd: LCDPhysicalMaskDevice
+    tls: TLSIlluminationDevice | None
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +426,7 @@ def _illumination_requires_tls(spec: IlluminationSpec) -> bool:
 def _validate_mask_shape(
     mask_array: np.ndarray,
     mask_id: str,
-    lcd: LCDDisplayProtocol,
+    lcd: LCDPhysicalMaskDevice,
 ) -> None:
     expected_h, expected_w = lcd.physical_shape()
     if mask_array.shape != (expected_h, expected_w):

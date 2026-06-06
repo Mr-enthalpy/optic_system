@@ -248,8 +248,6 @@ def build_full_frame_psf_survey(
             raise FullFramePSFSurveyError(str(exc)) from exc
         except ValueError as exc:
             raise FullFramePSFSurveyError(str(exc)) from exc
-        except ValueError as exc:
-            raise FullFramePSFSurveyError(str(exc)) from exc
 
         _write_survey_h5(
             output_path=output_path,
