@@ -114,6 +114,22 @@ diagnostics, and metadata-rich exports.
 - differentiable mask optimization loops;
 - hidden `LCD_forward` training or validation invocations.
 
+## Post-#79 deletion rules
+
+PR #79 removed pre-hardware compatibility paths.  Do not reintroduce:
+
+- `nominal_wavelength_nm` — deleted from `/illumination/` HDF5 group
+- `wavelength_nm` input — rejected in capture plans
+- `camera.average_burst` — deleted from `CameraCaptureConfig`
+- `allow_raw_fallback` — deleted from `RuntimePolicy`
+- `tasks/psf/_artifact_utils` — deleted; functions live in `artifacts/` modules
+- Raw-capture direct measured-artifact analysis — requires `FullFramePSFSurvey`
+- Legacy `FullFramePSFSurvey` field variants (`entry_mask_id`, `wavelength_nm`, etc.)
+
+Legacy / pre-mainline data must only be handled through explicit migration
+scripts under `tasks/migrations/` or `scripts/migrate_*`.  Mainline readers
+must not silently accept legacy layouts.
+
 ## Architecture rules
 
 The dependency direction is:

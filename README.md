@@ -226,56 +226,18 @@ differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
 
 ### Raw capture HDF5 schema
 
-```
-/                            attrs: plan_id, created_at_ns, software_version,
-                             raw_capture_schema_version, capture_role,
-                             hdf5_writer_version
-/raw/frames_avg              [N_capture, H, W] policy dtype, default float32
-/raw/frames                  [N_capture, K, H, W] policy dtype, default input dtype
-                             (only if store_burst=True)
-/raw attrs: storage_policy_json, store_burst, frames_per_capture,
-            average_compute_dtype, frames_avg_stored_dtype, burst_stored_dtype,
-            frame_height, frame_width, frames_avg_input_dtype
-/raw attrs: burst_input_dtype (only if store_burst=True)
-/masks/masks_physical        [N_mask, Hlcd, Wlcd_phys] uint8
-/masks/mask_id               [N_mask] str
-/masks/family_id             [N_mask] str
-/masks/family_params_json    [N_mask] str
-/masks/has_mask_array        [N_mask] bool
-/masks attrs: mask_count
-/illumination/illumination_json           [N_wavelengths] str
-/illumination/tls_setpoint_nm            [N_wavelengths] float64
-/illumination/effective_wavelength_nm    [N_wavelengths] float64
-/tls/grating                 [N_wavelengths] int64
-/tls/settle_ms               [N_wavelengths] int64
-/tls/timestamp_ns            [N_wavelengths] int64
-/tls/status_json             [N_wavelengths] str
-/camera/requested_exposure_us   [N_capture] float64
-/camera/requested_gain_db       [N_capture] float64
-/camera/readback_exposure_us    [N_capture] float64
-/camera/readback_gain_db        [N_capture] float64
-/camera/frame_extent_json    [N_capture] str  (CameraFrameExtent)
-/camera/timestamp_ns         [N_capture] int64
-/camera/status_json          [N_capture] str
-/lcd/settle_ms               [N_capture] int64
-/lcd/display_timestamp_ns    [N_capture] int64
-/lcd/mapping_policy_json     scalar str  (axis-aware: subpixel_axis, physical_mono)
-/lcd/metadata_json           scalar str  (display_index, reported_shape,
-                                          logical_shape, subpixel_axis, physical_shape)
-/profiles/requirements_json  scalar str  (plan requires block)
-/profiles/pupil_profile_id   scalar str
-/profiles/camera_profile_id  scalar str
-/capture/capture_index       [N_capture] int64
-/capture/wavelength_index    [N_capture] int64
-/capture/mask_index          [N_capture] int64
-/capture/burst_count         [N_capture] int64
-/capture/completed           [N_capture] bool
-/capture/plan_json           scalar str
-/capture/plan_id             scalar str
-/capture/runtime_mode        scalar str
-/capture/runtime_policy_json scalar str
-/capture/processing_flags_json scalar str
-```
+Canonical raw schema lives in [`docs/raw_capture_schema.md`](docs/raw_capture_schema.md).
+
+Summary:
+
+- `/raw/frames_avg` — `[N_capture, H, W]` per-capture averaged frames
+- `/raw/frames` — burst frames (only if `store_burst=True`)
+- `/masks/` — physical mask arrays + `mask_id` / family metadata
+- `/illumination/` — `illumination_json`, `tls_setpoint_nm`, `effective_wavelength_nm`
+- `/camera/` — `requested_*` / `readback_*` exposure and gain, `frame_extent_json`
+- `/tls/` — device status (`grating`, `settle_ms`, `timestamp_ns`, `status_json`)
+- `/capture/` — index tables, `plan_json`, `runtime_policy_json`, `processing_flags_json`
+- `/profiles/` — `requirements_json`, `pupil_profile_id`, `camera_profile_id`
 
 Raw capture metadata should use camera frame extent terminology.
 `/camera/frame_extent_json` is the raw HDF5 field. Capture plans must use

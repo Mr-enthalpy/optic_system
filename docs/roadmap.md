@@ -46,6 +46,9 @@ The current mainline has a working baseline data contract and a first support
 diagnostic layer. It does not yet have the final adaptive peak-cluster
 dictionary or any learning-side forward model.
 
+A pre-hardware deletion-first cleanup (PR #79) has made schema compatibility
+intentionally strict.
+
 ---
 
 ## Repository Boundary

@@ -3,6 +3,16 @@
 Canonical schema as written by `RawCaptureWriter` (`tasks/raw_capture_h5.py`).
 Schema version: 2.
 
+## Deleted fields (do not reintroduce)
+
+- `nominal_wavelength_nm` — deleted; use `illumination_json` → `illumination.mode`
+- `camera.average_burst` — deleted; use `store_burst` at plan level
+- `/camera/exposure_us`, `/camera/gain_db` — never existed in this schema;
+  the actual fields are `requested_exposure_us`, `requested_gain_db`,
+  `readback_exposure_us`, `readback_gain_db`
+- pass-through is `illumination.mode=broadband_passthrough`, not a wavelength
+  value of any kind
+
 ## Root attributes
 
 | Attribute | Type | Description |
