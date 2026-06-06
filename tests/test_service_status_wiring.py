@@ -115,6 +115,70 @@ def test_hardware_lcd_service_gets_status_dir(monkeypatch, tmp_path: Path):
     assert str(passed.get("status_dir")) == str(sd)
 
 
+def test_hardware_camera_adapter_gets_camera_service(monkeypatch, tmp_path: Path):
+    """Hardware CLI path wires CameraServiceClient into CameraCaptureAdapter."""
+    passed = {}
+
+    class _FakeLCD:
+        def __init__(self, **kw): pass
+        def get_metadata(self):
+            return {
+                "display_index": 1,
+                "reported_shape": (60, 60, 3),
+                "physical_shape": (60, 180),
+                "logical_shape": (60, 60),
+                "subpixel_axis": 1,
+            }
+
+    class _CapturingAdapter:
+        def __init__(self, helper, camera_service=None):
+            passed["helper"] = helper
+            passed["camera_service"] = camera_service
+
+    def _stop_before_capture(**kwargs):
+        raise RuntimeError("stop after wiring")
+
+    fake_camera_service = _FakeCC()
+    monkeypatch.setattr("devices.camera_service.CameraServiceClient", lambda **kw: fake_camera_service)
+    monkeypatch.setattr("devices.lcd_service.LCDService", _FakeLCD)
+    monkeypatch.setattr("devices.frame_stream.FrameStreamClient", lambda: object())
+    monkeypatch.setattr("capture.frame_capture.FrameCaptureHelper", lambda fs: "helper")
+    monkeypatch.setattr("tasks.capture_forward_dataset.CameraCaptureAdapter", _CapturingAdapter)
+    monkeypatch.setattr("tasks.capture_forward_dataset.run_capture_forward_dataset", _stop_before_capture)
+
+    from scripts.capture_forward_dataset import _run_hardware
+
+    class FakeArgs:
+        enable_tls = False
+        no_auto_sidecar = True
+        camera_index = 0
+        lcd_display_index = 1
+        lcd_subpixel_axis = 1
+        tls_serial_number = ""
+        runtime_mode = None
+
+    from tasks.capture_plan import CapturePlan
+    plan = CapturePlan.from_dict({
+        "plan_id": "camera_wire_test",
+        "wavelengths": [{
+            "illumination": {
+                "mode": "monochromatic",
+                "effective_wavelength_nm": 550.0,
+                "tls_setpoint_nm": None,
+            }
+        }],
+        "masks": [{"mask_id": "m1"}],
+        "camera": {"height": 60, "width": 60, "frames_per_capture": 2},
+        "lcd_settle_ms": 0,
+    })
+
+    with pytest.raises(RuntimeError, match="stop after wiring"):
+        _run_hardware(FakeArgs(), plan, tmp_path / "out.h5", status_dir=None, run_id=None)
+
+    assert passed["helper"] == "helper"
+    assert passed["camera_service"] is fake_camera_service
+
+
 def test_hardware_tls_service_gets_status_dir(monkeypatch, tmp_path: Path):
     """Hardware CLI path constructs TLSService(status_dir=status_dir)."""
     sd = tmp_path / "status"

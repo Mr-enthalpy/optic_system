@@ -18,6 +18,9 @@ class CameraParamDevice(Protocol):
     def apply_camera_params(self, exposure_us=None, gain_db=None):
         ...
 
+    def read_exposure_bounds_us(self) -> tuple[float, float]:
+        ...
+
 
 class LCDPhysicalMaskDevice(Protocol):
     """LCD capable of displaying physical mono masks."""

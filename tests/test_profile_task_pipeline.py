@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from tasks.profiles import (
     WavelengthCalibrationSpec,
     calibrate_broadband_camera_profile,
     calibrate_per_band_pupil_open_camera_profile,
+    evaluate_capture_safety,
     evaluate_gain_binary_search,
     run_broadband_pupil_scan,
 )
@@ -253,6 +255,99 @@ def test_gain_binary_search_records_sorted_order_and_upper_bound_policy() -> Non
     assert all(row.metadata["max_exposure_source"] == "config_expected_camera_api_upper_bound" for row in rows)
 
 
+def test_gain_binary_search_uses_camera_api_shutter_bounds_with_wide_config() -> None:
+    class CameraWithApiBounds(SyntheticCamera):
+        def read_exposure_bounds_us(self) -> tuple[float, float]:
+            return 100.0, 1000.0
+
+    camera = CameraWithApiBounds(lcd=None)
+
+    rows = evaluate_gain_binary_search(
+        camera,
+        ExposureGainSearchConfig(
+            min_exposure_us=1.0,
+            max_exposure_us=999999.0,
+            gains_db=[0.0],
+            iterations=3,
+            safety_fraction=0.95,
+            camera_param_settle_ms=0.0,
+            discard_frames_after_param_change=0,
+        ),
+        frames_per_capture=2,
+        full_scale=255.0,
+    )
+
+    assert [params[0] for params in camera.applied_params] == [100.0, 1000.0]
+    assert all(row.metadata["min_exposure_us"] == 100.0 for row in rows)
+    assert all(row.metadata["max_exposure_us"] == 1000.0 for row in rows)
+    assert all(row.metadata["exposure_bounds_source"] == "camera_api_clamped_by_plan" for row in rows)
+    assert all(row.metadata["max_exposure_source"] == "camera_api_clamped_by_plan" for row in rows)
+    assert all(row.metadata["camera_api_min_exposure_us"] == 100.0 for row in rows)
+    assert all(row.metadata["camera_api_max_exposure_us"] == 1000.0 for row in rows)
+    assert all(row.metadata["config_min_exposure_us"] == 1.0 for row in rows)
+    assert all(row.metadata["config_max_exposure_us"] == 999999.0 for row in rows)
+    assert all(row.metadata["effective_min_exposure_us"] == 100.0 for row in rows)
+    assert all(row.metadata["effective_max_exposure_us"] == 1000.0 for row in rows)
+
+
+def test_gain_binary_search_clamps_camera_api_bounds_by_config_plan() -> None:
+    class CameraWithApiBounds(SyntheticCamera):
+        def read_exposure_bounds_us(self) -> tuple[float, float]:
+            return 100.0, 10000.0
+
+    camera = CameraWithApiBounds(lcd=None)
+
+    rows = evaluate_gain_binary_search(
+        camera,
+        ExposureGainSearchConfig(
+            min_exposure_us=500.0,
+            max_exposure_us=1000.0,
+            gains_db=[0.0],
+            iterations=3,
+            safety_fraction=0.95,
+            camera_param_settle_ms=0.0,
+            discard_frames_after_param_change=0,
+        ),
+        frames_per_capture=2,
+        full_scale=255.0,
+    )
+
+    assert [params[0] for params in camera.applied_params] == [500.0, 1000.0]
+    assert all(row.metadata["min_exposure_us"] == 500.0 for row in rows)
+    assert all(row.metadata["max_exposure_us"] == 1000.0 for row in rows)
+    assert all(row.metadata["exposure_bounds_source"] == "camera_api_clamped_by_plan" for row in rows)
+    assert all(row.metadata["camera_api_min_exposure_us"] == 100.0 for row in rows)
+    assert all(row.metadata["camera_api_max_exposure_us"] == 10000.0 for row in rows)
+    assert all(row.metadata["config_min_exposure_us"] == 500.0 for row in rows)
+    assert all(row.metadata["config_max_exposure_us"] == 1000.0 for row in rows)
+    assert all(row.metadata["effective_min_exposure_us"] == 500.0 for row in rows)
+    assert all(row.metadata["effective_max_exposure_us"] == 1000.0 for row in rows)
+
+
+def test_gain_binary_search_rejects_non_overlapping_api_and_config_bounds() -> None:
+    class CameraWithApiBounds(SyntheticCamera):
+        def read_exposure_bounds_us(self) -> tuple[float, float]:
+            return 100.0, 200.0
+
+    camera = CameraWithApiBounds(lcd=None)
+
+    with pytest.raises(ExposureSearchError, match="do not overlap"):
+        evaluate_gain_binary_search(
+            camera,
+            ExposureGainSearchConfig(
+                min_exposure_us=500.0,
+                max_exposure_us=1000.0,
+                gains_db=[0.0],
+                iterations=3,
+                safety_fraction=0.95,
+                camera_param_settle_ms=0.0,
+                discard_frames_after_param_change=0,
+            ),
+            frames_per_capture=2,
+            full_scale=255.0,
+        )
+
+
 def test_gain_binary_search_stops_only_on_lower_bound_unsafe() -> None:
     camera = SyntheticCamera(lcd=None)
 
@@ -296,6 +391,61 @@ def test_exposure_binary_search_does_not_probe_upper_when_lower_unsafe() -> None
         )
 
     assert camera.applied_params == [(1000.0, 40.0)]
+
+
+def test_capture_safety_reports_excluded_bad_pixel_saturation_without_changing_decision() -> None:
+    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst[1, 0, 0] = 255.0
+    avg = burst.mean(axis=0)
+    valid_mask = np.ones((3, 3), dtype=bool)
+    valid_mask[0, 0] = False
+
+    row = evaluate_capture_safety(
+        burst=burst,
+        avg_frame=avg,
+        exposure_us=1000.0,
+        gain_db=0.0,
+        full_scale=255.0,
+        valid_pixel_mask=valid_mask,
+    )
+
+    assert row.psf_safe is True
+    assert row.peak_pixel_burst == 100.0
+    report = row.metadata["saturation_report"]
+    assert report["all_frames_all_pixels_below_full_scale"] is False
+    assert report["full_frame_peak_pixel_burst"] == 255.0
+    assert report["full_frame_saturated_pixel_count"] == 1
+    assert report["valid_domain_saturated_pixel_count"] == 0
+    assert report["excluded_domain_saturated_pixel_count"] == 1
+    assert report["report_only_not_safety_decision"] is True
+
+
+def test_capture_safety_saturation_report_uses_strict_json_for_nonfinite_excluded_pixels() -> None:
+    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst[1, 0, 0] = np.inf
+    avg = burst.mean(axis=0)
+    valid_mask = np.ones((3, 3), dtype=bool)
+    valid_mask[0, 0] = False
+
+    row = evaluate_capture_safety(
+        burst=burst,
+        avg_frame=avg,
+        exposure_us=1000.0,
+        gain_db=0.0,
+        full_scale=255.0,
+        valid_pixel_mask=valid_mask,
+    )
+
+    assert row.psf_safe is True
+    report = row.metadata["saturation_report"]
+    assert report["all_pixels_finite"] is False
+    assert report["full_frame_nonfinite_status"] == "nonfinite_pixels_present"
+    assert report["full_frame_nonfinite_pixel_count"] == 1
+    assert report["excluded_domain_nonfinite_pixel_count"] == 1
+    assert report["valid_domain_nonfinite_pixel_count"] == 0
+    assert report["full_frame_peak_pixel_burst"] is None
+    assert report["full_frame_peak_pixel_fraction_burst"] is None
+    json.dumps(report, allow_nan=False)
 
 
 def test_gain_binary_search_does_not_swallow_non_lower_bound_errors() -> None:

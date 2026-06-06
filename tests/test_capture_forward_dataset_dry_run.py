@@ -403,6 +403,58 @@ class TestCaptureForwardDatasetDryRun:
         assert status.completed is True
         assert status.error is None
 
+    def test_run_status_gets_frame_preview_stats_and_log(
+        self,
+        sample_plan: CapturePlan,
+        tmp_h5_path: Path,
+        tmp_path: Path,
+    ) -> None:
+        from diagnostics.run_status import RunStatusReader
+
+        devices = FakeDeviceBundle(
+            camera=FakeCamera(height=24, width=32, exposure_us=5000.0, gain_db=2.0),
+            lcd=FakeLCD(height=1080, width_phys=5760),
+        )
+        status_dir = tmp_path / "run_status" / "diagnostics_001"
+
+        run_capture_forward_dataset(
+            plan=sample_plan,
+            devices=devices,
+            output_path=tmp_h5_path,
+            enable_tls=False,
+            dry_run=True,
+            status_dir=status_dir,
+            run_id="diagnostics_001",
+        )
+
+        reader = RunStatusReader(status_dir)
+        status = reader.read()
+        assert status is not None
+        assert status.phase == "completed"
+        assert status.latest_frame_preview == "latest_frame_preview.npy"
+        assert status.frame_stats == "frame_stats.json"
+        assert status.log_file == "log.jsonl"
+
+        preview = reader.read_frame_preview()
+        assert preview is not None
+        assert preview.shape == (24, 32)
+
+        stats = reader.read_frame_stats()
+        assert stats is not None
+        assert stats["capture_index"] == sample_plan.n_captures - 1
+        assert stats["frame_shape_hw"] == [24, 32]
+        assert stats["frames_per_capture"] == sample_plan.camera.frames_per_capture
+        assert stats["max_pixel"] is not None
+        assert 0.0 <= stats["saturated_fraction"] <= 1.0
+        assert stats["exposure_us"] == 5000.0
+        assert stats["gain_db"] == 2.0
+
+        rows = reader.tail_log(max_lines=10)
+        assert any(
+            row.get("source") == "camera" and row.get("message") == "burst captured"
+            for row in rows
+        )
+
     def test_hardware_materialization_rejects_missing_mask(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
     ) -> None:

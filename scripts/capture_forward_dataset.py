@@ -270,7 +270,7 @@ def _run_hardware(
 
         devices: FakeDeviceBundle = type(
             "_Bundle", (), {
-                "camera": CameraCaptureAdapter(capture_helper),
+                "camera": CameraCaptureAdapter(capture_helper, camera_service=camera_service),
                 "lcd": LCDAdapter(lcd_service),
                 "tls": tls_adapter,
             }

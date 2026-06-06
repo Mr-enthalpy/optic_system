@@ -9,10 +9,10 @@ is to:
 - control or represent experimental acquisition (camera, LCD, TLS);
 - preserve raw experimental data as structured HDF5 with full acquisition
   metadata;
-- build profile-aware calibration artifacts (`CameraProfile`, `PupilProfile`)
-  that downstream PSF tasks consume;
-- construct measured artifacts from acquired data — scout surveys, support
-  diagnostics, peak layouts, peak-cluster dictionaries;
+- build profile-aware calibration artifacts that downstream measured-data
+  tasks consume;
+- construct measured artifacts from acquired data, such as surveys, support
+  or layout diagnostics, and exportable measured dictionaries;
 - export metadata-rich artifacts toward the downstream learning repository
   `LCD_forward`.
 
@@ -46,15 +46,17 @@ Rules:
 - Raw measurements are preserved as factual records.  Derived artifacts are
   produced by explicit conversion or analysis steps — never by silently
   reinterpreting raw captures in place.
-- `docs/raw_capture_schema.md` is the canonical HDF5 schema source.
-  README.md contains a summary with a pointer to it.
-- A schema contract test (`tests/test_raw_capture_schema_contract.py`)
-  asserts that all required datasets exist and that deleted or obsolete
-  fields do not exist.  Schema changes must update this test.
+- Schema documentation and schema contract tests are authoritative for
+  persisted data formats. Current examples include
+  `docs/raw_capture_schema.md` and
+  `tests/test_raw_capture_schema_contract.py`.
+- Schema changes must update the relevant documentation and contract tests in
+  the same change.
 - Schema compatibility across file generations is intentionally strict.
   There is no silent fallback path for legacy schema variants inside
-  mainline readers.  Old data must go through explicit migration scripts
-  under `tasks/migrations/` or `scripts/migrate_*.py`.
+  mainline readers. Old data must go through explicit, discoverable
+  migration logic; current examples include `tasks/migrations/` and
+  `scripts/migrate_*.py`.
 
 ## 4. Hardware and experiment safety
 
@@ -74,6 +76,30 @@ Rules:
 - Monochromatic illumination in hardware mode requires an explicit TLS
   setpoint.  Pass-through is `illumination.mode=broadband_passthrough`,
   not a wavelength value of any kind.
+
+### Capture, diagnostics, and monitoring boundaries
+
+- Live monitoring must remain read-only and hardware-free.  If richer live
+  monitor output is needed, the capture or calibration task should publish
+  diagnostics files; the monitor must not take over camera, LCD, or TLS
+  ownership.
+- Hardware paths should read real device capability bounds from device APIs
+  when available.  Configuration bounds are fallback expectations for
+  no-hardware paths, plan constraints, or explicit audit metadata.
+- Capture records should preserve raw dtype, shape, requested/readback
+  exposure and gain, timestamps, frame statistics, and saturation diagnostics.
+  Diagnostic fields must not rewrite or reinterpret the acquired frame facts.
+- Run-status `frame_stats.json` is a live visibility diagnostic unless a task
+  explicitly promotes it into a measured audit artifact. If promoted, it must
+  record strict non-finite status/count fields and explicit full-scale source
+  semantics instead of relying on inferred full scale from floating arrays.
+- Safety decisions, bad-pixel exclusion, and full-frame audit are separate
+  layers.  A valid-pixel mask may define the safety decision domain, but
+  excluded-domain saturation or non-finite pixels must still be recorded as
+  diagnostic facts.
+- Avoid non-standard JSON values such as `NaN` or `Infinity` in persisted
+  metadata.  When a diagnostic value is not finite, record explicit status and
+  count fields and use `null` for unavailable numeric peak/fraction values.
 
 ## 5. Artifact and metadata design principles
 
@@ -95,7 +121,8 @@ assumptions about hardware layout.
 
 ## 6. Testing and validation expectations
 
-- 325+ tests run hardware-free by default.
+- The default test suite should remain hardware-free unless a test is
+  explicitly marked or gated as hardware opt-in.
 - Add or update tests when introducing new schemas, validators, exporters,
   CLI behaviour, serialisation formats, or coordinate conventions.
 - Prefer small, reproducible fixtures (HDF5 files built via the public

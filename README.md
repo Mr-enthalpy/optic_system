@@ -53,6 +53,42 @@ diagnostics.
 
 ## System components
 
+### Entry-point architecture
+
+There are three different user-facing entry points. They are intentionally not
+the same process.
+
+```text
+Manual/debug control:
+  python -m app.main_gui
+  -> SessionController
+  -> device services
+  -> camera sidecar / LCD / TLS
+
+Experimental capture:
+  python scripts/capture_forward_dataset.py ...
+  -> capture task
+  -> camera sidecar frame stream + LCDService + optional TLSService
+  -> raw HDF5 + run-status files
+
+Read-only monitoring:
+  python scripts/monitor_run_status.py --status-dir ...
+  -> polls task-published files
+  -> displays task progress, LCD/TLS state, latest frame preview, frame stats, logs
+```
+
+The key distinction is the camera image path. For experimental image data,
+opening the camera for acquisition means running a capture task. The capture
+task consumes the camera frame stream and publishes preview/stat/log files into
+the run-status directory. The monitor reads those files; it does not open the
+camera, subscribe to the shared-memory stream, or control exposure/gain.
+
+Richer live monitor output should therefore be added at the publishing task:
+call `RunStatusPublisher.write_frame_preview(...)`,
+`RunStatusPublisher.write_frame_stats(...)`, and
+`RunStatusPublisher.append_log(...)`. The monitor remains hardware-free and
+task-agnostic.
+
 ### Camera
 
 The camera path is based on a sidecar process wrapping the legacy camera SDK environment.
@@ -488,6 +524,8 @@ GUI without any TLS requirement.
 `scripts/monitor_run_status.py` is the file-only run-status monitor. It reads
 only task-published status files and previews, does not open camera/LCD/TLS
 hardware, and is safe to open or close while a capture task keeps running.
+The latest camera image displayed by the monitor is the most recent preview
+file written by the capture task after a burst capture.
 
 Example monitor usage:
 
