@@ -68,6 +68,15 @@ class TestCameraCaptureAdapterWithService:
         assert params["exposure_us"] == 5000.0
         assert params["gain_db"] == 3.0
 
+    def test_read_exposure_bounds_converts_shutter_ms_to_us(self):
+        mock_svc = MagicMock()
+        mock_svc.get_range.return_value = (0.01, 1000.0)
+        helper = FakeCaptureHelper()
+        adapter = CameraCaptureAdapter(helper, camera_service=mock_svc)
+
+        assert adapter.read_exposure_bounds_us() == (10.0, 1000000.0)
+        mock_svc.get_range.assert_called_once_with("SHUTTER")
+
     def test_read_params_error_returns_none(self):
         mock_svc = MagicMock()
         mock_svc.get_value.side_effect = RuntimeError("not connected")

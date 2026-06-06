@@ -185,6 +185,9 @@ class ExposureSearchCamera(Protocol):
     def apply_camera_params(self, exposure_us=None, gain_db=None):
         ...
 
+    def read_exposure_bounds_us(self) -> tuple[float, float]:
+        ...
+
     def acquire_burst(self, k: int):
         ...
 
@@ -241,12 +244,16 @@ def evaluate_gain_binary_search(
     configured_gains = [float(g) for g in config.gains_db]
     gains = sorted(configured_gains)
     for gain_index, gain_db in enumerate(gains):
+        min_exposure_us, max_exposure_us, exposure_bounds_source = _resolve_exposure_bounds_us(
+            camera,
+            config,
+        )
         try:
             gain_rows = evaluate_exposure_binary_search(
                 camera,
                 ExposureBinarySearchConfig(
-                    min_exposure_us=float(config.min_exposure_us),
-                    max_exposure_us=float(config.max_exposure_us),
+                    min_exposure_us=min_exposure_us,
+                    max_exposure_us=max_exposure_us,
                     gain_db=float(gain_db),
                     iterations=int(config.iterations),
                     safety_fraction=float(config.safety_fraction),
@@ -273,6 +280,9 @@ def evaluate_gain_binary_search(
             row.metadata["sorted_gains_db"] = list(gains)
             row.metadata["gain_iteration_order"] = "ascending"
             row.metadata["gain_index"] = int(gain_index)
+            row.metadata["exposure_bounds_source"] = exposure_bounds_source
+            row.metadata["min_exposure_source"] = exposure_bounds_source
+            row.metadata["max_exposure_source"] = exposure_bounds_source
         rows.extend(gain_rows)
     if not rows:
         raise ExposureSearchError("no gain/exposure probes were completed")
@@ -417,7 +427,16 @@ def evaluate_capture_safety(
         psf_safe=psf_safe,
         usable_signal=usable,
         unsafe_reason=unsafe_reason,
-        metadata=dict(metadata or {}),
+        metadata={
+            **dict(metadata or {}),
+            "saturation_report": _saturation_report(
+                burst_arr=burst_arr,
+                valid_mask=mask,
+                full_scale=float(full_scale),
+                valid_peak_burst=peak_burst,
+                valid_peak_avg=peak_avg,
+            ),
+        },
     )
 
 
@@ -520,3 +539,66 @@ def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> 
     if not np.any(mask):
         raise ExposureSearchError("valid_pixel_mask leaves zero valid pixels")
     return mask
+
+
+def _resolve_exposure_bounds_us(
+    camera: ExposureSearchCamera,
+    config: ExposureGainSearchConfig,
+) -> tuple[float, float, str]:
+    reader = getattr(camera, "read_exposure_bounds_us", None)
+    if callable(reader):
+        try:
+            min_exposure_us, max_exposure_us = reader()
+        except Exception as exc:
+            raise ExposureSearchError(
+                "failed to read camera SHUTTER exposure bounds from API"
+            ) from exc
+        source = "camera_api_shutter_range"
+    else:
+        min_exposure_us = float(config.min_exposure_us)
+        max_exposure_us = float(config.max_exposure_us)
+        source = "config_expected_camera_api_upper_bound"
+
+    min_exposure_us = float(min_exposure_us)
+    max_exposure_us = float(max_exposure_us)
+    if min_exposure_us <= 0.0 or max_exposure_us <= 0.0:
+        raise ExposureSearchError("camera exposure bounds must be positive")
+    if max_exposure_us < min_exposure_us:
+        raise ExposureSearchError("camera exposure upper bound is below lower bound")
+    return min_exposure_us, max_exposure_us, source
+
+
+def _saturation_report(
+    *,
+    burst_arr: np.ndarray,
+    valid_mask: np.ndarray,
+    full_scale: float,
+    valid_peak_burst: float,
+    valid_peak_avg: float,
+) -> dict[str, Any]:
+    full_finite = bool(np.isfinite(burst_arr).all())
+    full_peak = float(np.max(burst_arr)) if full_finite else float("inf")
+    saturated_all = np.asarray(burst_arr >= float(full_scale), dtype=bool)
+    valid_saturated = saturated_all[:, valid_mask]
+    excluded_mask = np.logical_not(valid_mask)
+    excluded_saturated = saturated_all[:, excluded_mask]
+    frame_saturated = np.any(saturated_all.reshape(saturated_all.shape[0], -1), axis=1)
+    return {
+        "policy": "safety_decision_uses_valid_pixel_mask_to_exclude_bad_pixels",
+        "full_scale": float(full_scale),
+        "frame_count": int(burst_arr.shape[0]),
+        "frame_shape_hw": [int(burst_arr.shape[1]), int(burst_arr.shape[2])],
+        "valid_pixel_count_per_frame": int(np.count_nonzero(valid_mask)),
+        "excluded_pixel_count_per_frame": int(valid_mask.size - np.count_nonzero(valid_mask)),
+        "all_pixels_finite": full_finite,
+        "all_frames_all_pixels_below_full_scale": bool(full_finite and full_peak < float(full_scale)),
+        "full_frame_peak_pixel_burst": full_peak,
+        "full_frame_peak_pixel_fraction_burst": full_peak / float(full_scale),
+        "full_frame_saturated_pixel_count": int(np.count_nonzero(saturated_all)),
+        "full_frame_saturated_frame_count": int(np.count_nonzero(frame_saturated)),
+        "valid_domain_peak_pixel_burst": float(valid_peak_burst),
+        "valid_domain_peak_pixel_avg": float(valid_peak_avg),
+        "valid_domain_saturated_pixel_count": int(np.count_nonzero(valid_saturated)),
+        "excluded_domain_saturated_pixel_count": int(np.count_nonzero(excluded_saturated)),
+        "report_only_not_safety_decision": True,
+    }

@@ -19,6 +19,33 @@ directory:
 Each source is published independently by the component that owns it.
 The monitor merges them for display but does not connect to hardware.
 
+## Architecture boundary
+
+The monitor is not the camera process and is not the capture process.
+
+```text
+capture task
+  -> consumes camera sidecar / frame stream
+  -> drives LCDService and optional TLSService
+  -> writes raw HDF5
+  -> publishes run-status diagnostics
+
+monitor_run_status.py
+  -> polls run-status files only
+  -> renders the latest published diagnostics
+```
+
+For experimental image data, the process that opens and consumes camera frames
+is the capture task. The monitor's live camera view is refreshed only when the
+capture task publishes a new `latest_frame_preview.*` file. Improving live
+camera refresh should therefore be done by publishing richer diagnostics from
+the capture task, not by making the monitor connect to camera hardware.
+
+`scripts/capture_forward_dataset.py` publishes a raw `.npy` latest-frame
+preview, `frame_stats.json`, and a camera log row after every completed burst.
+`frame_stats.json` is computed from the burst data and includes the maximum
+pixel value and saturated-pixel fraction for fast overexposure visibility.
+
 ## Usage
 
 Terminal 1 runs a capture task with `--status-dir`:

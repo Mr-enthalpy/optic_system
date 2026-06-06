@@ -151,11 +151,17 @@ class CameraCaptureAdapter:
         except Exception:
             return {"exposure_us": None, "gain_db": None}
 
+    def read_exposure_bounds_us(self) -> tuple[float, float]:
+        if self._camera is None:
+            raise CameraUnavailableError("camera service is required to read SHUTTER bounds")
+        shutter_min_ms, shutter_max_ms = self._camera.get_range("SHUTTER")
+        return float(shutter_min_ms) * 1000.0, float(shutter_max_ms) * 1000.0
+
     def acquire_burst(self, k: int) -> CaptureFrames:
         frames: list[np.ndarray] = []
         for _ in range(k):
             raw, _rgb = self._helper.capture_one()
-            frames.append(raw.astype(np.float64, copy=False))
+            frames.append(np.asarray(raw))
         burst = np.stack(frames, axis=0)
         avg = burst.mean(axis=0, dtype=np.float64)
         cam_params = self.read_camera_params()
@@ -168,6 +174,8 @@ class CameraCaptureAdapter:
                 "timestamp_ns": time.monotonic_ns(),
                 "exposure_us": cam_params.get("exposure_us"),
                 "gain_db": cam_params.get("gain_db"),
+                "frame_dtype": str(burst.dtype),
+                "frame_shape": [int(burst.shape[1]), int(burst.shape[2])],
             },
         )
 
@@ -355,6 +363,22 @@ def run_capture_forward_dataset(
                     capture_index=capture_idx,
                     n_captures=plan.n_captures,
                 )
+                _publish_capture_diagnostics(
+                    status,
+                    capture,
+                    capture_index=capture_idx,
+                    wavelength_index=wi,
+                    mask_index=mi,
+                    mask_id=mask_entry.mask_id,
+                    requested_exposure_us=cam_requested_exposure_us,
+                    requested_gain_db=cam_requested_gain_db,
+                    readback_exposure_us=(
+                        cam_readback.get("exposure_us") if not dry_run else cam_requested_exposure_us
+                    ),
+                    readback_gain_db=(
+                        cam_readback.get("gain_db") if not dry_run else cam_requested_gain_db
+                    ),
+                )
                 frames_to_store = capture.burst if plan.store_burst else None
 
                 writer.append_capture(
@@ -526,6 +550,181 @@ def _safe_status_update(status: RunStatusPublisher | None, **kwargs: Any) -> Non
         status.update(**kwargs)
     except Exception as exc:
         warnings.warn(f"run status update failed: {exc}", RuntimeWarning)
+
+
+def _publish_capture_diagnostics(
+    status: RunStatusPublisher | None,
+    capture: CaptureFrames,
+    *,
+    capture_index: int,
+    wavelength_index: int,
+    mask_index: int,
+    mask_id: str,
+    requested_exposure_us: float | None,
+    requested_gain_db: float | None,
+    readback_exposure_us: float | None,
+    readback_gain_db: float | None,
+) -> None:
+    if status is None:
+        return
+    try:
+        preview = _latest_preview_frame(capture)
+        status.write_frame_preview(preview, filename="latest_frame_preview.npy")
+        stats = _capture_frame_stats(
+            capture,
+            capture_index=capture_index,
+            wavelength_index=wavelength_index,
+            mask_index=mask_index,
+            mask_id=mask_id,
+            requested_exposure_us=requested_exposure_us,
+            requested_gain_db=requested_gain_db,
+            readback_exposure_us=readback_exposure_us,
+            readback_gain_db=readback_gain_db,
+        )
+        status.write_frame_stats(stats)
+        status.append_log(
+            "info",
+            "burst captured",
+            source="camera",
+            capture_index=capture_index,
+            wavelength_index=wavelength_index,
+            mask_index=mask_index,
+            mask_id=mask_id,
+            max_pixel=stats.get("max_pixel"),
+            saturated_fraction=stats.get("saturated_fraction"),
+            exposure_us=stats.get("exposure_us"),
+            gain_db=stats.get("gain_db"),
+        )
+    except Exception as exc:
+        warnings.warn(f"capture diagnostics publish failed: {exc}", RuntimeWarning)
+
+
+def _latest_preview_frame(capture: CaptureFrames) -> np.ndarray:
+    burst = np.asarray(capture.burst)
+    if burst.ndim == 3 and burst.shape[0] > 0:
+        return burst[-1]
+    return np.asarray(capture.frames_avg)
+
+
+def _capture_frame_stats(
+    capture: CaptureFrames,
+    *,
+    capture_index: int,
+    wavelength_index: int,
+    mask_index: int,
+    mask_id: str,
+    requested_exposure_us: float | None,
+    requested_gain_db: float | None,
+    readback_exposure_us: float | None,
+    readback_gain_db: float | None,
+) -> dict[str, Any]:
+    burst = np.asarray(capture.burst)
+    if burst.size == 0:
+        h, w = _frame_shape_hw(capture)
+        return {
+            "capture_index": int(capture_index),
+            "wavelength_index": int(wavelength_index),
+            "mask_index": int(mask_index),
+            "mask_id": str(mask_id),
+            "timestamp_ns": int(capture.metadata.get("timestamp_ns") or time.monotonic_ns()),
+            "frame_shape_hw": [h, w],
+            "frames_per_capture": 0,
+            "frame_dtype": str(burst.dtype),
+            "max_pixel": None,
+            "min_pixel": None,
+            "mean_pixel": None,
+            "saturated_pixel_count": None,
+            "saturated_fraction": None,
+            "frame_dtype_full_scale": None,
+            "frame_dtype_full_scale_source": "unavailable",
+            "requested_exposure_us": _optional_float_value(requested_exposure_us),
+            "requested_gain_db": _optional_float_value(requested_gain_db),
+            "readback_exposure_us": _optional_float_value(readback_exposure_us),
+            "readback_gain_db": _optional_float_value(readback_gain_db),
+            "exposure_us": _optional_float_value(capture.metadata.get("exposure_us")),
+            "gain_db": _optional_float_value(capture.metadata.get("gain_db")),
+        }
+
+    finite = _finite_values(burst)
+    if finite.size == 0:
+        max_pixel = min_pixel = mean_pixel = None
+    else:
+        max_pixel = float(np.max(finite))
+        min_pixel = float(np.min(finite))
+        mean_pixel = float(np.mean(finite, dtype=np.float64))
+
+    full_scale, full_scale_source = _capture_full_scale(capture, burst, max_pixel=max_pixel)
+    if full_scale is None:
+        saturated_count = None
+        saturated_fraction = None
+    else:
+        saturated_count = int(np.count_nonzero(burst >= full_scale))
+        saturated_fraction = float(saturated_count) / float(burst.size)
+
+    h, w = _frame_shape_hw(capture)
+    return {
+        "capture_index": int(capture_index),
+        "wavelength_index": int(wavelength_index),
+        "mask_index": int(mask_index),
+        "mask_id": str(mask_id),
+        "timestamp_ns": int(capture.metadata.get("timestamp_ns") or time.monotonic_ns()),
+        "frame_shape_hw": [h, w],
+        "frames_per_capture": int(burst.shape[0]) if burst.ndim >= 3 else 1,
+        "frame_dtype": str(burst.dtype),
+        "max_pixel": max_pixel,
+        "min_pixel": min_pixel,
+        "mean_pixel": mean_pixel,
+        "saturated_pixel_count": saturated_count,
+        "saturated_fraction": saturated_fraction,
+        "frame_dtype_full_scale": full_scale,
+        "frame_dtype_full_scale_source": full_scale_source,
+        "requested_exposure_us": _optional_float_value(requested_exposure_us),
+        "requested_gain_db": _optional_float_value(requested_gain_db),
+        "readback_exposure_us": _optional_float_value(readback_exposure_us),
+        "readback_gain_db": _optional_float_value(readback_gain_db),
+        "exposure_us": _optional_float_value(capture.metadata.get("exposure_us")),
+        "gain_db": _optional_float_value(capture.metadata.get("gain_db")),
+    }
+
+
+def _frame_shape_hw(capture: CaptureFrames) -> tuple[int | None, int | None]:
+    avg = np.asarray(capture.frames_avg)
+    if avg.ndim >= 2:
+        return int(avg.shape[-2]), int(avg.shape[-1])
+    burst = np.asarray(capture.burst)
+    if burst.ndim >= 2:
+        return int(burst.shape[-2]), int(burst.shape[-1])
+    return None, None
+
+
+def _finite_values(array: np.ndarray) -> np.ndarray:
+    if np.issubdtype(array.dtype, np.floating):
+        return array[np.isfinite(array)]
+    return array.reshape(-1)
+
+
+def _capture_full_scale(
+    capture: CaptureFrames,
+    burst: np.ndarray,
+    *,
+    max_pixel: float | None,
+) -> tuple[float | None, str]:
+    explicit = _optional_float_value(
+        capture.metadata.get("frame_dtype_full_scale")
+        or capture.metadata.get("full_scale")
+        or capture.metadata.get("saturation_level")
+    )
+    if explicit is not None:
+        return explicit, "metadata"
+    if np.issubdtype(burst.dtype, np.integer):
+        return float(np.iinfo(burst.dtype).max), "dtype"
+    if max_pixel is None:
+        return None, "unavailable"
+    if max_pixel <= 255.0:
+        return 255.0, "inferred_from_max_pixel"
+    if max_pixel <= 65535.0:
+        return 65535.0, "inferred_from_max_pixel"
+    return None, "unavailable"
 
 
 def _optional_float_value(value: Any) -> float | None:
