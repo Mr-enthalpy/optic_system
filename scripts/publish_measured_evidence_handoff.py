@@ -17,7 +17,7 @@ def _ensure_repo_on_path() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Export a peak-patch PSF dictionary with LCD_forward-readable metadata"
+        description="Publish a peak-patch PSF dictionary as a measured-evidence handoff"
     )
     parser.add_argument("dictionary_h5")
     parser.add_argument("output_h5")
@@ -25,9 +25,9 @@ def main() -> int:
     args = parser.parse_args()
 
     _ensure_repo_on_path()
-    from tasks.psf import export_peak_patch_dictionary_to_lcd_forward
+    from tasks.psf import publish_measured_evidence_handoff
 
-    export_peak_patch_dictionary_to_lcd_forward(
+    publish_measured_evidence_handoff(
         dictionary_h5=args.dictionary_h5,
         output_h5=args.output_h5,
         include_dense_diagnostic=args.include_dense_diagnostic,

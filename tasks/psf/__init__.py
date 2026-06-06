@@ -22,9 +22,9 @@ from .analyze_diffraction_support import (
     PeakSupportAnalysisManifest,
     analyze_diffraction_support,
 )
-from .export_peak_patch_dictionary_to_lcd_forward import (
-    PeakPatchDictionaryExportError,
-    export_peak_patch_dictionary_to_lcd_forward,
+from .publish_measured_evidence_handoff import (
+    MeasuredEvidenceHandoffError,
+    publish_measured_evidence_handoff,
 )
 from .profile_requirements import (
     ProfileDependencyError,
@@ -46,7 +46,7 @@ __all__ = [
     "FullFramePSFSurveyManifest",
     "PeakLayoutProfileError",
     "PeakLayoutProfileManifest",
-    "PeakPatchDictionaryExportError",
+    "MeasuredEvidenceHandoffError",
     "PeakPatchPSFDictionaryError",
     "PeakPatchPSFDictionaryManifest",
     "PeakSupportAnalysisManifest",
@@ -59,7 +59,7 @@ __all__ = [
     "derive_peak_layout_profile",
     "derive_sensor_energy_center_profile",
     "estimate_frame_energy_center",
-    "export_peak_patch_dictionary_to_lcd_forward",
+    "publish_measured_evidence_handoff",
     "render_peak_patch_dense_view",
     "validate_broadband_pupil_scan_dependencies",
     "validate_center_profile_for_frame_source",

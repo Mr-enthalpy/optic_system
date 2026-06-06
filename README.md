@@ -2,24 +2,43 @@
 
 `optic_system` is the hardware-control and synchronized-capture frontend for the mono-LCD programmable diffractive imaging project.
 
-It is not the neural-network training repository.
-Its downstream learning / reconstruction repository is `LCD_forward`.
+It is not a neural-network training repository, mask-family design repository,
+or reconstruction repository.
 
-The intended system boundary is:
+The intended long-term system is split across four repositories:
 
 ```text
+lcd_mask_families
+  -> mask family definitions
+  -> mask instance and sequence specs
+  -> physical mask generation, quantization, and projection rules
+  -> shared mask identity and versioning
+
 optic_system
-  -> controls camera / LCD / TLS
-  -> raw capture HDF5
-  -> profile / survey / support / peak-cluster artifacts
-  -> optional LCD_forward-compatible exports
+  -> hardware control, visualization, and synchronized acquisition
+  -> raw capture preservation
+  -> profile-aware measured artifacts
+  -> full-frame surveys, support/stability/layout diagnostics
+  -> measured evidence handoff publication
 
 LCD_forward
-  -> dense-kernel baselines
-  -> peak-cluster forward models
-  -> multi-frame rendering / reconstruction
-  -> mask and GenerMask optimization
+  -> LCD mask-to-peak-cluster/operator modelling
+  -> LCD-to-measured-response surrogate learning
+  -> mask-family evaluation, parameter selection, and operator-aware mask-sequence design from measured evidence
+  -> peak-cluster operator package generation
+  -> H-matrix/operator diagnostics
+
+reconstruction
+  -> inverse-problem solving
+  -> forward/adjoint consumption
+  -> reconstruction pipelines and learned reconstruction
+  -> task-level evaluation
+  -> reconstruction-driven capture-plan proposals
 ```
+
+See [`docs/cross_repository_boundary.md`](docs/cross_repository_boundary.md)
+for the normative handoff boundary. The handoff categories and directories in
+this repository are placeholders, not implemented cross-repository APIs.
 
 ## Current project role
 
@@ -42,10 +61,12 @@ The active responsibilities are:
 * `PeakPatchPSFDictionary`
 * future `AdaptivePeakClusterPSFDictionary`
 * metadata-rich diagnostic exports
-* optional export boundary toward `LCD_forward`
+* measured evidence and measured response handoff publication
 
 The repository should stay focused on hardware control and data acquisition.
-Training, reconstruction, and differentiable mask optimization belong to `LCD_forward`.
+Mask-family design belongs to `lcd_mask_families`; LCD response/operator
+modelling belongs to `LCD_forward`; reconstruction pipelines belong to
+`reconstruction`.
 The long-term scientific route is summarized in
 [`docs/research_idea.md`](docs/research_idea.md); in this repository, that route
 stops at measured artifacts, profile-aware raw captures, metadata, and
@@ -167,26 +188,46 @@ must be explicit non-hardware/diagnostic choices. No-TLS positive wavelength
 labels are allowed only in non-hardware contexts. TLS zero-order pass-through
 requires a real TLS adapter in hardware mode.
 
-## Relationship with LCD_forward
+## Cross-Repository Boundary
 
-`optic_system` should produce experimental data.
+`optic_system` is the hardware-control, visualization, synchronized-capture,
+and measured-artifact frontend.
 
-`LCD_forward` should consume metadata-rich exports from measured artifacts.
+It does not train forward surrogates, own mask-family design, or own
+reconstruction pipelines.
 
-The connection has two useful forms:
+Allowed future inputs:
 
 ```text
-optic_system raw capture HDF5
-  -> profile / survey / support / peak-cluster artifacts
-  -> peak-patch or adaptive peak-cluster exports
+lcd_mask_families
+  -> mask specs, explicit physical masks, or mask sequence specs
 
-LCD_forward
-  -> peak-cluster forward models
-  -> multi-frame rendering / reconstruction
-  -> mask and GenerMask optimization
+LCD_forward or reconstruction
+  -> capture-plan handoff requests
 ```
 
-`optic_system` should not directly train these models.
+Allowed future outputs:
+
+```text
+optic_system
+  -> measured evidence handoffs for LCD_forward
+  -> measured response / target-capture handoffs for reconstruction
+```
+
+The `LCD_forward` relationship is narrowed to measured-evidence consumption
+and capture-plan feedback. `LCD_forward` owns mask-to-operator surrogate
+modelling, measured-response learning, mask-family evaluation, parameter
+selection, operator-aware mask-sequence design from measured evidence, and
+operator package publication.
+
+The `reconstruction` relationship is a future measured-response consumer and
+future capture-plan proposer. Reconstruction pipelines, learned reconstruction,
+inverse-problem evaluation, and forward/adjoint consumption live there.
+
+The `lcd_mask_families` relationship is a future shared source of mask
+family/spec identity. `optic_system` may consume mask specs or explicit masks
+from it once that repository exists, but this repository must not implement
+that external package or invent final schemas for it.
 
 ## Development roadmap
 
@@ -257,8 +298,11 @@ medium-term representation target is an adaptive peak-cluster dictionary where
 each real diffraction peak cluster has its own support, coordinates, and local
 raw data.
 
-Training the peak-cluster forward model, multi-frame reconstruction, and
-differentiable mask or `GenerMask` optimization are deferred to `LCD_forward`.
+Training the peak-cluster forward/operator model is deferred to `LCD_forward`.
+Multi-frame reconstruction is deferred to `reconstruction`. Differentiable
+mask-family or `GenerMask` design belongs to the cross-repository loop between
+`lcd_mask_families`, `LCD_forward`, and `reconstruction`, not to
+`optic_system`.
 
 ### Raw capture HDF5 schema
 
@@ -338,7 +382,7 @@ In short:
 Phase 3   -- stable capture and profile-aware experimental artifacts
 Phase 3.5 -- support-aware peak-cluster preparation
 Phase 3.6 -- adaptive peak-cluster PSF dictionary
-Phase 4+  -- LCD_forward-side modelling, reconstruction, and optimization
+Phase 4+  -- cross-repository modelling, operator, reconstruction, and mask-family work
 ```
 
 Completed Phase 0/1/2 implementation details are preserved in
@@ -441,7 +485,8 @@ support / peak-cluster coordinate metadata when available
 processing flags
 ```
 
-Training-ready files for `LCD_forward` should be generated by a separate conversion step.
+External training/reconstruction-ready files should be generated by explicit
+handoff or conversion steps, not by raw capture code.
 
 Do not discard raw metadata during first acquisition.
 
@@ -558,5 +603,6 @@ The repository currently has:
 Current active work has two tracks: Phase 3A-H hardware validation of the
 profile-driven calibration chain, and Phase 3.5C real-data support-analysis
 operationalization and support stability audit. Learning-side forward
-modelling, reconstruction, and mask optimization remain `LCD_forward`
-responsibilities.
+modelling, reconstruction, and mask-family design remain outside
+`optic_system` and are split across `LCD_forward`, `reconstruction`, and
+`lcd_mask_families`.
