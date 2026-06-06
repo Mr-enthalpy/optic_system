@@ -19,6 +19,9 @@ Completed outcomes:
   `LCD_forward`;
 - deprecated prototype assumptions removed from the active architecture;
 - old experimental task paths documented as legacy unless audited;
+- the historical `old/` prototype directory was removed from the active tree;
+  see `docs/legacy_reference.md` for its replacement boundaries and Git
+  history lookup policy;
 - `tls_c1` identified as the active TLS backend;
 - staged implementation documented for later capture work.
 
