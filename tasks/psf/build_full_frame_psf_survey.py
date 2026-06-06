@@ -12,11 +12,11 @@ from tasks.artifacts.coordinate_frame import (
     camera_frame_extent_from_hdf5,
     require_full_sensor_extent,
 )
+from tasks.artifacts.h5_arrays import read_mask_arrays
 from tasks.artifacts.json_io import (
     h5_string_dtype,
     index_string,
     loads_json_object,
-    read_mask_arrays,
     read_optional_dataset_string,
     read_scalar_string,
     read_string_array,

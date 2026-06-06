@@ -87,15 +87,6 @@ def loads_json_object(text: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def read_mask_arrays(src: h5py.File) -> np.ndarray | None:
-    if "masks/masks_physical" not in src:
-        return None
-    masks = np.asarray(src["masks/masks_physical"])
-    if masks.ndim == 3 and masks.shape[1] > 1 and masks.shape[2] > 1:
-        return masks
-    return None
-
-
 def unique_preserve_order(values: list[Any]) -> list[Any]:
     result: list[Any] = []
     for value in values:

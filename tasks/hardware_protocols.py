@@ -51,9 +51,6 @@ class TLSIlluminationDevice(Protocol):
     def set_wavelength(self, wavelength_nm: float) -> None:
         ...
 
-    def set_wavelength_nm(self, wavelength_nm: float) -> None:
-        ...
-
     def move_and_wait(self, timeout_s: float) -> None:
         ...
 
