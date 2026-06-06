@@ -355,6 +355,11 @@ frame stats, or logs are not monitor failures.
 
 Raw capture data must be preserved before conversion.
 
+Do not casually delete acquired data. Old, superseded, invalid, or
+pre-mainline captures and artifacts should be renamed, downgraded with explicit
+metadata/status flags, quarantined, or migrated. Delete acquired data only when
+the user explicitly asks for deletion.
+
 A raw capture HDF5 should preserve, as applicable:
 
 ```text
@@ -572,6 +577,7 @@ Do not:
 * bypass `SessionController` from GUI
 * make `tls_c1` a mandatory import for normal startup
 * silently reuse legacy `tasks/` as active architecture
+* delete acquired capture data unless the user explicitly requests deletion
 * remove raw metadata during export
 * conflate raw capture HDF5 with training-ready HDF5
 

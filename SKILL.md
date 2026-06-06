@@ -46,6 +46,10 @@ Rules:
 - Raw measurements are preserved as factual records.  Derived artifacts are
   produced by explicit conversion or analysis steps — never by silently
   reinterpreting raw captures in place.
+- Do not casually delete acquired data.  Old, superseded, invalid, or
+  pre-mainline captures and artifacts should be renamed, downgraded with
+  explicit metadata/status flags, quarantined, or migrated.  Delete acquired
+  data only when the user explicitly asks for deletion.
 - Schema documentation and schema contract tests are authoritative for
   persisted data formats. Current examples include
   `docs/raw_capture_schema.md` and
