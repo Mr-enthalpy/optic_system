@@ -123,7 +123,6 @@ def build_peak_patch_psf_dictionary(
     background_policy: str = "none",
     normalization_policy: str = "none",
     output_dtype: str = "float32",
-    allow_acquired_frame_only: bool = False,
     allow_camera_frame_extent_mismatch: bool = False,
     notes: str | None = None,
 ) -> PeakPatchPSFDictionaryManifest:
@@ -186,7 +185,6 @@ def build_peak_patch_psf_dictionary(
             extent = camera_frame_extent_from_hdf5(src, frame_shape=frame_shape)
             require_full_sensor_extent(
                 extent,
-                allow_acquired_frame_only=allow_acquired_frame_only,
                 artifact_name="peak-patch PSF dictionary",
             )
             _validate_layout_extent(

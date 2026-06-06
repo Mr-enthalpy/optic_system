@@ -362,14 +362,13 @@ def test_peak_patch_dictionary_rejects_camera_frame_extent_mismatch(tmp_path: Pa
     )
     pupil_manifest, camera_manifest = _write_profile_manifests(tmp_path)
 
-    with pytest.raises(PeakPatchPSFDictionaryError, match="camera_frame_extent"):
+    with pytest.raises(PeakPatchPSFDictionaryError, match="full-sensor"):
         build_peak_patch_psf_dictionary(
             source_raw_capture_h5=raw_path,
             peak_layout_profile=layout_path,
             output_h5=tmp_path / "peak_patch_dictionary.h5",
             pupil_profile_manifest=pupil_manifest,
             camera_profile_manifest=camera_manifest,
-            allow_acquired_frame_only=True,
         )
 
 

@@ -112,7 +112,6 @@ def build_full_frame_psf_survey(
     camera_profile_manifest: str | Path | None = None,
     background_policy: str = "none",
     normalization_policy: str = "none",
-    allow_acquired_frame_only: bool = False,
     max_entries: int = 100,
     max_total_pixels: int = 1_000_000,
     allow_large_survey: bool = False,
@@ -183,7 +182,6 @@ def build_full_frame_psf_survey(
             extent = camera_frame_extent_from_hdf5(src, frame_shape=frame_shape)
             require_full_sensor_extent(
                 extent,
-                allow_acquired_frame_only=allow_acquired_frame_only,
                 artifact_name="full-frame PSF survey",
             )
 

@@ -240,16 +240,12 @@ def camera_frame_extent_from_hdf5(
 def require_full_sensor_extent(
     extent: dict[str, Any],
     *,
-    allow_acquired_frame_only: bool,
     artifact_name: str,
 ) -> None:
     if extent.get("mode") == "full_sensor":
         return
-    if allow_acquired_frame_only:
-        return
     raise ValueError(
-        f"cannot confirm full-sensor acquisition for {artifact_name}; pass "
-        "allow_acquired_frame_only to record acquired-frame coordinates explicitly"
+        f"full-sensor camera frame extent is required for {artifact_name}"
     )
 
 
