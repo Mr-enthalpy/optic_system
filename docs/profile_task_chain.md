@@ -73,10 +73,12 @@ real TLS adapter in hardware mode.
 - Camera exposure calibration is gain-outer and exposure-binary-search inner.
 - Configured gains are recorded, but execution sorts gain values ascending.
 - For each completed gain, publish the maximum verified safe exposure.
-- Exposure bounds are the camera-settable `SHUTTER` bounds. Hardware adapters
-  should read them through the camera API and convert them to `exposure_us`.
-  Plan/config bounds are only a no-hardware fallback or an explicit expected
-  API-bound record.
+- Exposure bounds combine camera capability and plan constraints. Hardware
+  adapters should read camera-settable `SHUTTER` bounds through the camera API
+  and convert them to `exposure_us`; the effective binary-search interval is
+  the intersection with the plan/config interval. Plan/config bounds are a
+  no-hardware fallback when the API is unavailable, and a deliberate search
+  window constraint when the API is available.
 - If the minimum exposure is unsafe at a higher gain, later higher gains may be
   skipped and the stop condition must be recorded.
 - Only explicit lower-bound-unsafe failures may become a high-gain stop

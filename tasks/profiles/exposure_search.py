@@ -241,7 +241,12 @@ def evaluate_gain_binary_search(
     configured_gains = [float(g) for g in config.gains_db]
     gains = sorted(configured_gains)
     for gain_index, gain_db in enumerate(gains):
-        min_exposure_us, max_exposure_us, exposure_bounds_source = _resolve_exposure_bounds_us(
+        (
+            min_exposure_us,
+            max_exposure_us,
+            exposure_bounds_source,
+            exposure_bounds_metadata,
+        ) = _resolve_exposure_bounds_us(
             camera,
             config,
         )
@@ -280,6 +285,7 @@ def evaluate_gain_binary_search(
             row.metadata["exposure_bounds_source"] = exposure_bounds_source
             row.metadata["min_exposure_source"] = exposure_bounds_source
             row.metadata["max_exposure_source"] = exposure_bounds_source
+            row.metadata.update(exposure_bounds_metadata)
         rows.extend(gain_rows)
     if not rows:
         raise ExposureSearchError("no gain/exposure probes were completed")
@@ -541,28 +547,67 @@ def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> 
 def _resolve_exposure_bounds_us(
     camera: ExposureSearchCamera,
     config: ExposureGainSearchConfig,
-) -> tuple[float, float, str]:
+) -> tuple[float, float, str, dict[str, Any]]:
+    config_min_exposure_us = float(config.min_exposure_us)
+    config_max_exposure_us = float(config.max_exposure_us)
+    _validate_exposure_bounds_us(
+        config_min_exposure_us,
+        config_max_exposure_us,
+        label="config exposure bounds",
+    )
     reader = getattr(camera, "read_exposure_bounds_us", None)
     if callable(reader):
         try:
-            min_exposure_us, max_exposure_us = reader()
+            api_min_exposure_us, api_max_exposure_us = reader()
         except Exception as exc:
             raise ExposureSearchError(
                 "failed to read camera SHUTTER exposure bounds from API"
             ) from exc
-        source = "camera_api_shutter_range"
+        api_min_exposure_us = float(api_min_exposure_us)
+        api_max_exposure_us = float(api_max_exposure_us)
+        _validate_exposure_bounds_us(
+            api_min_exposure_us,
+            api_max_exposure_us,
+            label="camera API exposure bounds",
+        )
+        min_exposure_us = max(api_min_exposure_us, config_min_exposure_us)
+        max_exposure_us = min(api_max_exposure_us, config_max_exposure_us)
+        if max_exposure_us < min_exposure_us:
+            raise ExposureSearchError(
+                "camera API exposure bounds do not overlap config exposure bounds"
+            )
+        source = "camera_api_clamped_by_plan"
+        metadata = {
+            "camera_api_min_exposure_us": api_min_exposure_us,
+            "camera_api_max_exposure_us": api_max_exposure_us,
+            "config_min_exposure_us": config_min_exposure_us,
+            "config_max_exposure_us": config_max_exposure_us,
+            "effective_min_exposure_us": float(min_exposure_us),
+            "effective_max_exposure_us": float(max_exposure_us),
+        }
     else:
-        min_exposure_us = float(config.min_exposure_us)
-        max_exposure_us = float(config.max_exposure_us)
+        min_exposure_us = config_min_exposure_us
+        max_exposure_us = config_max_exposure_us
         source = "config_expected_camera_api_upper_bound"
+        metadata = {
+            "config_min_exposure_us": config_min_exposure_us,
+            "config_max_exposure_us": config_max_exposure_us,
+            "effective_min_exposure_us": float(min_exposure_us),
+            "effective_max_exposure_us": float(max_exposure_us),
+        }
+    return float(min_exposure_us), float(max_exposure_us), source, metadata
 
-    min_exposure_us = float(min_exposure_us)
-    max_exposure_us = float(max_exposure_us)
+
+def _validate_exposure_bounds_us(
+    min_exposure_us: float,
+    max_exposure_us: float,
+    *,
+    label: str,
+) -> None:
     if min_exposure_us <= 0.0 or max_exposure_us <= 0.0:
-        raise ExposureSearchError("camera exposure bounds must be positive")
+        raise ExposureSearchError(f"{label} must be positive")
     if max_exposure_us < min_exposure_us:
-        raise ExposureSearchError("camera exposure upper bound is below lower bound")
-    return min_exposure_us, max_exposure_us, source
+        raise ExposureSearchError(f"{label} upper bound is below lower bound")
 
 
 def _saturation_report(

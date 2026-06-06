@@ -255,7 +255,7 @@ def test_gain_binary_search_records_sorted_order_and_upper_bound_policy() -> Non
     assert all(row.metadata["max_exposure_source"] == "config_expected_camera_api_upper_bound" for row in rows)
 
 
-def test_gain_binary_search_prefers_camera_api_shutter_bounds() -> None:
+def test_gain_binary_search_uses_camera_api_shutter_bounds_with_wide_config() -> None:
     class CameraWithApiBounds(SyntheticCamera):
         def read_exposure_bounds_us(self) -> tuple[float, float]:
             return 100.0, 1000.0
@@ -280,8 +280,72 @@ def test_gain_binary_search_prefers_camera_api_shutter_bounds() -> None:
     assert [params[0] for params in camera.applied_params] == [100.0, 1000.0]
     assert all(row.metadata["min_exposure_us"] == 100.0 for row in rows)
     assert all(row.metadata["max_exposure_us"] == 1000.0 for row in rows)
-    assert all(row.metadata["exposure_bounds_source"] == "camera_api_shutter_range" for row in rows)
-    assert all(row.metadata["max_exposure_source"] == "camera_api_shutter_range" for row in rows)
+    assert all(row.metadata["exposure_bounds_source"] == "camera_api_clamped_by_plan" for row in rows)
+    assert all(row.metadata["max_exposure_source"] == "camera_api_clamped_by_plan" for row in rows)
+    assert all(row.metadata["camera_api_min_exposure_us"] == 100.0 for row in rows)
+    assert all(row.metadata["camera_api_max_exposure_us"] == 1000.0 for row in rows)
+    assert all(row.metadata["config_min_exposure_us"] == 1.0 for row in rows)
+    assert all(row.metadata["config_max_exposure_us"] == 999999.0 for row in rows)
+    assert all(row.metadata["effective_min_exposure_us"] == 100.0 for row in rows)
+    assert all(row.metadata["effective_max_exposure_us"] == 1000.0 for row in rows)
+
+
+def test_gain_binary_search_clamps_camera_api_bounds_by_config_plan() -> None:
+    class CameraWithApiBounds(SyntheticCamera):
+        def read_exposure_bounds_us(self) -> tuple[float, float]:
+            return 100.0, 10000.0
+
+    camera = CameraWithApiBounds(lcd=None)
+
+    rows = evaluate_gain_binary_search(
+        camera,
+        ExposureGainSearchConfig(
+            min_exposure_us=500.0,
+            max_exposure_us=1000.0,
+            gains_db=[0.0],
+            iterations=3,
+            safety_fraction=0.95,
+            camera_param_settle_ms=0.0,
+            discard_frames_after_param_change=0,
+        ),
+        frames_per_capture=2,
+        full_scale=255.0,
+    )
+
+    assert [params[0] for params in camera.applied_params] == [500.0, 1000.0]
+    assert all(row.metadata["min_exposure_us"] == 500.0 for row in rows)
+    assert all(row.metadata["max_exposure_us"] == 1000.0 for row in rows)
+    assert all(row.metadata["exposure_bounds_source"] == "camera_api_clamped_by_plan" for row in rows)
+    assert all(row.metadata["camera_api_min_exposure_us"] == 100.0 for row in rows)
+    assert all(row.metadata["camera_api_max_exposure_us"] == 10000.0 for row in rows)
+    assert all(row.metadata["config_min_exposure_us"] == 500.0 for row in rows)
+    assert all(row.metadata["config_max_exposure_us"] == 1000.0 for row in rows)
+    assert all(row.metadata["effective_min_exposure_us"] == 500.0 for row in rows)
+    assert all(row.metadata["effective_max_exposure_us"] == 1000.0 for row in rows)
+
+
+def test_gain_binary_search_rejects_non_overlapping_api_and_config_bounds() -> None:
+    class CameraWithApiBounds(SyntheticCamera):
+        def read_exposure_bounds_us(self) -> tuple[float, float]:
+            return 100.0, 200.0
+
+    camera = CameraWithApiBounds(lcd=None)
+
+    with pytest.raises(ExposureSearchError, match="do not overlap"):
+        evaluate_gain_binary_search(
+            camera,
+            ExposureGainSearchConfig(
+                min_exposure_us=500.0,
+                max_exposure_us=1000.0,
+                gains_db=[0.0],
+                iterations=3,
+                safety_fraction=0.95,
+                camera_param_settle_ms=0.0,
+                discard_frames_after_param_change=0,
+            ),
+            frames_per_capture=2,
+            full_scale=255.0,
+        )
 
 
 def test_gain_binary_search_stops_only_on_lower_bound_unsafe() -> None:
