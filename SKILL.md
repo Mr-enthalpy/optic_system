@@ -75,6 +75,26 @@ Rules:
   setpoint.  Pass-through is `illumination.mode=broadband_passthrough`,
   not a wavelength value of any kind.
 
+### Capture diagnostics and monitor boundary
+
+- Live monitoring must remain read-only and hardware-free.  If richer live
+  monitor output is needed, the capture or calibration task should publish
+  diagnostics files; the monitor must not take over camera, LCD, or TLS
+  ownership.
+- Hardware paths should read real device capability bounds from device APIs
+  when available.  Configuration bounds are fallback expectations for
+  no-hardware paths, plan constraints, or explicit audit metadata.
+- Capture records should preserve raw dtype, shape, requested/readback
+  exposure and gain, timestamps, frame statistics, and saturation diagnostics.
+  Diagnostic fields must not rewrite or reinterpret the acquired frame facts.
+- Safety decisions, bad-pixel exclusion, and full-frame audit are separate
+  layers.  A valid-pixel mask may define the safety decision domain, but
+  excluded-domain saturation or non-finite pixels must still be recorded as
+  diagnostic facts.
+- Avoid non-standard JSON values such as `NaN` or `Infinity` in persisted
+  metadata.  When a diagnostic value is not finite, record explicit status and
+  count fields and use `null` for unavailable numeric peak/fraction values.
+
 ## 5. Artifact and metadata design principles
 
 Every derived artifact should carry enough context to be interpretable

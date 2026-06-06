@@ -185,9 +185,6 @@ class ExposureSearchCamera(Protocol):
     def apply_camera_params(self, exposure_us=None, gain_db=None):
         ...
 
-    def read_exposure_bounds_us(self) -> tuple[float, float]:
-        ...
-
     def acquire_burst(self, k: int):
         ...
 
@@ -576,12 +573,24 @@ def _saturation_report(
     valid_peak_burst: float,
     valid_peak_avg: float,
 ) -> dict[str, Any]:
-    full_finite = bool(np.isfinite(burst_arr).all())
-    full_peak = float(np.max(burst_arr)) if full_finite else float("inf")
-    saturated_all = np.asarray(burst_arr >= float(full_scale), dtype=bool)
+    finite_all = np.isfinite(burst_arr)
+    full_finite = bool(finite_all.all())
+    full_peak = float(np.max(burst_arr)) if full_finite else None
+    full_peak_fraction = (
+        full_peak / float(full_scale)
+        if full_peak is not None
+        else None
+    )
+    saturated_all = np.asarray(
+        np.logical_and(finite_all, burst_arr >= float(full_scale)),
+        dtype=bool,
+    )
     valid_saturated = saturated_all[:, valid_mask]
     excluded_mask = np.logical_not(valid_mask)
     excluded_saturated = saturated_all[:, excluded_mask]
+    nonfinite_all = np.asarray(np.logical_not(finite_all), dtype=bool)
+    valid_nonfinite = nonfinite_all[:, valid_mask]
+    excluded_nonfinite = nonfinite_all[:, excluded_mask]
     frame_saturated = np.any(saturated_all.reshape(saturated_all.shape[0], -1), axis=1)
     return {
         "policy": "safety_decision_uses_valid_pixel_mask_to_exclude_bad_pixels",
@@ -592,13 +601,17 @@ def _saturation_report(
         "excluded_pixel_count_per_frame": int(valid_mask.size - np.count_nonzero(valid_mask)),
         "all_pixels_finite": full_finite,
         "all_frames_all_pixels_below_full_scale": bool(full_finite and full_peak < float(full_scale)),
+        "full_frame_nonfinite_status": "all_finite" if full_finite else "nonfinite_pixels_present",
+        "full_frame_nonfinite_pixel_count": int(np.count_nonzero(nonfinite_all)),
         "full_frame_peak_pixel_burst": full_peak,
-        "full_frame_peak_pixel_fraction_burst": full_peak / float(full_scale),
+        "full_frame_peak_pixel_fraction_burst": full_peak_fraction,
         "full_frame_saturated_pixel_count": int(np.count_nonzero(saturated_all)),
         "full_frame_saturated_frame_count": int(np.count_nonzero(frame_saturated)),
         "valid_domain_peak_pixel_burst": float(valid_peak_burst),
         "valid_domain_peak_pixel_avg": float(valid_peak_avg),
         "valid_domain_saturated_pixel_count": int(np.count_nonzero(valid_saturated)),
+        "valid_domain_nonfinite_pixel_count": int(np.count_nonzero(valid_nonfinite)),
         "excluded_domain_saturated_pixel_count": int(np.count_nonzero(excluded_saturated)),
+        "excluded_domain_nonfinite_pixel_count": int(np.count_nonzero(excluded_nonfinite)),
         "report_only_not_safety_decision": True,
     }

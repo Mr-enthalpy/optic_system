@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -353,6 +354,34 @@ def test_capture_safety_reports_excluded_bad_pixel_saturation_without_changing_d
     assert report["valid_domain_saturated_pixel_count"] == 0
     assert report["excluded_domain_saturated_pixel_count"] == 1
     assert report["report_only_not_safety_decision"] is True
+
+
+def test_capture_safety_saturation_report_uses_strict_json_for_nonfinite_excluded_pixels() -> None:
+    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst[1, 0, 0] = np.inf
+    avg = burst.mean(axis=0)
+    valid_mask = np.ones((3, 3), dtype=bool)
+    valid_mask[0, 0] = False
+
+    row = evaluate_capture_safety(
+        burst=burst,
+        avg_frame=avg,
+        exposure_us=1000.0,
+        gain_db=0.0,
+        full_scale=255.0,
+        valid_pixel_mask=valid_mask,
+    )
+
+    assert row.psf_safe is True
+    report = row.metadata["saturation_report"]
+    assert report["all_pixels_finite"] is False
+    assert report["full_frame_nonfinite_status"] == "nonfinite_pixels_present"
+    assert report["full_frame_nonfinite_pixel_count"] == 1
+    assert report["excluded_domain_nonfinite_pixel_count"] == 1
+    assert report["valid_domain_nonfinite_pixel_count"] == 0
+    assert report["full_frame_peak_pixel_burst"] is None
+    assert report["full_frame_peak_pixel_fraction_burst"] is None
+    json.dumps(report, allow_nan=False)
 
 
 def test_gain_binary_search_does_not_swallow_non_lower_bound_errors() -> None:
