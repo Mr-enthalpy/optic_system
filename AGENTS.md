@@ -90,7 +90,7 @@ Current meaning:
 
 Do not assume connected components are stable physical peak IDs.
 Do not promote support components directly into `PeakLayoutProfile`.
-Do not assume Phase 2B output data is training-ready or scientifically valid.
+Do not assume Phase 2B output data is handoff-ready or scientifically valid.
 
 ## Roadmap
 
@@ -596,7 +596,7 @@ Do not:
 * silently reuse legacy `tasks/` as active architecture
 * delete acquired capture data unless the user explicitly requests deletion
 * remove raw metadata during export
-* conflate raw capture HDF5 with training-ready HDF5
+* conflate raw capture HDF5 with handoff-grade downstream exports
 
 ## Preferred next implementation order
 

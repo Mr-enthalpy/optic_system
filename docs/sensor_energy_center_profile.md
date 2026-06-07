@@ -4,7 +4,7 @@
 for PSF support analysis and future peak-cluster modelling.
 
 It is not a crop-window artifact. It does not define crop extraction, crop-size
-selection, or training-ready PSF crops.
+selection, or handoff-ready PSF crops.
 
 ## Pipeline Position
 

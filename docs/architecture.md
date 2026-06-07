@@ -281,8 +281,8 @@ In scope:
 - LCD physical mono mask display
 - TLS SDK service wrapper through `tls_c1`
 - Control-layer command / event / state definitions
-- Minimal synchronized capture tasks (Phases 2A-2B)
-- Raw capture HDF5 export (Phase 2)
+- Minimal synchronized capture tasks
+- Raw capture HDF5 export
 - Placeholder handoff boundary toward external repositories
 - Hardware-free tests
 - Opt-in hardware smoke tests

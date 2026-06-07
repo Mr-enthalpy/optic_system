@@ -31,10 +31,10 @@ Active:
 
 ### Cross-Repository Collaboration Interfaces
 
-- implement `handoffs/` placeholder interfaces as working collaboration protocols
+- evolve `handoffs/` placeholders toward working collaboration protocols when external repository contracts exist
 - measured-evidence handoff publication (for `LCD_forward` consumption)
 - measured-response handoff publication (for `reconstruction` consumption)
-- define and implement external-repository capture plan consumption protocol
+- reserve and define external-repository capture plan consumption protocol (placeholder until external repos exist)
 
 ## Repository Boundary
 

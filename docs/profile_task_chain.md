@@ -3,7 +3,7 @@
 ## Purpose
 
 The profile chain creates hardware-calibration artifacts used by downstream
-PSF, dOTF, and mask-family capture tasks.
+PSF, dOTF, and mask-family-driven capture tasks using externally-defined masks.
 
 It is a profile-artifact chain, not a monolithic acquisition workflow. Each
 stage should persist its result so downstream stages can restart from saved
@@ -16,7 +16,7 @@ broadband pass-through camera calibration
   -> broadband LCD pupil scan
   -> PupilProfile
   -> selected-pupil-open per-band camera calibration
-  -> downstream PSF / dOTF / mask-family captures
+  -> downstream PSF / dOTF / mask-family-driven captures
 ```
 
 ## Artifact Boundaries
