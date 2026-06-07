@@ -1,56 +1,40 @@
 # optic_system Roadmap
 
-## Current Stage
+## Current Status
 
-Current active tracks:
+Completed:
 
-```text
-Phase 3A-H -- hardware validation of the profile-driven calibration chain.
-Phase 3.5C -- real-data operationalization and support stability audit.
-```
+- minimal hardware capture layer: camera/LCD/TLS synchronized control, raw HDF5 export
+- full-frame scout survey and fixed-size peak-patch baseline data contract
+- first-pass diffraction support analysis report
 
-Phase 3A-H is a current implementation / validation subtrack for
-profile-producing hardware tasks. It is not a new formal roadmap phase.
-Phase 3.5C is the real-data support operationalization and stability-audit
-track.
+Active:
 
-Completed baseline:
+- hardware pipeline testing: profile-driven calibration chain hardware validation
+- support-candidate stability audit
 
-```text
-Phase 2 -- minimal hardware capture layer.
-Phase 3.5A -- full-frame scout -> peak layout -> fixed-size peak-patch dictionary data contract.
-Phase 3.5B -- first-pass diffraction support analysis report.
-```
+## Remaining Work
 
-Active work:
+### Hardware Pipeline Testing and System Calibration
 
-```text
-validate broadband pass-through CameraProfile -> broadband LCD pupil scan
-  -> PupilProfile -> selected-pupil-open per-band CameraProfile on hardware;
-accelerate and stream support analysis on real 2048 x 2448 full-frame data;
-define real-data parameter presets;
-aggregate connected components across repeat / wavelength / mask;
-derive stable support candidates for future adaptive peak-cluster layout.
-```
+- broadband pass-through `CameraProfile` hardware validation
+- broadband LCD pupil scan hardware validation
+- `PupilProfile` hardware validation
+- selected-pupil-open per-band `CameraProfile` hardware validation
+- hardware-data-driven profile task fixes
 
-Not yet started:
+### Support Stability Audit and Adaptive Peak Clustering
 
-```text
-adaptive per-cluster-radius PSF dictionary as production format;
-LCD-to-operator / measured-response modelling in LCD_forward;
-multi-frame joint reconstruction in reconstruction;
-mask-family definitions in lcd_mask_families, with parameter and sequence
-selection loops through LCD_forward / reconstruction.
-```
+- `SupportCandidateStabilityReport`
+- `AdaptivePeakLayoutProfile`
+- `AdaptivePeakClusterPSFDictionary`
 
-The current mainline has a working baseline data contract and a first support
-diagnostic layer. It does not yet have the final adaptive peak-cluster
-dictionary or any learning-side forward model.
+### Cross-Repository Collaboration Interfaces
 
-A pre-hardware deletion-first cleanup (PR #79) has made schema compatibility
-intentionally strict.
-
----
+- implement `handoffs/` placeholder interfaces as working collaboration protocols
+- measured-evidence handoff publication (for `LCD_forward` consumption)
+- measured-response handoff publication (for `reconstruction` consumption)
+- define and implement external-repository capture plan consumption protocol
 
 ## Repository Boundary
 
@@ -88,26 +72,13 @@ own mask-family design, build reconstruction networks, or run
 mask-optimization loops. It may generate the measured, metadata-rich artifacts
 and handoffs that make those external tasks possible.
 
----
+See [`docs/cross_repository_boundary.md`](cross_repository_boundary.md) for the
+normative handoff boundary.
 
-## Long-Term Path
+## Design Intent
 
-The mainline path is staged from reproducible hardware capture to adaptive
-peak-cluster data artifacts, then to cross-repository modelling and
-reconstruction:
-
-```text
-Phase 2
-  -> Phase 3
-  -> Phase 3.5
-  -> Phase 3.6
-  -> Phase 4 in LCD_forward
-  -> Phase 5 in reconstruction
-  -> Phase 6 across lcd_mask_families / LCD_forward / reconstruction
-  -> Phase 7 cross-repository joint optimization
-```
-
-The intended representation shift is:
+The intended representation shift from traditional dense ROI kernels to
+adaptive peak-cluster representation:
 
 ```text
 traditional dense ROI kernel:
@@ -117,391 +88,3 @@ mainline peak-cluster representation:
   each real diffraction peak cluster has its own support, coordinates,
   and local raw data
 ```
-
----
-
-## Phase 0 -- Documentation and Boundary Reset
-
-**Status: complete.**
-
-Phase 0 re-anchored this repository as a hardware-control and
-synchronized-capture frontend. It clarified that neural training,
-reconstruction models, and mask optimization are outside `optic_system`.
-
----
-
-## Phase 1 -- TLS SDK Integration Closure
-
-**Status: substantially complete.**
-
-Phase 1 made `tls_c1` the active TLS backend through the normal
-application/control path. The deprecated pywinauto TLS GUI automation path is
-not an active backend.
-
-Completion baseline:
-
-- `TLSService` can be constructed through app assembly when explicitly enabled.
-- TLS state is observable through control state.
-- TLS commands flow through `SessionController`.
-- No-hardware tests pass by default.
-- Hardware tests remain opt-in.
-
----
-
-## Phase 2 -- Minimal Hardware Capture Layer
-
-**Status: complete.**
-
-Purpose: provide deterministic, metadata-complete raw capture without reviving
-legacy task scripts.
-
-Completed baseline:
-
-- capture plans can be loaded and executed;
-- camera, mono LCD, and optional TLS can be controlled in sequence;
-- raw HDF5 captures preserve frames, masks, camera metadata, LCD metadata, TLS
-  metadata, timing metadata, and processing flags;
-- default tests remain hardware-free;
-- hardware execution remains explicit and opt-in.
-
----
-
-## Phase 3 -- Stable Capture and Profile-Aware Experimental Artifacts
-
-Purpose: make real hardware acquisition reproducible and metadata-complete.
-
-Phase 3 is not a broad bucket for every PSF-related task. It is the stable
-capture and profile-artifact layer that supports later peak-cluster work.
-
-### Phase 3A -- Profile-Driven Experimental Calibration
-
-**Status: initial mainline task modules implemented.**
-
-Artifacts and tasks:
-
-```text
-PupilProfile
-CameraProfile
-broadband passthrough camera safety
-broadband pupil scan
-per-band selected-pupil-open camera profile
-```
-
-Current validation subtrack:
-
-```text
-Phase 3A-H -- hardware validation of the profile-driven calibration chain.
-```
-
-Required principles:
-
-- PSF-producing tasks must declare explicit `PupilProfile` and `CameraProfile`
-  dependencies.
-- Broadband pass-through TLS setpoint `0` is a device state, not a scientific
-  wavelength.
-- Full-LCD-open exposure profiles must not silently stand in for selected-pupil
-  PSF capture profiles.
-
-The detailed mainline dependency chain, pass-through semantics, exposure
-search policy, timing policy, and TLS loop ordering are documented in
-[`profile_task_chain.md`](profile_task_chain.md).
-
-Short dependency chain:
-
-```text
-broadband pass-through CameraProfile
-  -> broadband LCD pupil scan
-  -> PupilProfile
-  -> selected-pupil-open per-band CameraProfile
-  -> downstream PSF / dOTF / mask-family capture tasks
-```
-
-### Phase 3B -- Full-Frame Scout and Peak-Patch Data-Contract Baseline
-
-Artifacts and tasks:
-
-```text
-FullFramePSFSurvey
-first-pass PeakLayoutProfile
-fixed-size PeakPatchPSFDictionary
-peak-patch measured-evidence handoff export
-```
-
-Phase 3B is a baseline data contract, not the final peak-cluster algorithm. The
-fixed-size peak-patch dictionary remains useful as v1 compatibility output and
-as a reproducible bridge to downstream experiments.
-
----
-
-## Phase 3.5 -- Support-Aware Peak-Cluster Preparation
-
-Purpose: convert raw/full-frame empirical diffraction evidence into reliable
-peak-cluster support.
-
-This phase prepares adaptive supports. It does not yet define the production
-adaptive dictionary.
-
-### Phase 3.5A -- Diffraction Support Analysis
-
-Artifact:
-
-```text
-PeakSupportAnalysisReport
-```
-
-Baseline algorithm:
-
-```text
-5th-percentile background
-corr = max(psf-bg, 0)
-tau sweep
-far-field noise/significant split
-connected-component candidate table
-```
-
-### Phase 3.5B -- Real-Data Operationalization
-
-Required work:
-
-```text
-scipy connected-component backend
-streaming / energy-only support analysis
-real full-frame parameter presets
-explicit handling of 2048 x 2448 survey-scale data
-```
-
-### Phase 3.5C -- Support-Candidate Stability Audit
-
-Required work:
-
-```text
-aggregate components across repeat / wavelength / mask
-estimate component centroid stability
-estimate energy stability
-estimate hit rate
-merge consistent components into support candidates
-reject noise-floor or unstable components
-```
-
-The output should be a traceable support-candidate artifact, not a final layout.
-
-### Phase 3.5D -- Adaptive Peak-Cluster Layout
-
-Target artifact:
-
-```text
-AdaptivePeakLayoutProfile
-```
-
-Expected contents:
-
-```text
-per-cluster center
-per-cluster radius or bbox
-per-cluster support type: circle / square / rectangle / mask
-per-cluster validity scope
-```
-
-Phase 3.5 ends when stable, traceable, adaptive peak supports can be produced
-from real data.
-
----
-
-## Phase 3.6 -- Adaptive Peak-Cluster PSF Dictionary
-
-Purpose: replace fixed-size peak patches with adaptive per-cluster support.
-
-Target artifact:
-
-```text
-AdaptivePeakClusterPSFDictionary
-```
-
-Target data model:
-
-```text
-PSF entry
-  -> peak_cluster_0:
-       center_xy
-       support_type
-       radius_px or bbox_xyxy
-       raw_patch
-       support_mask
-       background
-       energy
-       peak_value
-       full-frame coordinate metadata
-  -> peak_cluster_1:
-       ...
-```
-
-The production dictionary should not be:
-
-```text
-patches: [N_entry, K, Hp, Wp]
-```
-
-except as a compatibility baseline. Instead, it should be a variable-size or
-indexed collection of per-cluster local raw data and support metadata.
-
-Completion criteria:
-
-- Each PSF entry stores discrete peak-cluster records.
-- Different diffraction peaks within the same PSF may use different support
-  radii or window sizes.
-- Every cluster records original full-frame sensor coordinates.
-- Circle and rectangle/square support types are represented explicitly.
-- Raw local patch data is preserved.
-- Optional support masks encode non-rectangular supports.
-- Fixed-size peak-patch dictionary remains available only as v1 compatibility
-  output.
-
----
-
-## Phase 4 -- LCD_forward Peak-Cluster Operator Modelling
-
-Purpose: move from measured data artifacts to a learnable differentiable
-operator or measured-response model.
-
-This phase belongs primarily to `LCD_forward`, not `optic_system`.
-
-Target model:
-
-```text
-M, lambda
-  -> peak-cluster parameters
-  -> sparse/adaptive PSF representation
-  -> rendered frames
-```
-
-The model should learn or predict:
-
-```text
-cluster amplitude
-cluster center shift
-cluster radius / width
-anisotropy
-orientation
-local residual or shape coefficients
-```
-
-The complexity target is:
-
-```text
-O(Kd)
-```
-
-where `K` is the number of diffraction peak clusters and `d` is the number of
-degrees of freedom per cluster. If the per-cluster model family is fixed, this
-becomes effectively:
-
-```text
-O(K)
-```
-
-This phase should compare against dense kernels:
-
-```text
-O(WH)
-O(W^2) for square kernels
-```
-
----
-
-## Phase 5 -- Multi-Frame Joint Reconstruction
-
-Purpose: use multiple LCD masks and their wavelength-dependent transfer
-structures as one joint inverse problem.
-
-The frames should be modelled jointly, not reconstructed independently and
-fused afterward.
-
-Target analysis:
-
-```text
-multi-frame H-matrix singular-value spectrum
-spectral-channel separability
-single-frame vs multi-frame comparison
-regularized least-squares baseline
-learned reconstruction baseline
-```
-
-This phase belongs to `reconstruction` or a reconstruction-side experiment
-workspace.
-
----
-
-## Phase 6 -- Mask-Family and GenerMask Optimization
-
-Purpose: optimize mask families under real LCD constraints.
-
-This phase introduces:
-
-```text
-u -> GenerMask(u) -> M -> LCD-to-PSF peak-cluster forward model -> frames -> reconstruction loss
-```
-
-Rules:
-
-- `M` remains an explicit intermediate physical object.
-- `GenerMask` is a low-dimensional physical synthesis map, not an arbitrary
-  neural generator.
-- Different `GenerMask` families should be auditable.
-- Mask optimization must preserve display feasibility, perturbation robustness,
-  throughput, and support stability.
-
-This phase belongs across `lcd_mask_families`, `LCD_forward`, and
-`reconstruction`, not to `optic_system`.
-
----
-
-## Phase 7 -- End-to-End Joint Optimization
-
-Purpose: jointly optimize mask family, dynamic coding sequence, forward model,
-and reconstruction under the low-cost LCD system constraints.
-
-This is the long-term cross-repository target, not the current `optic_system`
-responsibility.
-
----
-
-## Future Task Directions
-
-These names are planned directions, not active files unless they are listed as
-active in `tasks/README.md`.
-
-Future profile-dependent capture tasks:
-
-```text
-capture_psf_dictionary
-capture_dotf_dataset
-capture_mask_family_psf
-```
-
-Future diagnostics / conversion:
-
-```text
-compute_h_matrix_diagnostic
-publish_measured_evidence_handoff
-publish_measured_response_handoff
-```
-
----
-
-## Immediate Next PRs
-
-The next `optic_system` PRs should keep Phase 3A-H hardware validation and
-Phase 3.5C support-stability work separate unless a PR is explicitly scoped to
-both tracks.
-
-```text
-1. hardware validation of the profile-driven calibration chain
-2. SupportCandidateStabilityReport
-3. AdaptivePeakLayoutProfile
-4. AdaptivePeakClusterPSFDictionary
-5. hardware-data-driven profile task fixes
-```
-
-Training and validation of the peak-cluster operator model are explicitly
-deferred to `LCD_forward`; reconstruction is deferred to `reconstruction`;
-mask-family definitions are deferred to `lcd_mask_families`.
