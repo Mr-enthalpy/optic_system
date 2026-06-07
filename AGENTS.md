@@ -55,10 +55,8 @@ experiment-specific layers.
 
 Current active tracks:
 
-```text
-Phase 3A-H -- hardware validation of the profile-driven calibration chain.
-Phase 3.5C -- real-data operationalization and support stability audit.
-```
+- hardware validation of the profile-driven calibration chain
+- real-data operationalization and support stability audit
 
 Profile-chain hardware validation is about camera/LCD/TLS tasks and persisted
 profile artifacts. Support-stability work is about measured PSF
@@ -67,20 +65,20 @@ unless explicitly requested.
 
 Completed:
 
-- Phase 2 minimal hardware capture layer.
-- Phase 3.5A full-frame scout -> first-pass `PeakLayoutProfile` -> fixed-size
-  `PeakPatchPSFDictionary`.
-- Phase 3.5B `PeakSupportAnalysisReport` baseline.
+- minimal hardware capture layer
+- full-frame scout -> first-pass `PeakLayoutProfile` -> fixed-size
+  `PeakPatchPSFDictionary`
+- `PeakSupportAnalysisReport` baseline
 
 Active:
 
-- Phase 3A-H validation of broadband pass-through `CameraProfile`, broadband
+- validation of broadband pass-through `CameraProfile`, broadband
   LCD pupil scan, `PupilProfile`, and selected-pupil-open per-band
-  `CameraProfile`.
-- scipy / streaming / energy-only support analysis.
-- real-data presets for 2048 x 2448 full-frame data.
-- `SupportCandidateStabilityReport`.
-- adaptive peak-cluster support preparation.
+  `CameraProfile`
+- scipy / streaming / energy-only support analysis
+- real-data presets for 2048 x 2448 full-frame data
+- `SupportCandidateStabilityReport`
+- adaptive peak-cluster support preparation
 
 Current meaning:
 
@@ -102,11 +100,11 @@ only the execution constraints that agents must obey.
 Mainline structure:
 
 ```text
-Phase 3   -- stable capture and profile-aware artifacts
-Phase 3.5 -- support-aware peak-cluster preparation
-Phase 3.6 -- adaptive peak-cluster PSF dictionary
-Phase 4+  -- cross-repository mask/operator/reconstruction research loop
+profile-aware artifacts -> support-aware peak-cluster preparation -> adaptive peak-cluster PSF dictionary
 ```
+
+Cross-repository operator, reconstruction, and mask-family work lives in
+`LCD_forward`, `reconstruction`, and `lcd_mask_families`.
 
 Current `optic_system` work is limited to measured artifact construction,
 diagnostics, and metadata-rich exports.
@@ -605,18 +603,18 @@ Do not:
 Completed:
 
 - TLS SDK integration closure
-- Phase 2A minimal capture task layer
+- minimal capture task layer
 - raw capture HDF5 export
-- Phase 2B hardware smoke capture validation
+- hardware smoke capture validation
 - file-only read-only monitor
 - removal of legacy monitor GUI path and empty task stubs
-- Phase 3.5A full-frame scout -> first-pass `PeakLayoutProfile` -> fixed-size
+- full-frame scout -> first-pass `PeakLayoutProfile` -> fixed-size
   `PeakPatchPSFDictionary`
-- Phase 3.5B `PeakSupportAnalysisReport` baseline
+- `PeakSupportAnalysisReport` baseline
 
 Current mainline priority:
 
-1. Validate the Phase 3A-H profile-driven calibration chain on real hardware.
+1. Validate the profile-driven calibration chain on real hardware.
 2. Build `SupportCandidateStabilityReport`.
 3. Promote only stable support candidates into `AdaptivePeakLayoutProfile`.
 4. Build `AdaptivePeakClusterPSFDictionary`.

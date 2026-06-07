@@ -232,28 +232,20 @@ that external package or invent final schemas for it.
 ## Development roadmap
 
 The active roadmap is maintained in [`docs/roadmap.md`](docs/roadmap.md).
-Completed Phase 0/1/2 implementation details and hardware-smoke evidence are
-preserved in [`docs/completed_phases.md`](docs/completed_phases.md).
 
 Current active tracks:
 
-```text
-Phase 3A-H -- hardware validation of the profile-driven calibration chain.
-Phase 3.5C -- real-data operationalization and support stability audit.
-```
-
-Phase 3A-H validates profile-producing hardware tasks before large PSF
-capture. Phase 3.5C prepares support and peak-cluster artifacts from real
-full-frame data. Phase 3A-H is a current implementation / validation subtrack,
-not a new formal roadmap phase.
+- hardware validation of the profile-driven calibration chain
+- real-data operationalization and support stability audit
 
 Completed baseline:
 
-```text
-Phase 2 -- minimal hardware capture layer.
-Phase 3.5A -- full-frame scout -> peak layout -> fixed-size peak-patch dictionary data contract.
-Phase 3.5B -- first-pass diffraction support analysis report.
-```
+- minimal hardware capture layer
+- full-frame scout -> peak layout -> fixed-size peak-patch dictionary data contract
+- first-pass diffraction support analysis report
+
+Completed implementation details and hardware-smoke evidence are preserved in
+[`docs/completed_phases.md`](docs/completed_phases.md).
 
 The current mainline data-artifact paths are:
 
@@ -371,21 +363,19 @@ raw data.
 
 ### Mainline artifact path
 
-The mainline no longer treats Phase 3 as one broad bucket containing profile
-calibration, PSF dictionaries, support diagnostics, conversion, and learning
-experiments. The active staged plan is documented in
-[`docs/roadmap.md`](docs/roadmap.md).
+The staged plan is documented in [`docs/roadmap.md`](docs/roadmap.md).
 
 In short:
 
 ```text
-Phase 3   -- stable capture and profile-aware experimental artifacts
-Phase 3.5 -- support-aware peak-cluster preparation
-Phase 3.6 -- adaptive peak-cluster PSF dictionary
-Phase 4+  -- cross-repository modelling, operator, reconstruction, and mask-family work
+profile-aware artifacts -> support-aware peak-cluster preparation -> adaptive peak-cluster dictionary
 ```
 
-Completed Phase 0/1/2 implementation details are preserved in
+Cross-repository modelling (operator, reconstruction, mask-family work) belongs
+to `lcd_mask_families`, `LCD_forward`, and `reconstruction`. See
+[`docs/cross_repository_boundary.md`](docs/cross_repository_boundary.md).
+
+Completed implementation details are preserved in
 [`docs/completed_phases.md`](docs/completed_phases.md).
 
 ## Core Infrastructure Scope
@@ -600,9 +590,8 @@ The repository currently has:
 * completed first-pass `PeakSupportAnalysisReport`
 * hardware-free default test infrastructure
 
-Current active work has two tracks: Phase 3A-H hardware validation of the
-profile-driven calibration chain, and Phase 3.5C real-data support-analysis
-operationalization and support stability audit. Learning-side forward
-modelling, reconstruction, and mask-family design remain outside
-`optic_system` and are split across `LCD_forward`, `reconstruction`, and
-`lcd_mask_families`.
+Current active work: hardware validation of the profile-driven calibration
+chain, and real-data support-analysis operationalization with support stability
+audit. Learning-side forward modelling, reconstruction, and mask-family design
+remain outside `optic_system` and are split across `LCD_forward`,
+`reconstruction`, and `lcd_mask_families`.
