@@ -228,9 +228,12 @@ The `lcd_mask_families` relationship is a shared source of mask family/spec
 identity. `optic_system` may attempt to consume v0.1 mask instance or sequence
 specs through the optional wrapper documented in
 [`docs/lcd_mask_families_adapter.md`](docs/lcd_mask_families_adapter.md). The
-wrapper is an execution adapter and handoff consumer only. Mask-family
-definition, rendering semantics, parameters, grid policy, projection policy,
-and stable mask identity remain owned by `lcd_mask_families`.
+wrapper is an execution adapter and handoff consumer only. Its direct
+render-only helpers are profile-unaware and are limited to dry-run/offline
+inspection. Real capture use must bind the mask spec to an optic_system
+`PupilProfile` before any mask reaches `LCDService`. Mask-family definition,
+rendering semantics, parameters, grid policy, projection policy, and stable
+mask identity remain owned by `lcd_mask_families`.
 
 ## Development roadmap
 

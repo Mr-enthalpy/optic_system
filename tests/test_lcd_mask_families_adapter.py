@@ -69,6 +69,17 @@ def _blocks_spec(mask_id: str = "blocks_test_001") -> dict:
     }
 
 
+def _pupil_profile() -> dict:
+    return {
+        "pupil_profile_id": "pupil_profile_test_000",
+        "lcd_coordinate_convention": "physical_mono_yx",
+        "lcd_display_index": 2,
+        "subpixel_axis": 1,
+        "lcd_physical_center": [48.5, 96.25],
+        "lcd_physical_radius": 31.0,
+    }
+
+
 def test_missing_dependency_reports_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
     real_import_module = adapter.importlib.import_module
 
@@ -102,6 +113,9 @@ def test_render_mask_instance_file_returns_neutral_capture_mask(tmp_path: Path) 
     assert rendered.renderer["contract_version"] == "lcd_mask_families.v0.1"
     assert rendered.renderer["adapter_role"] == "experimental_handoff_consumer"
     assert rendered.metadata["source_spec_path"] == str(spec_path)
+    assert rendered.usage_scope == "dry_run_profile_unaware"
+    assert rendered.pupil_profile is None
+    assert rendered.capture_metadata()["usage_scope"] == "dry_run_profile_unaware"
 
 
 def test_render_mask_sequence_file_preserves_order(tmp_path: Path) -> None:
@@ -139,3 +153,43 @@ def test_rendered_capture_mask_metadata_is_json_friendly(tmp_path: Path) -> None
     assert payload["mask_hash"] == rendered.mask_hash
     assert payload["grid"]["coordinate_frame"] == "normalized_lcd_pupil"
     assert payload["renderer"]["name"] == "lcd_mask_families"
+
+
+def test_profile_aware_render_requires_pupil_profile(tmp_path: Path) -> None:
+    with pytest.raises(adapter.MaskFamilyProfileError, match="require a PupilProfile"):
+        adapter.render_mask_instance_file_for_pupil_profile(
+            tmp_path / "unused.json",
+            None,
+        )
+
+
+def test_profile_aware_render_requires_effective_pupil_geometry(tmp_path: Path) -> None:
+    profile = dict(_pupil_profile())
+    profile.pop("lcd_physical_radius")
+    with pytest.raises(adapter.MaskFamilyProfileError, match="radius or aperture_window"):
+        adapter.render_mask_instance_file_for_pupil_profile(
+            tmp_path / "unused.json",
+            profile,
+        )
+
+
+def test_profile_aware_capture_metadata_contains_pupil_geometry(tmp_path: Path) -> None:
+    pytest.importorskip("lcd_mask_families")
+    spec_path = _write_json(tmp_path / "stripes_instance.json", _instance_spec())
+
+    rendered = adapter.render_mask_instance_file_for_pupil_profile(
+        spec_path,
+        _pupil_profile(),
+    )
+    payload = rendered.capture_metadata()
+
+    assert rendered.usage_scope == "pupil_profile_metadata_bound"
+    assert payload["pupil_profile_id"] == "pupil_profile_test_000"
+    assert payload["lcd_coordinate_convention"] == "physical_mono_yx"
+    assert payload["lcd_display_index"] == 2
+    assert payload["subpixel_axis"] == 1
+    assert payload["lcd_physical_center"] == [48.5, 96.25]
+    assert payload["lcd_physical_radius"] == 31.0
+    assert payload["renderer"]["profile_binding"] == "pupil_profile_metadata_only"
+    assert payload["renderer"]["physical_placement_implemented"] is False
+    assert payload["renderer"]["capture_gate"] == "requires_pupil_profile"
