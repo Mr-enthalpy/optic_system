@@ -36,7 +36,8 @@ mask instance or sequence specs through that package's public API. This adapter
 does not move mask-family ownership into `optic_system`; it is a bounded
 execution wrapper. Profile-unaware rendering is dry-run/offline only. Real
 capture use must bind the rendered mask identity to an optic_system
-`PupilProfile` before any array reaches `LCDService`.
+`PupilProfile` and strictly embed it into a full physical LCD mask before any
+array reaches `LCDService`.
 
 Other inputs remain future handoff categories. `optic_system` must not
 implement external repository imports, clients, or schema validators before
@@ -84,9 +85,12 @@ rendered masks into local neutral objects. The render-only helpers are
 profile-unaware and must not be treated as hardware-capture-ready. Capture
 intended use requires PupilProfile identity and effective LCD pupil geometry:
 `pupil_profile_id`, coordinate convention, display index, subpixel axis,
-physical center, and radius or aperture window. `lcd_mask_families` continues
-to own family definitions, parameters, grid semantics, projection rules,
-rendering, and stable mask hashes.
+physical center, and an explicit `aperture_window`. Strict physical embedding
+also requires the full `lcd_shape_hw`, validates exact local-mask/window shape,
+and rejects out-of-bounds placement. It does not resize, crop, pad,
+interpolate, wrap, or infer placement from center/radius. `lcd_mask_families`
+continues to own family definitions, parameters, grid semantics, projection
+rules, rendering, and stable mask hashes.
 
 ### MeasuredEvidenceHandoff
 

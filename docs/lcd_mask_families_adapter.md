@@ -74,7 +74,7 @@ tests. Do not treat its output as ready for real hardware capture.
 ### Profile-aware adapter
 
 The profile-aware entrypoint requires optic_system PupilProfile metadata before
-returning a capture-intended local object:
+returning a metadata-bound local object:
 
 ```python
 from capture.mask_family_adapter import render_mask_instance_file_for_pupil_profile
@@ -85,16 +85,55 @@ rendered = render_mask_instance_file_for_pupil_profile(
 )
 ```
 
-Current status: this gate records PupilProfile identity and effective LCD pupil
-geometry, but does not yet implement resampling or embedding of an abstract
-mask grid into the full physical LCD pupil. Its renderer metadata records
-`physical_placement_implemented: false`.
+This gate records PupilProfile identity and effective LCD pupil geometry, but
+does not place pixels into a full LCD-shaped array. Its renderer metadata
+records `physical_placement_implemented: false`.
+
+### Strict physical embedding
+
+The strict embedding entrypoint requires:
+
+* an already rendered local pupil mask;
+* optic_system PupilProfile metadata with an explicit `aperture_window`;
+* the full physical LCD shape `lcd_shape_hw`.
+
+```python
+from capture.mask_family_adapter import render_and_embed_mask_instance_file_for_pupil_profile
+
+physical = render_and_embed_mask_instance_file_for_pupil_profile(
+    "path/to/stripes_instance.yaml",
+    pupil_profile,
+    lcd_shape_hw=(1080, 5760),
+)
+```
+
+`PupilProfile.aperture_window` is interpreted as `x0, y0, x1, y1` with
+Python-style exclusive upper bounds:
+
+```python
+physical_mask[y0:y1, x0:x1] = local_mask
+```
+
+Strict embedding validates exact shape and bounds:
+
+* `0 <= x0 < x1 <= lcd_width`;
+* `0 <= y0 < y1 <= lcd_height`;
+* `local_mask.shape == (y1 - y0, x1 - x0)`;
+* `rendered.grid["shape_hw"] == local_mask.shape`;
+* coordinate frame is `normalized_lcd_pupil` or `pixel_index`;
+* projection output and local mask dtype are `uint8`.
+
+It does not resize masks, crop masks, pad masks, interpolate values, wrap
+coordinates, infer LCD shape, or derive a display slice from center/radius.
+Center/radius-only profiles are rejected for physical embedding until a
+separate deterministic policy is defined.
 
 ### Capture task
 
-A future capture task hook must consume only profile-aware rendered metadata
-for real capture, send the physical mono mask through `LCDService`, and record
-both mask identity and PupilProfile geometry in raw metadata.
+A future capture task hook must consume strict physical embedding output for
+real capture, send `RenderedPhysicalMask.physical_mask` through `LCDService`,
+and record both mask identity and PupilProfile placement geometry in raw
+metadata.
 
 ## Usage
 
@@ -126,6 +165,10 @@ The adapter returns `RenderedCaptureMask`, an `optic_system`-local neutral
 object. Downstream code should not depend on `lcd_mask_families.RenderedMask`
 layout.
 
+Strict embedding returns `RenderedPhysicalMask`, which carries both
+`local_mask` and `physical_mask`. `physical_mask` is the full LCD-shaped array
+that may be passed to existing LCD display paths.
+
 ## Capture-Plan Fragment
 
 This PR does not add a broad capture-plan schema. A future small hook may use a
@@ -147,9 +190,10 @@ Rendered mask arrays must enter hardware display only through existing
 `LCDService` / LCD adapter paths. Do not bypass physical mono mask validation,
 packing policy, display index selection, or LCD metadata recording.
 
-The adapter produces the display mask array requested by the external spec.
-Existing LCD code remains responsible for accepting or rejecting that array as
-the configured physical mono mask.
+The render-only adapter produces the local pupil mask requested by the external
+spec. Strict physical embedding places that local mask into a full LCD-shaped
+array. Existing LCD code remains responsible for accepting or rejecting that
+array as the configured physical mono mask.
 
 ## Metadata
 
@@ -173,11 +217,16 @@ lcd_display_index
 subpixel_axis
 lcd_physical_center
 lcd_physical_radius or aperture_window
+lcd_shape_hw
+placement_window_xyxy
+outside_value
+local_mask_shape_hw
+physical_mask_shape_hw
 ```
 
-`RenderedCaptureMask.capture_metadata()` returns a JSON-friendly dictionary
-with these fields under local names. Do not use filenames alone as mask
-identity.
+`RenderedCaptureMask.capture_metadata()` returns render/profile metadata.
+`RenderedPhysicalMask.capture_metadata()` returns physical placement metadata.
+Do not use filenames alone as mask identity.
 
 ## Failure Criteria
 

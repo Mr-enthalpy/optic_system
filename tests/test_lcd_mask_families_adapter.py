@@ -80,6 +80,40 @@ def _pupil_profile() -> dict:
     }
 
 
+def _embedding_profile(**updates) -> dict:
+    profile = {
+        **_pupil_profile(),
+        "aperture_window": [5, 7, 15, 19],
+    }
+    profile.update(updates)
+    return profile
+
+
+def _rendered_capture_mask(
+    *,
+    shape: tuple[int, int] = (12, 10),
+    coordinate_frame: str = "normalized_lcd_pupil",
+    dtype=np.uint8,
+    projection_dtype: str = "uint8",
+    mask_id: str = "manual_mask_000",
+) -> adapter.RenderedCaptureMask:
+    mask = np.arange(shape[0] * shape[1], dtype=dtype).reshape(shape)
+    return adapter.RenderedCaptureMask(
+        mask=mask,
+        mask_id=mask_id,
+        mask_hash=f"{mask_id}_hash",
+        family_id="manual_family",
+        family_version="0.1.0",
+        grid={
+            "coordinate_frame": coordinate_frame,
+            "shape_hw": [shape[0], shape[1]],
+        },
+        projection={"output_dtype": projection_dtype},
+        renderer={"name": "test"},
+        metadata={"source": "test"},
+    )
+
+
 def test_missing_dependency_reports_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
     real_import_module = adapter.importlib.import_module
 
@@ -193,3 +227,190 @@ def test_profile_aware_capture_metadata_contains_pupil_geometry(tmp_path: Path) 
     assert payload["renderer"]["profile_binding"] == "pupil_profile_metadata_only"
     assert payload["renderer"]["physical_placement_implemented"] is False
     assert payload["renderer"]["capture_gate"] == "requires_pupil_profile"
+
+
+def test_exact_aperture_window_embedding_succeeds() -> None:
+    rendered = _rendered_capture_mask()
+
+    physical = adapter.embed_rendered_mask_for_pupil_profile(
+        rendered,
+        _embedding_profile(),
+        lcd_shape_hw=(30, 40),
+        outside_value=3,
+    )
+
+    assert isinstance(physical, adapter.RenderedPhysicalMask)
+    assert physical.local_mask.shape == (12, 10)
+    assert physical.physical_mask.shape == (30, 40)
+    np.testing.assert_array_equal(physical.local_mask, rendered.mask)
+    np.testing.assert_array_equal(physical.physical_mask[7:19, 5:15], rendered.mask)
+    outside = physical.physical_mask.copy()
+    outside[7:19, 5:15] = 3
+    assert np.all(outside == 3)
+    assert not physical.local_mask.flags.writeable
+    assert not physical.physical_mask.flags.writeable
+
+
+def test_physical_embedding_capture_metadata_records_placement() -> None:
+    physical = adapter.embed_rendered_mask_for_pupil_profile(
+        _rendered_capture_mask(),
+        _embedding_profile(),
+        lcd_shape_hw=(30, 40),
+        outside_value=2,
+    )
+
+    payload = physical.capture_metadata()
+
+    assert payload["usage_scope"] == "physical_lcd_embedding"
+    assert payload["physical_placement_implemented"] is True
+    assert payload["pupil_profile_id"] == "pupil_profile_test_000"
+    assert payload["lcd_coordinate_convention"] == "physical_mono_yx"
+    assert payload["lcd_display_index"] == 2
+    assert payload["subpixel_axis"] == 1
+    assert payload["lcd_physical_center"] == [48.5, 96.25]
+    assert payload["lcd_physical_radius"] == 31.0
+    assert payload["aperture_window"] == [5, 7, 15, 19]
+    assert payload["lcd_shape_hw"] == [30, 40]
+    assert payload["placement_window_xyxy"] == [5, 7, 15, 19]
+    assert payload["outside_value"] == 2
+    assert payload["local_mask_shape_hw"] == [12, 10]
+    assert payload["physical_mask_shape_hw"] == [30, 40]
+    assert payload["renderer"]["physical_placement_implemented"] is True
+
+
+def test_profile_unaware_render_is_not_physical_until_embedded() -> None:
+    rendered = _rendered_capture_mask()
+
+    assert rendered.capture_metadata()["usage_scope"] == "dry_run_profile_unaware"
+
+    physical = adapter.embed_rendered_mask_for_pupil_profile(
+        rendered,
+        _embedding_profile(),
+        lcd_shape_hw=(30, 40),
+    )
+
+    assert physical.capture_metadata()["usage_scope"] == "physical_lcd_embedding"
+
+
+def test_sequence_embedding_preserves_order(tmp_path: Path) -> None:
+    pytest.importorskip("lcd_mask_families")
+    sequence_path = _write_json(
+        tmp_path / "sequence.json",
+        {
+            "schema_version": "lcd_mask_families.v0.1",
+            "sequence_id": "optic_system_embedding_sequence",
+            "masks": [
+                _instance_spec("sequence_stripes_000"),
+                _blocks_spec("sequence_blocks_001"),
+            ],
+        },
+    )
+
+    rendered = adapter.render_and_embed_mask_sequence_file_for_pupil_profile(
+        sequence_path,
+        _embedding_profile(),
+        lcd_shape_hw=(30, 40),
+    )
+
+    assert [item.mask_id for item in rendered] == [
+        "sequence_stripes_000",
+        "sequence_blocks_001",
+    ]
+    assert all(item.physical_mask.shape == (30, 40) for item in rendered)
+
+
+@pytest.mark.parametrize(
+    ("window", "message"),
+    [
+        ([5, 7, 15, 18], "height"),
+        ([5, 7, 14, 19], "width"),
+        ([-1, 7, 15, 19], "non-negative"),
+        ([5, 7, 41, 19], "outside"),
+        ([5, 7, 15, 31], "outside"),
+        ([5, 7, 5, 19], "x1 > x0"),
+        ([5, 7, 15, 7], "y1 > y0"),
+    ],
+)
+def test_embedding_rejects_invalid_aperture_windows(window: list[int], message: str) -> None:
+    with pytest.raises(adapter.MaskFamilyEmbeddingError, match=message):
+        adapter.embed_rendered_mask_for_pupil_profile(
+            _rendered_capture_mask(),
+            _embedding_profile(aperture_window=window),
+            lcd_shape_hw=(30, 40),
+        )
+
+
+def test_embedding_requires_pupil_profile() -> None:
+    with pytest.raises(adapter.MaskFamilyEmbeddingError, match="requires a PupilProfile"):
+        adapter.embed_rendered_mask_for_pupil_profile(
+            _rendered_capture_mask(),
+            None,
+            lcd_shape_hw=(30, 40),
+        )
+
+
+def test_embedding_rejects_center_radius_only_profile() -> None:
+    with pytest.raises(adapter.MaskFamilyEmbeddingError, match="aperture_window"):
+        adapter.embed_rendered_mask_for_pupil_profile(
+            _rendered_capture_mask(),
+            _pupil_profile(),
+            lcd_shape_hw=(30, 40),
+        )
+
+
+def test_embedding_rejects_unsupported_coordinate_frame() -> None:
+    with pytest.raises(adapter.MaskFamilyEmbeddingError, match="unsupported coordinate_frame"):
+        adapter.embed_rendered_mask_for_pupil_profile(
+            _rendered_capture_mask(coordinate_frame="full_lcd"),
+            _embedding_profile(),
+            lcd_shape_hw=(30, 40),
+        )
+
+
+def test_embedding_rejects_float_masks() -> None:
+    with pytest.raises(adapter.MaskFamilyEmbeddingError, match="uint8"):
+        adapter.embed_rendered_mask_for_pupil_profile(
+            _rendered_capture_mask(dtype=np.float32, projection_dtype="float32"),
+            _embedding_profile(),
+            lcd_shape_hw=(30, 40),
+        )
+
+
+def test_embedding_rejects_non_uint8_projection() -> None:
+    with pytest.raises(adapter.MaskFamilyEmbeddingError, match="output_dtype"):
+        adapter.embed_rendered_mask_for_pupil_profile(
+            _rendered_capture_mask(projection_dtype="float32"),
+            _embedding_profile(),
+            lcd_shape_hw=(30, 40),
+        )
+
+
+def test_embedding_rejects_invalid_lcd_shape() -> None:
+    with pytest.raises(adapter.MaskFamilyEmbeddingError, match="positive"):
+        adapter.embed_rendered_mask_for_pupil_profile(
+            _rendered_capture_mask(),
+            _embedding_profile(),
+            lcd_shape_hw=(0, 40),
+        )
+
+
+def test_embedding_rejects_grid_shape_mismatch() -> None:
+    rendered = _rendered_capture_mask()
+    rendered = adapter.RenderedCaptureMask(
+        mask=rendered.mask,
+        mask_id=rendered.mask_id,
+        mask_hash=rendered.mask_hash,
+        family_id=rendered.family_id,
+        family_version=rendered.family_version,
+        grid={"coordinate_frame": "normalized_lcd_pupil", "shape_hw": [12, 9]},
+        projection=rendered.projection,
+        renderer=rendered.renderer,
+        metadata=rendered.metadata,
+    )
+
+    with pytest.raises(adapter.MaskFamilyEmbeddingError, match="shape_hw"):
+        adapter.embed_rendered_mask_for_pupil_profile(
+            rendered,
+            _embedding_profile(),
+            lcd_shape_hw=(30, 40),
+        )

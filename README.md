@@ -231,9 +231,12 @@ specs through the optional wrapper documented in
 wrapper is an execution adapter and handoff consumer only. Its direct
 render-only helpers are profile-unaware and are limited to dry-run/offline
 inspection. Real capture use must bind the mask spec to an optic_system
-`PupilProfile` before any mask reaches `LCDService`. Mask-family definition,
-rendering semantics, parameters, grid policy, projection policy, and stable
-mask identity remain owned by `lcd_mask_families`.
+`PupilProfile` and strictly embed it into a full physical LCD mask array before
+any mask reaches `LCDService`. Strict embedding requires an explicit
+`PupilProfile.aperture_window` and full `lcd_shape_hw`; it does not resize,
+crop, pad, interpolate, or infer placement. Mask-family definition, rendering
+semantics, parameters, grid policy, projection policy, and stable mask identity
+remain owned by `lcd_mask_families`.
 
 ## Development roadmap
 
