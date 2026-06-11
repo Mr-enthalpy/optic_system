@@ -224,10 +224,13 @@ The `reconstruction` relationship is a future measured-response consumer and
 future capture-plan proposer. Reconstruction pipelines, learned reconstruction,
 inverse-problem evaluation, and forward/adjoint consumption live there.
 
-The `lcd_mask_families` relationship is a future shared source of mask
-family/spec identity. `optic_system` may consume mask specs or explicit masks
-from it once that repository exists, but this repository must not implement
-that external package or invent final schemas for it.
+The `lcd_mask_families` relationship is a shared source of mask family/spec
+identity. `optic_system` may attempt to consume v0.1 mask instance or sequence
+specs through the optional wrapper documented in
+[`docs/lcd_mask_families_adapter.md`](docs/lcd_mask_families_adapter.md). The
+wrapper is an execution adapter and handoff consumer only. Mask-family
+definition, rendering semantics, parameters, grid policy, projection policy,
+and stable mask identity remain owned by `lcd_mask_families`.
 
 ## Development roadmap
 
