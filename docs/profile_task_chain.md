@@ -84,7 +84,12 @@ real TLS adapter in hardware mode.
 - Only explicit lower-bound-unsafe failures may become a high-gain stop
   condition. Configuration errors, frame-shape errors, and backend exceptions
   must fail the task.
-- Bad-pixel exclusion is represented by the valid-pixel mask. Saturation
+- Bad-pixel exclusion is driven by the plan-level ``valid_pixel_domain``
+  policy.  The policy is resolved to a boolean mask at capture time (when the
+  frame shape is known) and passed to the exposure-search safety decision.
+  The calibration persists the policy in ``CameraProfile.extra["valid_pixel_domain"]``
+  for provenance.  The shared policy vocabulary (``tasks/valid_pixel_domain.py``)
+  supports ``full_frame``, ``exclude_top_rows``, and ``exclude_xyxy``.  Saturation
   reports must still record full-burst all-pixel saturation diagnostics so
   excluded saturated pixels are auditable without changing the safety decision.
 - The default selected profile should prefer low gain, then stronger signal,

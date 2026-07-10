@@ -18,6 +18,10 @@ from tasks.artifacts.json_io import (
     decode_h5_string,
 )
 from tasks.runtime_mode import RuntimePolicy
+from tasks.valid_pixel_domain import (
+    ValidPixelDomainError,
+    resolve_valid_pixel_mask,
+)
 
 from .sensor_energy_center import (
     SensorEnergyCenterError,
@@ -778,18 +782,10 @@ def _normalize_frames(frames: np.ndarray) -> np.ndarray:
 
 
 def _valid_pixel_mask(shape: tuple[int, int], valid_pixel_domain: dict[str, Any] | None) -> np.ndarray:
-    mask = np.ones((int(shape[0]), int(shape[1])), dtype=bool)
-    if not valid_pixel_domain:
-        return mask
-    policy_type = str(valid_pixel_domain.get("type") or "full_frame")
-    if policy_type == "full_frame":
-        return mask
-    if policy_type == "exclude_top_rows":
-        top_rows = int(valid_pixel_domain.get("top_rows", 0))
-        if top_rows > 0:
-            mask[:top_rows, :] = False
-        return mask
-    raise DiffractionSupportAnalysisError(f"unsupported valid_pixel_domain.type: {policy_type}")
+    try:
+        return resolve_valid_pixel_mask(shape, valid_pixel_domain)
+    except ValidPixelDomainError as exc:
+        raise DiffractionSupportAnalysisError(str(exc)) from exc
 
 
 def _resolve_center_xy(

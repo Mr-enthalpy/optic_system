@@ -97,4 +97,6 @@ class PreviewWorker:
                         if self.on_error is not None:
                             self.on_error(exc)
         finally:
-            self.stream.close()
+            close = getattr(self.stream, "close", None)
+            if close is not None:
+                close()

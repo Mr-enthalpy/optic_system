@@ -15,6 +15,11 @@ from tasks.artifacts.coordinate_frame import (
 )
 from tasks.artifacts.errors import ArtifactIOError
 from tasks.artifacts.frame_source import open_full_frame_survey_source
+from tasks.valid_pixel_domain import (
+    ValidPixelDomainError,
+    describe_valid_pixel_domain,
+    resolve_valid_pixel_mask,
+)
 
 
 class SensorEnergyCenterError(ValueError):
@@ -358,16 +363,10 @@ def validate_center_profile_for_frame_source(
 
 
 def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> np.ndarray:
-    if valid_pixel_mask is None:
-        return np.ones(shape, dtype=bool)
-    mask = np.asarray(valid_pixel_mask, dtype=bool)
-    if mask.shape != tuple(shape):
-        raise SensorEnergyCenterError(
-            f"valid_pixel_mask shape {mask.shape} does not match {shape}"
-        )
-    if not np.any(mask):
-        raise SensorEnergyCenterError("valid_pixel_mask leaves zero valid pixels")
-    return mask
+    try:
+        return resolve_valid_pixel_mask(shape, valid_pixel_mask=valid_pixel_mask)
+    except ValidPixelDomainError as exc:
+        raise SensorEnergyCenterError(str(exc)) from exc
 
 
 def _valid_mask_from_domain(
@@ -375,54 +374,17 @@ def _valid_mask_from_domain(
     valid_pixel_domain: dict[str, Any] | None,
     valid_pixel_mask: np.ndarray | None,
 ) -> np.ndarray:
-    if valid_pixel_domain is not None and valid_pixel_mask is not None:
-        raise SensorEnergyCenterError(
-            "pass either valid_pixel_domain or valid_pixel_mask, not both"
-        )
-    if valid_pixel_mask is not None:
-        return _valid_mask(shape, valid_pixel_mask)
-    mask = np.ones((int(shape[0]), int(shape[1])), dtype=bool)
-    if not valid_pixel_domain:
-        return mask
-    policy_type = str(valid_pixel_domain.get("type") or "full_frame")
-    if policy_type == "full_frame":
-        return mask
-    if policy_type == "exclude_top_rows":
-        top_rows = int(valid_pixel_domain.get("top_rows", 0))
-        if top_rows < 0:
-            raise SensorEnergyCenterError("valid_pixel_domain.top_rows must be non-negative")
-        if top_rows > 0:
-            mask[:top_rows, :] = False
-        if not np.any(mask):
-            raise SensorEnergyCenterError("valid_pixel_domain leaves zero valid pixels")
-        return mask
-    if policy_type == "exclude_xyxy":
-        x0, y0, x1, y1 = _int_quad(valid_pixel_domain.get("xyxy"), "valid_pixel_domain.xyxy")
-        h, w = int(shape[0]), int(shape[1])
-        x0 = max(0, min(w, x0))
-        x1 = max(0, min(w, x1))
-        y0 = max(0, min(h, y0))
-        y1 = max(0, min(h, y1))
-        if x1 > x0 and y1 > y0:
-            mask[y0:y1, x0:x1] = False
-        if not np.any(mask):
-            raise SensorEnergyCenterError("valid_pixel_domain leaves zero valid pixels")
-        return mask
-    raise SensorEnergyCenterError(f"unsupported valid_pixel_domain.type: {policy_type}")
+    try:
+        return resolve_valid_pixel_mask(shape, valid_pixel_domain, valid_pixel_mask)
+    except ValidPixelDomainError as exc:
+        raise SensorEnergyCenterError(str(exc)) from exc
 
 
 def _valid_pixel_domain_record(
     valid_pixel_domain: dict[str, Any] | None,
     valid_pixel_mask: np.ndarray | None,
 ) -> dict[str, Any]:
-    if valid_pixel_domain is not None:
-        return dict(valid_pixel_domain)
-    if valid_pixel_mask is not None:
-        return {
-            "type": "explicit_mask",
-            "shape_hw": [int(valid_pixel_mask.shape[0]), int(valid_pixel_mask.shape[1])],
-        }
-    return {"type": "full_frame"}
+    return describe_valid_pixel_domain(valid_pixel_domain, valid_pixel_mask)
 
 
 def _wavelength_key(value: float) -> str:
@@ -478,9 +440,3 @@ def _int_pair(value: Any, name: str) -> tuple[int, int]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise SensorEnergyCenterError(f"{name} must contain two integers")
     return (int(value[0]), int(value[1]))
-
-
-def _int_quad(value: Any, name: str) -> tuple[int, int, int, int]:
-    if not isinstance(value, (list, tuple)) or len(value) != 4:
-        raise SensorEnergyCenterError(f"{name} must contain four integers")
-    return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))

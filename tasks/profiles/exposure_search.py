@@ -6,6 +6,11 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from tasks.valid_pixel_domain import (
+    ValidPixelDomainError,
+    resolve_valid_pixel_mask,
+)
+
 
 class ExposureSearchError(ValueError):
     pass
@@ -195,6 +200,7 @@ def evaluate_exposure_candidates(
     *,
     frames_per_capture: int,
     full_scale: float,
+    valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
     signal_percentile: float = 99.0,
     min_signal_fraction: float = 0.10,
@@ -215,6 +221,7 @@ def evaluate_exposure_candidates(
                 candidate,
                 frames_per_capture=frames_per_capture,
                 full_scale=full_scale,
+                valid_pixel_domain=valid_pixel_domain,
                 valid_pixel_mask=valid_pixel_mask,
                 signal_percentile=signal_percentile,
                 min_signal_fraction=min_signal_fraction,
@@ -230,6 +237,7 @@ def evaluate_gain_binary_search(
     *,
     frames_per_capture: int,
     full_scale: float,
+    valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
     signal_percentile: float = 99.0,
     min_signal_fraction: float = 0.10,
@@ -262,6 +270,7 @@ def evaluate_gain_binary_search(
                 ),
                 frames_per_capture=frames_per_capture,
                 full_scale=full_scale,
+                valid_pixel_domain=valid_pixel_domain,
                 valid_pixel_mask=valid_pixel_mask,
                 signal_percentile=signal_percentile,
                 min_signal_fraction=min_signal_fraction,
@@ -298,6 +307,7 @@ def evaluate_exposure_binary_search(
     *,
     frames_per_capture: int,
     full_scale: float,
+    valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
     signal_percentile: float = 99.0,
     min_signal_fraction: float = 0.10,
@@ -328,6 +338,7 @@ def evaluate_exposure_binary_search(
             candidate,
             frames_per_capture=frames_per_capture,
             full_scale=full_scale,
+            valid_pixel_domain=valid_pixel_domain,
             valid_pixel_mask=valid_pixel_mask,
             signal_percentile=signal_percentile,
             min_signal_fraction=min_signal_fraction,
@@ -385,6 +396,7 @@ def evaluate_capture_safety(
     exposure_us: float,
     gain_db: float,
     full_scale: float,
+    valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
     signal_percentile: float = 99.0,
     min_signal_fraction: float = 0.10,
@@ -398,7 +410,7 @@ def evaluate_capture_safety(
     if avg.shape != burst_arr.shape[-2:]:
         raise ExposureSearchError("avg_frame shape must match burst frame shape")
 
-    mask = _valid_mask(avg.shape, valid_pixel_mask)
+    mask = _valid_mask(avg.shape, valid_pixel_domain, valid_pixel_mask)
     valid_burst = burst_arr[:, mask]
     valid_avg = avg[mask]
     finite = bool(np.isfinite(valid_burst).all())
@@ -499,6 +511,7 @@ def _probe_candidate(
     *,
     frames_per_capture: int,
     full_scale: float,
+    valid_pixel_domain: dict[str, Any] | None,
     valid_pixel_mask: np.ndarray | None,
     signal_percentile: float,
     min_signal_fraction: float,
@@ -525,6 +538,7 @@ def _probe_candidate(
         exposure_us=float(candidate.exposure_us),
         gain_db=float(candidate.gain_db),
         full_scale=float(full_scale),
+        valid_pixel_domain=valid_pixel_domain,
         valid_pixel_mask=valid_pixel_mask,
         signal_percentile=signal_percentile,
         min_signal_fraction=min_signal_fraction,
@@ -533,15 +547,15 @@ def _probe_candidate(
     )
 
 
-def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> np.ndarray:
-    if valid_pixel_mask is None:
-        return np.ones(shape, dtype=bool)
-    mask = np.asarray(valid_pixel_mask, dtype=bool)
-    if mask.shape != shape:
-        raise ExposureSearchError(f"valid_pixel_mask shape {mask.shape} does not match {shape}")
-    if not np.any(mask):
-        raise ExposureSearchError("valid_pixel_mask leaves zero valid pixels")
-    return mask
+def _valid_mask(
+    shape: tuple[int, int],
+    valid_pixel_domain: dict[str, Any] | None,
+    valid_pixel_mask: np.ndarray | None,
+) -> np.ndarray:
+    try:
+        return resolve_valid_pixel_mask(shape, valid_pixel_domain, valid_pixel_mask)
+    except ValidPixelDomainError as exc:
+        raise ExposureSearchError(str(exc)) from exc
 
 
 def _resolve_exposure_bounds_us(
