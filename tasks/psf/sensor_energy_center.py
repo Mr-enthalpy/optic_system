@@ -51,6 +51,9 @@ class SensorEnergyCenterProfile:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SensorEnergyCenterProfile":
+        from tasks.artifact_versioning import read_schema_version
+
+        read_schema_version(data, "sensor_energy_center_profile")
         return cls(
             center_profile_id=_require_str(data, "center_profile_id"),
             source_survey_h5=_require_str(data, "source_survey_h5"),
@@ -111,9 +114,11 @@ class SensorEnergyCenterProfile:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        from tasks.artifact_versioning import emit_schema_version
+
         data = asdict(self)
         data["artifact_type"] = "sensor_energy_center_profile"
-        data["schema_version"] = 1
+        emit_schema_version(data, "sensor_energy_center_profile")
         data["center_xy"] = [float(self.center_xy[0]), float(self.center_xy[1])]
         data["per_entry_center_xy"] = [
             [float(x), float(y)] for x, y in self.per_entry_center_xy

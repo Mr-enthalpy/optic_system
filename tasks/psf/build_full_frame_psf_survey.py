@@ -55,6 +55,9 @@ class FullFramePSFSurveyManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> FullFramePSFSurveyManifest:
+        from tasks.artifact_versioning import read_schema_version
+
+        read_schema_version(data, "full_frame_psf_survey")
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise FullFramePSFSurveyError("frame_shape must contain [H, W]")
@@ -83,9 +86,12 @@ class FullFramePSFSurveyManifest:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        from tasks.artifact_versioning import emit_schema_version
+
         data = asdict(self)
         data["artifact_type"] = "full_frame_psf_survey"
         data["frame_shape"] = list(self.frame_shape)
+        emit_schema_version(data, "full_frame_psf_survey")
         return data
 
     def to_json(self, path: str | Path | None = None) -> str:

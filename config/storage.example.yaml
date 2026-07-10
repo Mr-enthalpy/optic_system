@@ -1,0 +1,12 @@
+# optic_system storage configuration (TEMPLATE)
+#
+# Copy this file to `config/storage.local.yaml` (gitignored) and edit the
+# absolute paths for THIS machine. The repo never stores data or absolute data
+# paths; artifacts are addressed by (storage_root, rel_path) and resolved
+# through this file or the OPTIC_SYSTEM_DATA_ROOT environment override.
+#
+# Single storage root named `primary` (decision: single-root granularity).
+# Paths must be absolute. No data may live inside the repository.
+
+storage_roots:
+  primary: D:\optic_system_data

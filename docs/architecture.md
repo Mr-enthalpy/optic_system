@@ -228,6 +228,35 @@ Raw capture HDF5 and external handoffs are distinct formats. Do not conflate
 them. Do not invent final schemas for external repositories inside
 `optic_system`.
 
+### Data lifecycle: storage config and artifact versioning
+
+The repository never stores measured data or absolute data paths. Data lives on
+external storage; the repo carries only metadata.
+
+Storage-location config layer (`tasks/storage_config.py`):
+
+- A single named storage root (`primary`) maps to an absolute base directory.
+- Configured through `config/storage.local.yaml` (gitignored; see
+  `config/storage.example.yaml`) or the `OPTIC_SYSTEM_DATA_ROOT` environment
+  override. The env override takes priority over the file.
+- Artifacts are addressed by `(storage_root, rel_path)` and resolved with
+  `StorageConfig.resolve()`; `relativize()` performs the inverse.
+- No drive letters or absolute data paths are hardcoded anywhere. A missing
+  configuration is a hard error.
+
+Artifact schema versioning (`tasks/artifact_versioning.py`):
+
+- `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` are the single
+  source of truth for each artifact type's version and read-compatibility
+  window.
+- Every serialized artifact emits a round-trippable `schema_version` via
+  `emit_schema_version`; loaders validate it via `read_schema_version`. A
+  missing version is treated as current for backward compatibility; a newer or
+  too-old version is rejected.
+- `check_validity(artifact_type, path)` judges validity from data (schema
+  compatibility + `.validate()` + `artifact_type` match), never from filename.
+  It returns a `ValidityResult` rather than raising.
+
 ## Task architecture
 
 Historical files under `tasks/` are not assumed to define the current architecture.

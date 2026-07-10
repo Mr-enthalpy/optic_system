@@ -61,6 +61,9 @@ class PeakPatchPSFDictionaryManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PeakPatchPSFDictionaryManifest:
+        from tasks.artifact_versioning import read_schema_version
+
+        read_schema_version(data, "peak_patch_psf_dictionary")
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise PeakPatchPSFDictionaryError("frame_shape must contain [H, W]")
@@ -92,9 +95,12 @@ class PeakPatchPSFDictionaryManifest:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        from tasks.artifact_versioning import emit_schema_version
+
         data = asdict(self)
         data["artifact_type"] = "peak_patch_psf_dictionary"
         data["frame_shape"] = list(self.frame_shape)
+        emit_schema_version(data, "peak_patch_psf_dictionary")
         return data
 
     def to_json(self, path: str | Path | None = None) -> str:

@@ -27,6 +27,9 @@ class PupilProfile:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PupilProfile:
+        from tasks.artifact_versioning import read_schema_version
+
+        read_schema_version(d, "pupil_profile")
         profile = cls(
             pupil_profile_id=_require_str(d, "pupil_profile_id"),
             lcd_coordinate_convention=_require_str(d, "lcd_coordinate_convention"),
@@ -59,6 +62,8 @@ class PupilProfile:
             )
 
     def to_dict(self) -> dict[str, Any]:
+        from tasks.artifact_versioning import emit_schema_version
+
         result: dict[str, Any] = {
             "artifact_type": "pupil_profile",
             "pupil_profile_id": self.pupil_profile_id,
@@ -83,6 +88,7 @@ class PupilProfile:
                 result[key] = value
         if self.extra:
             result["extra"] = self.extra
+        emit_schema_version(result, "pupil_profile")
         return result
 
     def to_json(self, path: str | Path | None = None) -> str:
