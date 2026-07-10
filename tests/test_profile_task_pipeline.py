@@ -11,6 +11,7 @@ from tasks.capture_forward_dataset import CaptureFrames
 from tasks.profiles import (
     BROADBAND_PASSTHROUGH,
     PER_BAND_PUPIL_OPEN,
+    BroadbandCalibrationError,
     BroadbandCameraCalibrationPlan,
     CameraProfile,
     ExposureCandidate,
@@ -760,4 +761,115 @@ def test_per_band_calibration_rejects_zero_wavelength() -> None:
             lcd=lcd,
             tls=None,
             runtime_policy="no_hardware",
+        )
+
+
+class TopRowStuckCamera(SyntheticCamera):
+    """Camera whose top row is stuck at full scale regardless of exposure."""
+
+    def acquire_burst(self, k: int) -> CaptureFrames:
+        frames = super().acquire_burst(k)
+        burst = np.array(frames.burst, copy=True)
+        burst[:, 0, :] = self.full_scale
+        avg = burst.mean(axis=0)
+        return CaptureFrames(burst=burst, frames_avg=avg, metadata=frames.metadata)
+
+
+def _broadband_plan(valid_pixel_domain: dict | None) -> BroadbandCameraCalibrationPlan:
+    return BroadbandCameraCalibrationPlan(
+        camera_profile_id="broadband_scan_safe_v1",
+        candidates=[
+            ExposureCandidate(exposure_us=200.0, gain_db=0.0),
+            ExposureCandidate(exposure_us=6000.0, gain_db=0.0),
+        ],
+        exposure_search=_fast_search(min_exposure_us=200.0, max_exposure_us=6000.0),
+        frames_per_capture=2,
+        full_scale=255.0,
+        lcd_settle_ms=0.0,
+        allow_test_lcd_settle_below_refresh=True,
+        valid_pixel_domain=valid_pixel_domain,
+    )
+
+
+def test_broadband_calibration_without_domain_rejects_stuck_bad_pixel() -> None:
+    lcd = SyntheticLCD(shape=(80, 120))
+    camera = TopRowStuckCamera(lcd=lcd)
+
+    with pytest.raises(ExposureLowerBoundUnsafeError):
+        calibrate_broadband_camera_profile(
+            _broadband_plan(None),
+            camera=camera,
+            lcd=lcd,
+            tls=FakePassThroughTLS(),
+            runtime_policy="no_hardware",
+        )
+
+
+def test_broadband_calibration_excludes_bad_pixel_domain_and_records_policy() -> None:
+    lcd = SyntheticLCD(shape=(80, 120))
+    camera = TopRowStuckCamera(lcd=lcd)
+    domain = {"type": "exclude_top_rows", "top_rows": 1}
+
+    result = calibrate_broadband_camera_profile(
+        _broadband_plan(domain),
+        camera=camera,
+        lcd=lcd,
+        tls=FakePassThroughTLS(),
+        runtime_policy="no_hardware",
+    )
+
+    profile = result.camera_profile
+    assert profile.exposure_us is not None
+    assert profile.extra["valid_pixel_domain"] == domain
+    # Safety decision used the valid domain; the excluded stuck row is still reported.
+    report = result.probe_results[0].metadata["saturation_report"]
+    assert report["valid_domain_saturated_pixel_count"] == 0
+    assert report["excluded_domain_saturated_pixel_count"] > 0
+
+
+def test_broadband_plan_round_trips_valid_pixel_domain() -> None:
+    domain = {"type": "exclude_xyxy", "xyxy": [0, 0, 4, 2]}
+    plan = BroadbandCameraCalibrationPlan.from_dict({
+        "camera_profile_id": "broadband_scan_safe_v1",
+        "candidates": [{"exposure_us": 200.0}],
+        "valid_pixel_domain": domain,
+    })
+    assert plan.valid_pixel_domain == domain
+
+
+def test_broadband_plan_rejects_non_mapping_valid_pixel_domain() -> None:
+    with pytest.raises(BroadbandCalibrationError, match="must be a mapping"):
+        BroadbandCameraCalibrationPlan.from_dict({
+            "camera_profile_id": "x",
+            "candidates": [{"exposure_us": 200.0}],
+            "valid_pixel_domain": [1, 2, 3],
+        })
+
+
+def test_capture_safety_accepts_valid_pixel_domain_policy() -> None:
+    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst[:, 0, :] = 255.0
+    avg = burst.mean(axis=0)
+
+    row = evaluate_capture_safety(
+        burst=burst,
+        avg_frame=avg,
+        exposure_us=1000.0,
+        gain_db=0.0,
+        full_scale=255.0,
+        valid_pixel_domain={"type": "exclude_top_rows", "top_rows": 1},
+    )
+
+    assert row.psf_safe is True
+    assert row.peak_pixel_burst == 100.0
+
+    with pytest.raises(ExposureSearchError, match="not both"):
+        evaluate_capture_safety(
+            burst=burst,
+            avg_frame=avg,
+            exposure_us=1000.0,
+            gain_db=0.0,
+            full_scale=255.0,
+            valid_pixel_domain={"type": "full_frame"},
+            valid_pixel_mask=np.ones((3, 3), dtype=bool),
         )

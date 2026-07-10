@@ -17,6 +17,11 @@ from tasks.runtime_mode import (
     validate_no_fake_devices,
     validate_required_devices,
 )
+from tasks.valid_pixel_domain import (
+    ValidPixelDomainError,
+    coerce_valid_pixel_domain,
+    describe_valid_pixel_domain,
+)
 
 from .camera_profile import (
     MONOCHROMATIC,
@@ -93,6 +98,7 @@ class PerBandPupilOpenCalibrationPlan:
     full_scale: float = 255.0
     lcd_settle_ms: float = 20.0
     allow_test_lcd_settle_below_refresh: bool = False
+    valid_pixel_domain: dict[str, Any] | None = None
     valid_for: list[str] = field(default_factory=lambda: [
         "psf_dictionary_capture",
         "dotf_capture",
@@ -112,6 +118,7 @@ class PerBandPupilOpenCalibrationPlan:
             allow_test_lcd_settle_below_refresh=bool(
                 data.get("allow_test_lcd_settle_below_refresh", False)
             ),
+            valid_pixel_domain=_coerce_domain(data.get("valid_pixel_domain")),
             valid_for=[str(x) for x in data.get("valid_for", [
                 "psf_dictionary_capture",
                 "dotf_capture",
@@ -213,6 +220,7 @@ def calibrate_per_band_pupil_open_camera_profile(
             exposure_search,
             frames_per_capture=plan.frames_per_capture,
             full_scale=plan.full_scale,
+            valid_pixel_domain=plan.valid_pixel_domain,
             valid_pixel_mask=valid_pixel_mask,
         )
         for row in rows:
@@ -249,6 +257,9 @@ def calibrate_per_band_pupil_open_camera_profile(
             "full_scale": float(plan.full_scale),
             "tls_iteration_order": "outermost_by_wavelength",
             "safe_profiles_by_wavelength": safe_profiles_by_wavelength,
+            "valid_pixel_domain": describe_valid_pixel_domain(
+                plan.valid_pixel_domain, valid_pixel_mask
+            ),
             "timing_policy": {
                 "lcd_settle_ms": float(plan.lcd_settle_ms),
                 "allow_test_lcd_settle_below_refresh": bool(
@@ -282,6 +293,13 @@ def _physical_shape_from_pupil(pupil_profile: PupilProfile) -> tuple[int, int]:
 def _wavelength_key(wavelength_nm: float) -> str:
     value = float(wavelength_nm)
     return str(int(value)) if value.is_integer() else str(value)
+
+
+def _coerce_domain(value: Any) -> dict[str, Any] | None:
+    try:
+        return coerce_valid_pixel_domain(value)
+    except ValidPixelDomainError as exc:
+        raise PerBandCalibrationError(str(exc)) from exc
 
 
 def _settle_lcd(settle_ms: float, *, allow_test_below_refresh: bool = False) -> None:
