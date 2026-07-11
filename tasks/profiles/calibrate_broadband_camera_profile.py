@@ -152,6 +152,12 @@ def calibrate_broadband_camera_profile(
         require_tls=True,
     )
     validate_no_fake_devices(devices, policy=policy)
+    # Freeze an explicit mask once so the safety search and the provenance record
+    # use the identical array (a caller-mutable ndarray must not drift between the
+    # per-probe resolution and the recorded resolved domain).
+    if valid_pixel_mask is not None:
+        valid_pixel_mask = np.array(valid_pixel_mask, dtype=bool, copy=True, order="C")
+        valid_pixel_mask.setflags(write=False)
     _validate_test_settle_override(
         allow_test_override=plan.allow_test_lcd_settle_below_refresh,
         lcd_settle_ms=plan.lcd_settle_ms,

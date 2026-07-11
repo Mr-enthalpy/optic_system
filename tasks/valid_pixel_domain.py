@@ -35,6 +35,7 @@ not both a policy and a mask.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import struct
 from typing import Any
@@ -136,22 +137,42 @@ def coerce_valid_pixel_domain(value: Any) -> dict[str, Any] | None:
     return canonical
 
 
-def resolve_valid_pixel_domain(
-    shape: tuple[int, int],
-    valid_pixel_domain: dict[str, Any] | None = None,
-    valid_pixel_mask: np.ndarray | None = None,
-    *,
-    max_excluded_fraction: float = MAX_EXCLUDED_FRACTION,
-    explicit_mask_large_exclusion_override: bool = False,
-    explicit_mask_large_exclusion_reason: str | None = None,
-) -> "ResolvedValidPixelDomain":
-    """Resolve a policy or explicit mask into a mask plus full provenance.
+class _ResolvedCore:
+    """Internal resolution result without the (expensive) mask digest."""
 
-    Enforces the frame-shape-dependent constraints: out-of-bounds rectangles are
-    rejected, at least one valid pixel must remain, and the excluded fraction must
-    not exceed ``max_excluded_fraction`` unless an override is set.  For the policy
-    path the override lives in the policy dict; for the explicit-mask path use
-    ``explicit_mask_large_exclusion_override`` / ``explicit_mask_large_exclusion_reason``.
+    __slots__ = (
+        "mask",
+        "frame_shape_hw",
+        "resolved_policy",
+        "requested_policy",
+        "valid_pixel_count",
+        "excluded_pixel_count",
+        "excluded_fraction",
+        "large_exclusion_override_requested",
+        "large_exclusion_override_applied",
+        "large_exclusion_reason",
+        "max_excluded_fraction",
+    )
+
+    def __init__(self, **kwargs: Any) -> None:
+        for name in self.__slots__:
+            setattr(self, name, kwargs[name])
+
+
+def _resolve_valid_pixel_mask_core(
+    shape: tuple[int, int],
+    valid_pixel_domain: dict[str, Any] | None,
+    valid_pixel_mask: np.ndarray | None,
+    *,
+    max_excluded_fraction: float,
+    explicit_mask_large_exclusion_override: bool,
+    explicit_mask_large_exclusion_reason: str | None,
+) -> _ResolvedCore:
+    """Validate inputs and build the mask + counts, but do NOT hash the mask.
+
+    The SHA-256 digest of a native-sensor mask is expensive (~5 MB per 2048x2448
+    frame); it is only needed when writing provenance, so the mask-only and
+    per-frame paths use this core and skip it.
     """
     _validate_max_excluded_fraction(max_excluded_fraction)
     h, w = _validate_frame_shape(shape)
@@ -230,7 +251,7 @@ def resolve_valid_pixel_domain(
         resolved_policy["large_exclusion_override"] = True
         resolved_policy["large_exclusion_reason"] = reason
 
-    return ResolvedValidPixelDomain(
+    return _ResolvedCore(
         mask=mask,
         frame_shape_hw=(h, w),
         resolved_policy=resolved_policy,
@@ -238,11 +259,54 @@ def resolve_valid_pixel_domain(
         valid_pixel_count=valid_count,
         excluded_pixel_count=excluded_count,
         excluded_fraction=excluded_fraction,
-        mask_digest=valid_pixel_mask_digest(mask),
         large_exclusion_override_requested=override_requested,
         large_exclusion_override_applied=override_applied,
         large_exclusion_reason=reason,
         max_excluded_fraction=float(max_excluded_fraction),
+    )
+
+
+def resolve_valid_pixel_domain(
+    shape: tuple[int, int],
+    valid_pixel_domain: dict[str, Any] | None = None,
+    valid_pixel_mask: np.ndarray | None = None,
+    *,
+    max_excluded_fraction: float = MAX_EXCLUDED_FRACTION,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
+) -> "ResolvedValidPixelDomain":
+    """Resolve a policy or explicit mask into a mask plus full provenance.
+
+    Enforces the frame-shape-dependent constraints: out-of-bounds rectangles are
+    rejected, at least one valid pixel must remain, and the excluded fraction must
+    not exceed ``max_excluded_fraction`` unless an override is set.  For the policy
+    path the override lives in the policy dict; for the explicit-mask path use
+    ``explicit_mask_large_exclusion_override`` / ``explicit_mask_large_exclusion_reason``.
+
+    This computes the mask digest and is the entry point for writing provenance.
+    Callers that only need the mask should use :func:`resolve_valid_pixel_mask`.
+    """
+    core = _resolve_valid_pixel_mask_core(
+        shape,
+        valid_pixel_domain,
+        valid_pixel_mask,
+        max_excluded_fraction=max_excluded_fraction,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+    )
+    return ResolvedValidPixelDomain(
+        mask=core.mask,
+        frame_shape_hw=core.frame_shape_hw,
+        resolved_policy=core.resolved_policy,
+        requested_policy=core.requested_policy,
+        valid_pixel_count=core.valid_pixel_count,
+        excluded_pixel_count=core.excluded_pixel_count,
+        excluded_fraction=core.excluded_fraction,
+        mask_digest=valid_pixel_mask_digest(core.mask),
+        large_exclusion_override_requested=core.large_exclusion_override_requested,
+        large_exclusion_override_applied=core.large_exclusion_override_applied,
+        large_exclusion_reason=core.large_exclusion_reason,
+        max_excluded_fraction=core.max_excluded_fraction,
     )
 
 
@@ -259,10 +323,10 @@ def resolve_valid_pixel_mask(
 
     ``True`` marks a pixel that participates in the decision.  Provide either a
     ``valid_pixel_domain`` policy or an explicit ``valid_pixel_mask`` array, not
-    both.  Returns an all-``True`` mask when neither is given.  Thin wrapper over
-    :func:`resolve_valid_pixel_domain` for callers that only need the mask.
+    both.  Returns an all-``True`` mask when neither is given.  Does NOT compute
+    the mask digest (cheap path for per-frame / per-probe use).
     """
-    return resolve_valid_pixel_domain(
+    return _resolve_valid_pixel_mask_core(
         shape,
         valid_pixel_domain,
         valid_pixel_mask,
@@ -323,8 +387,8 @@ class ResolvedValidPixelDomain:
     __slots__ = (
         "mask",
         "frame_shape_hw",
-        "resolved_policy",
-        "requested_policy",
+        "_resolved_policy",
+        "_requested_policy",
         "valid_pixel_count",
         "excluded_pixel_count",
         "excluded_fraction",
@@ -355,8 +419,13 @@ class ResolvedValidPixelDomain:
         mask.setflags(write=False)
         self.mask = mask
         self.frame_shape_hw = frame_shape_hw
-        self.resolved_policy = resolved_policy
-        self.requested_policy = requested_policy
+        # Store private deep copies so the frozen mask/digest cannot drift from a
+        # caller mutating a policy dict after resolution; the public accessors
+        # return fresh copies too.
+        self._resolved_policy = copy.deepcopy(resolved_policy)
+        self._requested_policy = (
+            copy.deepcopy(requested_policy) if requested_policy is not None else None
+        )
         self.valid_pixel_count = valid_pixel_count
         self.excluded_pixel_count = excluded_pixel_count
         self.excluded_fraction = excluded_fraction
@@ -366,12 +435,22 @@ class ResolvedValidPixelDomain:
         self.large_exclusion_reason = large_exclusion_reason
         self.max_excluded_fraction = max_excluded_fraction
 
+    @property
+    def resolved_policy(self) -> dict[str, Any]:
+        return copy.deepcopy(self._resolved_policy)
+
+    @property
+    def requested_policy(self) -> dict[str, Any] | None:
+        if self._requested_policy is None:
+            return None
+        return copy.deepcopy(self._requested_policy)
+
     def to_record(self) -> dict[str, Any]:
         record: dict[str, Any] = {
             "schema_version": VALID_PIXEL_DOMAIN_RECORD_SCHEMA_VERSION,
-            "type": str(self.resolved_policy.get("type")),
+            "type": str(self._resolved_policy.get("type")),
             "frame_shape_hw": [int(self.frame_shape_hw[0]), int(self.frame_shape_hw[1])],
-            "resolved_policy": dict(self.resolved_policy),
+            "resolved_policy": copy.deepcopy(self._resolved_policy),
             "valid_pixel_count": int(self.valid_pixel_count),
             "excluded_pixel_count": int(self.excluded_pixel_count),
             "excluded_fraction": float(self.excluded_fraction),
@@ -385,8 +464,11 @@ class ResolvedValidPixelDomain:
             ),
             "large_exclusion_reason": self.large_exclusion_reason,
         }
-        if self.requested_policy is not None and self.requested_policy != self.resolved_policy:
-            record["requested_policy"] = dict(self.requested_policy)
+        if (
+            self._requested_policy is not None
+            and self._requested_policy != self._resolved_policy
+        ):
+            record["requested_policy"] = copy.deepcopy(self._requested_policy)
         return record
 
 

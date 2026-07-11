@@ -335,6 +335,59 @@ def test_resolved_mask_is_read_only() -> None:
         resolved.mask[0, 0] = False
 
 
+def test_resolved_policy_mutation_does_not_affect_record() -> None:
+    resolved = resolve_valid_pixel_domain(
+        (2048, 2448), {"type": "exclude_top_rows", "top_rows": 1}
+    )
+    digest_before = resolved.mask_digest
+    # The public accessor returns a copy; mutating it must not affect internals.
+    policy_view = resolved.resolved_policy
+    policy_view["top_rows"] = 999
+    record = resolved.to_record()
+    assert record["resolved_policy"]["top_rows"] == 1
+    assert resolved.resolved_policy["top_rows"] == 1
+    assert resolved.mask_digest == digest_before
+    # And two records are independent copies.
+    record["resolved_policy"]["top_rows"] = 7
+    assert resolved.to_record()["resolved_policy"]["top_rows"] == 1
+
+
+def test_mask_only_path_returns_correct_mask_without_domain_object() -> None:
+    mask = resolve_valid_pixel_mask(
+        (2048, 2448), {"type": "exclude_top_rows", "top_rows": 1}
+    )
+    assert mask.shape == (2048, 2448)
+    assert not mask[0, :].any()
+    assert mask[1:, :].all()
+
+
+def test_mask_only_path_does_not_compute_digest(monkeypatch) -> None:
+    import tasks.valid_pixel_domain as vpd
+
+    def _boom(mask):
+        raise AssertionError("digest must not be computed on the mask-only path")
+
+    monkeypatch.setattr(vpd, "valid_pixel_mask_digest", _boom)
+    # Mask-only path must not hash the (potentially native-sensor sized) mask.
+    mask = vpd.resolve_valid_pixel_mask((2048, 2448), {"type": "full_frame"})
+    assert mask.all()
+
+
+def test_resolve_domain_computes_digest_once(monkeypatch) -> None:
+    import tasks.valid_pixel_domain as vpd
+
+    calls = {"n": 0}
+    real = vpd.valid_pixel_mask_digest
+
+    def _counting(mask):
+        calls["n"] += 1
+        return real(mask)
+
+    monkeypatch.setattr(vpd, "valid_pixel_mask_digest", _counting)
+    vpd.resolve_valid_pixel_domain((64, 64), {"type": "full_frame"})
+    assert calls["n"] == 1
+
+
 # --- max_excluded_fraction validation --------------------------------------
 
 

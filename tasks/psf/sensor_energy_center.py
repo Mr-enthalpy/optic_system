@@ -382,15 +382,18 @@ def validate_center_profile_for_frame_source(
 
 
 def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> np.ndarray:
-    try:
-        # The mask is already a validated/resolved domain; do not re-apply the
-        # exclusion-fraction cap here (it was enforced upstream, possibly with an
-        # explicit large-exclusion override).
-        return resolve_valid_pixel_mask(
-            shape, valid_pixel_mask=valid_pixel_mask, max_excluded_fraction=1.0
+    h, w = int(shape[0]), int(shape[1])
+    if valid_pixel_mask is None:
+        return np.ones((h, w), dtype=bool)
+    # The mask is already a validated/resolved domain (enforced upstream, possibly
+    # with an audited large-exclusion override).  Use it directly without copying,
+    # counting, or hashing per frame; only check shape.
+    mask = np.asarray(valid_pixel_mask, dtype=bool)
+    if mask.shape != (h, w):
+        raise SensorEnergyCenterError(
+            f"valid_pixel_mask shape {mask.shape} does not match {(h, w)}"
         )
-    except ValidPixelDomainError as exc:
-        raise SensorEnergyCenterError(str(exc)) from exc
+    return mask
 
 
 def _valid_mask_from_domain(

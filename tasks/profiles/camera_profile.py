@@ -377,18 +377,23 @@ def _validate_peak_domain_fields(
 ) -> None:
     import math
 
+    if peak_pixel_domain is not None and not isinstance(peak_pixel_domain, str):
+        raise ProfileError("peak_pixel_domain must be a string or null")
     if peak_pixel_domain not in (None, "valid_pixel_domain"):
         raise ProfileError(
             "peak_pixel_domain must be None or 'valid_pixel_domain', "
             f"got {peak_pixel_domain!r}"
         )
-    if full_frame_peak_pixel is not None and not math.isfinite(float(full_frame_peak_pixel)):
-        raise ProfileError("full_frame_peak_pixel must be finite when present")
-    if (
-        full_frame_saturated_pixel_count is not None
-        and int(full_frame_saturated_pixel_count) < 0
-    ):
-        raise ProfileError("full_frame_saturated_pixel_count must be non-negative")
+    if full_frame_peak_pixel is not None:
+        if isinstance(full_frame_peak_pixel, bool) or not isinstance(
+            full_frame_peak_pixel, (int, float)
+        ):
+            raise ProfileError("full_frame_peak_pixel must be a number or null")
+        if not math.isfinite(float(full_frame_peak_pixel)):
+            raise ProfileError("full_frame_peak_pixel must be finite when present")
+    _validate_optional_count(
+        full_frame_saturated_pixel_count, "full_frame_saturated_pixel_count"
+    )
     if (
         full_frame_peak_pixel is not None
         or full_frame_saturated_pixel_count is not None
@@ -472,13 +477,17 @@ def _optional_int(value: Any) -> int | None:
         raise ProfileError(f"expected int or null, got {value!r}") from None
 
 
-def _optional_count(value: Any, name: str) -> int | None:
+def _validate_optional_count(value: Any, name: str) -> None:
     if value is None:
-        return None
+        return
     if isinstance(value, bool) or not isinstance(value, int):
         raise ProfileError(f"{name} must be an integer or null, got {value!r}")
     if value < 0:
         raise ProfileError(f"{name} must be non-negative")
+
+
+def _optional_count(value: Any, name: str) -> int | None:
+    _validate_optional_count(value, name)
     return value
 
 

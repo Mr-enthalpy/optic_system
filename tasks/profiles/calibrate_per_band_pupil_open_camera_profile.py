@@ -177,6 +177,11 @@ def calibrate_per_band_pupil_open_camera_profile(
         require_tls=True,
     )
     validate_no_fake_devices(devices, policy=policy)
+    # Freeze an explicit mask once so the safety search and the provenance record
+    # use the identical array across all wavelengths.
+    if valid_pixel_mask is not None:
+        valid_pixel_mask = np.array(valid_pixel_mask, dtype=bool, copy=True, order="C")
+        valid_pixel_mask.setflags(write=False)
     _validate_test_settle_override(
         allow_test_override=plan.allow_test_lcd_settle_below_refresh,
         lcd_settle_ms=plan.lcd_settle_ms,

@@ -122,6 +122,12 @@ real TLS adapter in hardware mode.
   ``large_exclusion_override_requested`` (the caller asked for it) and
   ``large_exclusion_override_applied`` (it was actually needed to pass the cap),
   so a defensive override on an in-cap policy never claims it was used.
+  The resolved-domain object exposes ``resolved_policy`` / ``requested_policy``
+  as read-only copies and freezes its mask, so provenance cannot drift after
+  resolution.  The mask SHA-256 digest is computed only when a provenance record
+  is produced (``resolve_valid_pixel_domain`` / ``describe_valid_pixel_domain``);
+  the per-probe / per-frame ``resolve_valid_pixel_mask`` path skips it to avoid
+  hashing native-sensor-sized masks repeatedly.
   ``analyze_diffraction_support`` records the same
   resolved record in ``PeakSupportAnalysisManifest.valid_pixel_domain`` so reports
   using different exclusions are distinguishable.

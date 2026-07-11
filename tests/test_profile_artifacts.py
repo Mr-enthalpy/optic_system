@@ -207,6 +207,21 @@ def test_per_wavelength_full_frame_saturated_count_rejects_non_integer(bad) -> N
         CameraProfile.from_dict(data)
 
 
+@pytest.mark.parametrize("bad", [1.5, True, "3"])
+def test_validate_rejects_non_integer_count_on_direct_construction(bad) -> None:
+    from tasks.profiles.camera_profile import PerWavelengthCameraSettings
+
+    settings = PerWavelengthCameraSettings(
+        exposure_us=100.0,
+        gain_db=0.0,
+        peak_pixel_domain="valid_pixel_domain",
+        full_frame_saturated_pixel_count=bad,
+    )
+
+    with pytest.raises(ProfileError, match="full_frame_saturated_pixel_count"):
+        settings.validate()
+
+
 def test_per_band_profile_requires_selected_pupil_open() -> None:
     data = per_band_camera_profile_dict()
     data["lcd_state"]["mode"] = "all_open"
