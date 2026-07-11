@@ -187,6 +187,26 @@ def test_camera_profile_validate_recurses_into_per_wavelength() -> None:
         profile.validate()
 
 
+@pytest.mark.parametrize("bad", [1.5, True, "3"])
+def test_broadband_full_frame_saturated_count_rejects_non_integer(bad) -> None:
+    data = broadband_camera_profile_dict()
+    data["camera"]["peak_pixel_domain"] = "valid_pixel_domain"
+    data["camera"]["full_frame_saturated_pixel_count"] = bad
+
+    with pytest.raises(ProfileError, match="full_frame_saturated_pixel_count"):
+        CameraProfile.from_dict(data)
+
+
+@pytest.mark.parametrize("bad", [1.5, True, "3"])
+def test_per_wavelength_full_frame_saturated_count_rejects_non_integer(bad) -> None:
+    data = per_band_camera_profile_dict()
+    data["camera"]["per_wavelength"]["450"]["peak_pixel_domain"] = "valid_pixel_domain"
+    data["camera"]["per_wavelength"]["450"]["full_frame_saturated_pixel_count"] = bad
+
+    with pytest.raises(ProfileError, match="full_frame_saturated_pixel_count"):
+        CameraProfile.from_dict(data)
+
+
 def test_per_band_profile_requires_selected_pupil_open() -> None:
     data = per_band_camera_profile_dict()
     data["lcd_state"]["mode"] = "all_open"

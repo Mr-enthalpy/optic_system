@@ -331,6 +331,8 @@ class ResolvedValidPixelDomain:
         large_exclusion_reason: str | None,
         max_excluded_fraction: float,
     ) -> None:
+        mask = np.ascontiguousarray(mask, dtype=bool)
+        mask.setflags(write=False)
         self.mask = mask
         self.frame_shape_hw = frame_shape_hw
         self.resolved_policy = resolved_policy

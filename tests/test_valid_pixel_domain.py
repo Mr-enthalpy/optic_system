@@ -326,6 +326,12 @@ def test_explicit_mask_is_copied_not_shared() -> None:
     assert resolved.mask_digest == digest_before
 
 
+def test_resolved_mask_is_read_only() -> None:
+    resolved = resolve_valid_pixel_domain((10, 10), {"type": "full_frame"})
+    with pytest.raises(ValueError):
+        resolved.mask[0, 0] = False
+
+
 # --- max_excluded_fraction validation --------------------------------------
 
 

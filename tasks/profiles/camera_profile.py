@@ -114,8 +114,9 @@ class PerWavelengthCameraSettings:
             frames_per_capture=_optional_int(d.get("frames_per_capture")),
             peak_pixel_domain=_optional_str(d.get("peak_pixel_domain")),
             full_frame_peak_pixel=_optional_float(d.get("full_frame_peak_pixel")),
-            full_frame_saturated_pixel_count=_optional_int(
-                d.get("full_frame_saturated_pixel_count")
+            full_frame_saturated_pixel_count=_optional_count(
+                d.get("full_frame_saturated_pixel_count"),
+                "full_frame_saturated_pixel_count",
             ),
         )
         settings.validate()
@@ -213,11 +214,12 @@ class CameraProfile:
             full_frame_peak_pixel=_optional_float(
                 d.get("full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel"))
             ),
-            full_frame_saturated_pixel_count=_optional_int(
+            full_frame_saturated_pixel_count=_optional_count(
                 d.get(
                     "full_frame_saturated_pixel_count",
                     camera_block.get("full_frame_saturated_pixel_count"),
-                )
+                ),
+                "full_frame_saturated_pixel_count",
             ),
             depends_on_pupil_profile_id=_optional_str(
                 d.get("depends_on_pupil_profile_id")
@@ -468,6 +470,16 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         raise ProfileError(f"expected int or null, got {value!r}") from None
+
+
+def _optional_count(value: Any, name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ProfileError(f"{name} must be an integer or null, got {value!r}")
+    if value < 0:
+        raise ProfileError(f"{name} must be non-negative")
+    return value
 
 
 def _optional_dict(value: Any) -> dict[str, Any] | None:
