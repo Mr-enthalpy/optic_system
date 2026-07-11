@@ -35,6 +35,7 @@ from .exposure_search import (
     ExposureProbeResult,
     ExposureSearchCamera,
     evaluate_gain_binary_search,
+    require_single_probe_frame_shape,
     safe_exposure_profiles_by_gain,
     select_recommended_probe,
 )
@@ -189,8 +190,8 @@ def calibrate_broadband_camera_profile(
         explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
         explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
     )
+    frame_shape = require_single_probe_frame_shape(rows)
     recommended = select_recommended_probe(rows)
-    frame_shape = _recommended_frame_shape(recommended)
     valid_pixel_domain_record = describe_valid_pixel_domain(
         frame_shape=frame_shape,
         valid_pixel_domain=plan.valid_pixel_domain,
@@ -328,16 +329,6 @@ def _coerce_domain(value: Any) -> dict[str, Any] | None:
         return coerce_valid_pixel_domain(value)
     except ValidPixelDomainError as exc:
         raise BroadbandCalibrationError(str(exc)) from exc
-
-
-def _recommended_frame_shape(recommended: ExposureProbeResult) -> tuple[int, int]:
-    report = recommended.metadata.get("saturation_report") or {}
-    shape = report.get("frame_shape_hw")
-    if not isinstance(shape, (list, tuple)) or len(shape) != 2:
-        raise BroadbandCalibrationError(
-            "recommended probe is missing saturation_report.frame_shape_hw"
-        )
-    return (int(shape[0]), int(shape[1]))
 
 
 def _full_frame_peak_stats(

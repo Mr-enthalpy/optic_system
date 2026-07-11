@@ -475,6 +475,33 @@ def evaluate_capture_safety(
     )
 
 
+def require_single_probe_frame_shape(
+    rows: list[ExposureProbeResult],
+) -> tuple[int, int]:
+    """Return the common frame shape across probes, or raise on any mismatch.
+
+    A frame-shape change within one exposure search indicates the camera ROI,
+    pixel format, or stream configuration changed mid-calibration; that must fail
+    rather than silently mixing results from different sensor domains.
+    """
+    shapes: set[tuple[int, int]] = set()
+    for row in rows:
+        report = row.metadata.get("saturation_report") or {}
+        raw = report.get("frame_shape_hw")
+        if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+            raise ExposureSearchError(
+                "probe is missing saturation_report.frame_shape_hw"
+            )
+        shapes.add((int(raw[0]), int(raw[1])))
+    if not shapes:
+        raise ExposureSearchError("no probes to check for frame shape consistency")
+    if len(shapes) != 1:
+        raise ExposureSearchError(
+            f"camera frame shape changed during exposure search: {sorted(shapes)}"
+        )
+    return next(iter(shapes))
+
+
 def select_recommended_probe(rows: list[ExposureProbeResult]) -> ExposureProbeResult:
     safe = [
         row for row in rows

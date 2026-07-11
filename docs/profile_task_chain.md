@@ -103,8 +103,9 @@ real TLS adapter in hardware mode.
   ``large_exclusion_reason``.  The override lifts only the fraction cap; it never
   relaxes coordinate validity, field completeness, or the "at least one valid
   pixel" rule.  When an explicit boolean ``valid_pixel_mask`` is supplied instead
-  of a policy, the same cap applies and over-cap exclusion requires
-  ``explicit_mask_large_exclusion_override`` plus
+  of a policy, it must be a 2D array with boolean dtype (values are not silently
+  coerced from numeric/NaN data), the same cap applies, and over-cap exclusion
+  requires ``explicit_mask_large_exclusion_override`` plus
   ``explicit_mask_large_exclusion_reason``.  These two parameters are threaded
   through the calibration and analysis entry points
   (``calibrate_broadband_camera_profile``,
@@ -143,9 +144,13 @@ real TLS adapter in hardware mode.
   candidates published in ``safe_profiles_by_gain`` /
   ``safe_profiles_by_wavelength`` carry the same ``peak_pixel_domain`` /
   ``full_frame_peak_pixel`` / ``full_frame_saturated_pixel_count`` provenance so
-  every candidate in a profile is semantically unambiguous.  Per-band calibration
-  additionally verifies that the camera frame shape is identical across all
-  wavelengths before recording the shared valid-domain provenance record.
+  every candidate in a profile is semantically unambiguous.  Every exposure
+  search (broadband and each per-band wavelength) verifies that all of its probes
+  share one camera frame shape via ``require_single_probe_frame_shape``; a
+  mid-search shape change (unexpected ROI / pixel-format / stream reconfiguration)
+  fails the calibration rather than mixing sensor domains.  Per-band calibration
+  additionally verifies that the frame shape is identical across all wavelengths
+  before recording the shared valid-domain provenance record.
 - The default selected profile should prefer low gain, then stronger signal,
   then longer exposure.
 

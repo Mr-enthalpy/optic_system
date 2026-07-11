@@ -36,6 +36,7 @@ from .exposure_search import (
     ExposureProbeResult,
     ExposureSearchCamera,
     evaluate_gain_binary_search,
+    require_single_probe_frame_shape,
     safe_exposure_profiles_by_gain,
     select_recommended_probe,
 )
@@ -235,12 +236,7 @@ def calibrate_per_band_pupil_open_camera_profile(
         )
         for row in rows:
             row.metadata["tls_outer_loop_wavelength_nm"] = float(spec.wavelength_nm)
-        selected = select_recommended_probe(rows)
-        key = _wavelength_key(spec.wavelength_nm)
-        probe_results[key] = rows
-        safe_profiles_by_wavelength[key] = safe_exposure_profiles_by_gain(rows)
-        full_frame_peak, full_frame_saturated = _full_frame_peak_stats(selected)
-        current_shape = _recommended_frame_shape(selected)
+        current_shape = require_single_probe_frame_shape(rows)
         if resolved_frame_shape is None:
             resolved_frame_shape = current_shape
         elif current_shape != resolved_frame_shape:
@@ -248,6 +244,11 @@ def calibrate_per_band_pupil_open_camera_profile(
                 "camera frame shape changed across wavelengths: "
                 f"{resolved_frame_shape} != {current_shape}"
             )
+        selected = select_recommended_probe(rows)
+        key = _wavelength_key(spec.wavelength_nm)
+        probe_results[key] = rows
+        safe_profiles_by_wavelength[key] = safe_exposure_profiles_by_gain(rows)
+        full_frame_peak, full_frame_saturated = _full_frame_peak_stats(selected)
         per_wavelength[key] = PerWavelengthCameraSettings(
             exposure_us=float(selected.exposure_us),
             gain_db=float(selected.gain_db),
@@ -326,16 +327,6 @@ def _coerce_domain(value: Any) -> dict[str, Any] | None:
         return coerce_valid_pixel_domain(value)
     except ValidPixelDomainError as exc:
         raise PerBandCalibrationError(str(exc)) from exc
-
-
-def _recommended_frame_shape(recommended: ExposureProbeResult) -> tuple[int, int]:
-    report = recommended.metadata.get("saturation_report") or {}
-    shape = report.get("frame_shape_hw")
-    if not isinstance(shape, (list, tuple)) or len(shape) != 2:
-        raise PerBandCalibrationError(
-            "recommended probe is missing saturation_report.frame_shape_hw"
-        )
-    return (int(shape[0]), int(shape[1]))
 
 
 def _full_frame_peak_stats(

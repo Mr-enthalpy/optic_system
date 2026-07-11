@@ -188,7 +188,14 @@ def _resolve_valid_pixel_mask_core(
     explicit_mask = valid_pixel_mask is not None
 
     if explicit_mask:
-        mask = np.array(valid_pixel_mask, dtype=bool, copy=True, order="C")
+        raw = np.asarray(valid_pixel_mask)
+        if raw.ndim != 2:
+            raise ValidPixelDomainError("valid_pixel_mask must be a 2D boolean array")
+        if raw.dtype != np.bool_:
+            raise ValidPixelDomainError(
+                f"valid_pixel_mask must have boolean dtype, got {raw.dtype}"
+            )
+        mask = np.array(raw, copy=True, order="C")
         if mask.shape != (h, w):
             raise ValidPixelDomainError(
                 f"valid_pixel_mask shape {mask.shape} does not match {(h, w)}"
@@ -369,9 +376,14 @@ def valid_pixel_mask_digest(mask: np.ndarray) -> str:
     A version prefix and fixed-width shape encoding guard against layout ambiguity
     and future serialization changes.
     """
-    canonical = np.ascontiguousarray(mask, dtype=np.uint8)
-    if canonical.ndim != 2:
+    mask_arr = np.asarray(mask)
+    if mask_arr.ndim != 2:
         raise ValidPixelDomainError("valid_pixel_mask must be 2D for digesting")
+    if mask_arr.dtype != np.bool_:
+        raise ValidPixelDomainError(
+            f"valid_pixel_mask must have boolean dtype, got {mask_arr.dtype}"
+        )
+    canonical = np.ascontiguousarray(mask_arr, dtype=np.uint8)
     h, w = int(canonical.shape[0]), int(canonical.shape[1])
     payload = (
         b"optic_system.valid_pixel_mask.v1\0"

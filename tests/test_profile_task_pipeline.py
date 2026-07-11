@@ -1065,3 +1065,30 @@ def test_capture_safety_accepts_valid_pixel_domain_policy() -> None:
             valid_pixel_domain={"type": "full_frame"},
             valid_pixel_mask=np.ones((200, 200), dtype=bool),
         )
+
+
+def test_broadband_calibration_rejects_frame_shape_change_within_search() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+
+    class ShiftingShapeCamera(SyntheticCamera):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._bursts = 0
+
+        def acquire_burst(self, k: int) -> CaptureFrames:
+            self._bursts += 1
+            # Lower-bound probe uses one shape, later probes a different one.
+            self.frame_shape = (200, 240) if self._bursts <= 1 else (100, 240)
+            return super().acquire_burst(k)
+
+    camera = ShiftingShapeCamera(lcd=lcd, frame_shape=(200, 240))
+
+    with pytest.raises(ExposureSearchError, match="frame shape changed"):
+        calibrate_broadband_camera_profile(
+            _broadband_plan(None),
+            camera=camera,
+            lcd=lcd,
+            tls=FakePassThroughTLS(),
+            runtime_policy="no_hardware",
+        )
+

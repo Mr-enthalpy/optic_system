@@ -318,6 +318,23 @@ def test_explicit_override_rejected_on_policy_path() -> None:
         )
 
 
+def test_explicit_mask_rejects_non_boolean_dtype() -> None:
+    float_mask = np.ones((10, 10), dtype=np.float64)
+    with pytest.raises(ValidPixelDomainError, match="boolean dtype"):
+        resolve_valid_pixel_mask((10, 10), valid_pixel_mask=float_mask)
+
+
+def test_explicit_mask_rejects_non_2d() -> None:
+    bad = np.ones((10,), dtype=bool)
+    with pytest.raises(ValidPixelDomainError, match="2D boolean array"):
+        resolve_valid_pixel_mask((10, 10), valid_pixel_mask=bad)
+
+
+def test_digest_rejects_non_boolean_dtype() -> None:
+    with pytest.raises(ValidPixelDomainError, match="boolean dtype"):
+        valid_pixel_mask_digest(np.ones((4, 5), dtype=np.uint8))
+
+
 def test_explicit_mask_is_copied_not_shared() -> None:
     mask = np.ones((10, 10), dtype=bool)
     resolved = resolve_valid_pixel_domain(
