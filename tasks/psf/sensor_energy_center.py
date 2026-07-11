@@ -384,17 +384,23 @@ def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> 
     if valid_pixel_mask is None:
         return np.ones((h, w), dtype=bool)
     # The mask is already a validated/resolved domain (enforced upstream, possibly
-    # with an audited large-exclusion override).  Use it directly without copying,
-    # counting, or hashing per frame; only check shape and the basic non-empty
-    # invariant (the exclusion-fraction cap is intentionally not re-applied here).
-    mask = np.asarray(valid_pixel_mask, dtype=bool)
-    if mask.shape != (h, w):
+    # with an audited large-exclusion override).  Do not re-apply the exclusion
+    # cap, but still guard the interface contract: 2D boolean dtype, matching
+    # shape, and at least one valid pixel (numeric/NaN arrays are rejected).
+    raw = np.asarray(valid_pixel_mask)
+    if raw.ndim != 2:
+        raise SensorEnergyCenterError("valid_pixel_mask must be a 2D boolean array")
+    if raw.dtype != np.bool_:
         raise SensorEnergyCenterError(
-            f"valid_pixel_mask shape {mask.shape} does not match {(h, w)}"
+            f"valid_pixel_mask must have boolean dtype, got {raw.dtype}"
         )
-    if not np.any(mask):
+    if raw.shape != (h, w):
+        raise SensorEnergyCenterError(
+            f"valid_pixel_mask shape {raw.shape} does not match {(h, w)}"
+        )
+    if not np.any(raw):
         raise SensorEnergyCenterError("valid_pixel_mask leaves zero valid pixels")
-    return mask
+    return raw
 
 
 def _wavelength_key(value: float) -> str:

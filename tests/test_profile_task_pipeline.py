@@ -1092,3 +1092,67 @@ def test_broadband_calibration_rejects_frame_shape_change_within_search() -> Non
             runtime_policy="no_hardware",
         )
 
+
+def test_broadband_calibration_rejects_numeric_valid_pixel_mask() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
+    mask = np.ones((200, 240), dtype=np.uint8)
+
+    with pytest.raises(BroadbandCalibrationError, match="boolean dtype"):
+        calibrate_broadband_camera_profile(
+            _broadband_plan(None),
+            camera=camera,
+            lcd=lcd,
+            tls=FakePassThroughTLS(),
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+
+
+def test_per_band_calibration_rejects_numeric_valid_pixel_mask() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    pupil = PupilProfile.from_dict({
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "lcd_coordinate_convention": "physical_mono_xy",
+        "lcd_display_index": 1,
+        "subpixel_axis": 1,
+        "lcd_physical_center": [120.0, 100.0],
+        "lcd_physical_radius": 30.0,
+        "extra": {"physical_shape": [200, 240]},
+    })
+    plan = PerBandPupilOpenCalibrationPlan.from_dict({
+        "camera_profile_id": "per_band_pupil_open_v1",
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "frames_per_capture": 2,
+        "full_scale": 255,
+        "lcd_settle_ms": 0,
+        "allow_test_lcd_settle_below_refresh": True,
+        "wavelengths": [
+            {
+                "wavelength_nm": 450,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 1,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+        ],
+    })
+    mask = np.ones((200, 240), dtype=np.float64)
+
+    with pytest.raises(PerBandCalibrationError, match="boolean dtype"):
+        calibrate_per_band_pupil_open_camera_profile(
+            plan,
+            pupil_profile=pupil,
+            camera=camera,
+            lcd=lcd,
+            tls=tls,
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+

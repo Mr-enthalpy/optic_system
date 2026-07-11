@@ -368,6 +368,26 @@ def describe_valid_pixel_domain(
     return resolved.to_record()
 
 
+def freeze_explicit_valid_pixel_mask(value: np.ndarray) -> np.ndarray:
+    """Validate and freeze a caller-supplied explicit boolean valid-pixel mask.
+
+    Requires a 2D boolean-dtype array (numeric/NaN arrays are rejected, never
+    silently coerced), returns a read-only C-contiguous copy so the frozen mask
+    cannot drift from later provenance.  Shared by the calibration entry points
+    so the safety search and the recorded domain use the identical array.
+    """
+    raw = np.asarray(value)
+    if raw.ndim != 2:
+        raise ValidPixelDomainError("valid_pixel_mask must be a 2D boolean array")
+    if raw.dtype != np.bool_:
+        raise ValidPixelDomainError(
+            f"valid_pixel_mask must have boolean dtype, got {raw.dtype}"
+        )
+    frozen = np.array(raw, copy=True, order="C")
+    frozen.setflags(write=False)
+    return frozen
+
+
 def valid_pixel_mask_digest(mask: np.ndarray) -> str:
     """Return a stable sha256 digest identifying the resolved boolean mask.
 

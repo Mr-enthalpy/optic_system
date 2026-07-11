@@ -163,6 +163,14 @@ def test_estimate_frame_energy_center_rejects_empty_mask() -> None:
         estimate_frame_energy_center(frame, valid_pixel_mask=mask)
 
 
+def test_estimate_frame_energy_center_rejects_numeric_mask() -> None:
+    frame = np.ones((16, 20), dtype=np.float64)
+    mask = np.ones((16, 20), dtype=np.uint8)
+
+    with pytest.raises(SensorEnergyCenterError, match="boolean dtype"):
+        estimate_frame_energy_center(frame, valid_pixel_mask=mask)
+
+
 def test_background_offset_does_not_shift_center_after_correction() -> None:
     base = _gaussian_frame((64, 80), center_xy=(30.0, 25.0), background=0.0)
     shifted = base + 500.0
