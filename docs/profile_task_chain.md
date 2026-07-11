@@ -102,7 +102,10 @@ real TLS adapter in hardware mode.
   explicit ``large_exclusion_override: true`` together with a non-empty
   ``large_exclusion_reason``.  The override lifts only the fraction cap; it never
   relaxes coordinate validity, field completeness, or the "at least one valid
-  pixel" rule.
+  pixel" rule.  When an explicit boolean ``valid_pixel_mask`` is supplied instead
+  of a policy, the same cap applies and over-cap exclusion requires
+  ``explicit_mask_large_exclusion_override`` plus
+  ``explicit_mask_large_exclusion_reason``.
 - The calibration persists a **resolved-domain provenance record** in
   ``CameraProfile.extra["valid_pixel_domain"]`` (via ``describe_valid_pixel_domain``,
   which requires the frame shape).  The record includes ``resolved_policy``,
@@ -119,7 +122,13 @@ real TLS adapter in hardware mode.
   ``peak_pixel_domain="valid_pixel_domain"``.  ``full_frame_peak_pixel`` and
   ``full_frame_saturated_pixel_count`` record the unmasked full-burst statistics.
   These fields are optional (backward compatible) and appear on both the broadband
-  ``CameraProfile`` and each ``PerWavelengthCameraSettings``.
+  ``CameraProfile`` and each ``PerWavelengthCameraSettings``.  Backup safe-exposure
+  candidates published in ``safe_profiles_by_gain`` /
+  ``safe_profiles_by_wavelength`` carry the same ``peak_pixel_domain`` /
+  ``full_frame_peak_pixel`` / ``full_frame_saturated_pixel_count`` provenance so
+  every candidate in a profile is semantically unambiguous.  Per-band calibration
+  additionally verifies that the camera frame shape is identical across all
+  wavelengths before recording the shared valid-domain provenance record.
 - The default selected profile should prefer low gain, then stronger signal,
   then longer exposure.
 

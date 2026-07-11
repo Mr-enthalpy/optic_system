@@ -485,6 +485,9 @@ def safe_exposure_profiles_by_gain(rows: list[ExposureProbeResult]) -> list[dict
             gain_rows,
             key=lambda r: (-float(r.exposure_us), -float(r.p_signal)),
         )[0]
+        report = selected.metadata.get("saturation_report") or {}
+        full_frame_peak = report.get("full_frame_peak_pixel_burst")
+        full_frame_saturated = report.get("full_frame_saturated_pixel_count")
         profiles.append({
             "gain_db": float(selected.gain_db),
             "max_safe_exposure_us": float(selected.exposure_us),
@@ -493,6 +496,13 @@ def safe_exposure_profiles_by_gain(rows: list[ExposureProbeResult]) -> list[dict
             "peak_pixel_avg": float(selected.peak_pixel_avg),
             "peak_pixel_fraction_burst": float(selected.peak_pixel_fraction_burst),
             "saturation_margin": float(selected.peak_margin_to_full_scale),
+            "peak_pixel_domain": "valid_pixel_domain",
+            "full_frame_peak_pixel": (
+                float(full_frame_peak) if full_frame_peak is not None else None
+            ),
+            "full_frame_saturated_pixel_count": (
+                int(full_frame_saturated) if full_frame_saturated is not None else None
+            ),
             "p_signal": float(selected.p_signal),
             "dynamic_range": float(selected.dynamic_range),
             "usable_signal": bool(selected.usable_signal),

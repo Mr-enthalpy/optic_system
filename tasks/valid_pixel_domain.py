@@ -142,13 +142,18 @@ def resolve_valid_pixel_domain(
     valid_pixel_mask: np.ndarray | None = None,
     *,
     max_excluded_fraction: float = MAX_EXCLUDED_FRACTION,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
 ) -> "ResolvedValidPixelDomain":
     """Resolve a policy or explicit mask into a mask plus full provenance.
 
     Enforces the frame-shape-dependent constraints: out-of-bounds rectangles are
     rejected, at least one valid pixel must remain, and the excluded fraction must
-    not exceed ``max_excluded_fraction`` unless ``large_exclusion_override`` is set.
+    not exceed ``max_excluded_fraction`` unless an override is set.  For the policy
+    path the override lives in the policy dict; for the explicit-mask path use
+    ``explicit_mask_large_exclusion_override`` / ``explicit_mask_large_exclusion_reason``.
     """
+    _validate_max_excluded_fraction(max_excluded_fraction)
     h, w = int(shape[0]), int(shape[1])
     if valid_pixel_domain is not None and valid_pixel_mask is not None:
         raise ValidPixelDomainError(
@@ -161,13 +166,28 @@ def resolve_valid_pixel_domain(
     resolved_policy: dict[str, Any]
 
     if valid_pixel_mask is not None:
-        mask = np.asarray(valid_pixel_mask, dtype=bool)
+        mask = np.array(valid_pixel_mask, dtype=bool, copy=True, order="C")
         if mask.shape != (h, w):
             raise ValidPixelDomainError(
                 f"valid_pixel_mask shape {mask.shape} does not match {(h, w)}"
             )
+        override, reason = _coerce_explicit_override(
+            explicit_mask_large_exclusion_override,
+            explicit_mask_large_exclusion_reason,
+        )
         resolved_policy = {"type": EXPLICIT_MASK}
+        if override:
+            resolved_policy["large_exclusion_override"] = True
+            resolved_policy["large_exclusion_reason"] = reason
     else:
+        if (
+            explicit_mask_large_exclusion_override
+            or explicit_mask_large_exclusion_reason is not None
+        ):
+            raise ValidPixelDomainError(
+                "explicit_mask_large_exclusion_* applies only to the "
+                "valid_pixel_mask path; use large_exclusion_override in the policy"
+            )
         canonical = coerce_valid_pixel_domain(valid_pixel_domain)
         requested_policy = dict(valid_pixel_domain) if valid_pixel_domain else None
         if not canonical:
@@ -213,6 +233,8 @@ def resolve_valid_pixel_mask(
     valid_pixel_mask: np.ndarray | None = None,
     *,
     max_excluded_fraction: float = MAX_EXCLUDED_FRACTION,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
 ) -> np.ndarray:
     """Resolve a ``[H, W]`` boolean valid-pixel mask.
 
@@ -226,6 +248,8 @@ def resolve_valid_pixel_mask(
         valid_pixel_domain,
         valid_pixel_mask,
         max_excluded_fraction=max_excluded_fraction,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
     ).mask
 
 
@@ -235,6 +259,8 @@ def describe_valid_pixel_domain(
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
     max_excluded_fraction: float = MAX_EXCLUDED_FRACTION,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
 ) -> dict[str, Any]:
     """Return a JSON-serializable resolved provenance record for the domain.
 
@@ -246,6 +272,8 @@ def describe_valid_pixel_domain(
         valid_pixel_domain,
         valid_pixel_mask,
         max_excluded_fraction=max_excluded_fraction,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
     )
     return resolved.to_record()
 
@@ -352,6 +380,39 @@ def _build_mask_from_policy(canonical: dict[str, Any], h: int, w: int) -> np.nda
         mask[y0:y1, x0:x1] = False
         return mask
     raise ValidPixelDomainError(f"unsupported valid_pixel_domain.type: {policy_type}")
+
+
+def _validate_max_excluded_fraction(max_excluded_fraction: float) -> None:
+    import math
+
+    value = float(max_excluded_fraction)
+    if not math.isfinite(value) or value < 0.0 or value > 1.0:
+        raise ValidPixelDomainError(
+            "max_excluded_fraction must be a finite value in [0, 1]"
+        )
+
+
+def _coerce_explicit_override(
+    override: bool,
+    reason: str | None,
+) -> tuple[bool, str | None]:
+    if not isinstance(override, bool):
+        raise ValidPixelDomainError(
+            "explicit_mask_large_exclusion_override must be a boolean"
+        )
+    if override:
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValidPixelDomainError(
+                "explicit_mask_large_exclusion_override requires a non-empty "
+                "explicit_mask_large_exclusion_reason"
+            )
+        return True, reason.strip()
+    if reason is not None:
+        raise ValidPixelDomainError(
+            "explicit_mask_large_exclusion_reason requires "
+            "explicit_mask_large_exclusion_override=True"
+        )
+    return False, None
 
 
 def _coerce_override(value: dict[str, Any]) -> tuple[bool, str | None]:

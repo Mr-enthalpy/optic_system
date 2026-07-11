@@ -231,8 +231,14 @@ def calibrate_per_band_pupil_open_camera_profile(
         probe_results[key] = rows
         safe_profiles_by_wavelength[key] = safe_exposure_profiles_by_gain(rows)
         full_frame_peak, full_frame_saturated = _full_frame_peak_stats(selected)
+        current_shape = _recommended_frame_shape(selected)
         if resolved_frame_shape is None:
-            resolved_frame_shape = _recommended_frame_shape(selected)
+            resolved_frame_shape = current_shape
+        elif current_shape != resolved_frame_shape:
+            raise PerBandCalibrationError(
+                "camera frame shape changed across wavelengths: "
+                f"{resolved_frame_shape} != {current_shape}"
+            )
         per_wavelength[key] = PerWavelengthCameraSettings(
             exposure_us=float(selected.exposure_us),
             gain_db=float(selected.gain_db),

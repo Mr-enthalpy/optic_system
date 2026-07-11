@@ -692,6 +692,14 @@ def test_per_band_calibration_records_domain_and_dual_peak() -> None:
     # The excluded stuck top row inflates the full-frame peak beyond the valid peak.
     assert settings.full_frame_peak_pixel >= settings.peak_pixel
 
+    # Backup gain candidates carry the same dual-peak provenance as the selection.
+    safe = profile.extra["safe_profiles_by_wavelength"]["450"]
+    assert safe
+    for entry in safe:
+        assert entry["peak_pixel_domain"] == "valid_pixel_domain"
+        assert "full_frame_peak_pixel" in entry
+        assert "full_frame_saturated_pixel_count" in entry
+
 
 def test_per_band_plan_rejects_invalid_domain_at_parse() -> None:
     with pytest.raises(PerBandCalibrationError, match="top_rows must be > 0"):
@@ -701,6 +709,75 @@ def test_per_band_plan_rejects_invalid_domain_at_parse() -> None:
             "valid_pixel_domain": {"type": "exclude_top_rows", "top_rows": 0},
             "wavelengths": [{"wavelength_nm": 450}],
         })
+
+
+def test_per_band_rejects_frame_shape_change_across_wavelengths() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+
+    class TwoShapeCamera(SyntheticCamera):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._bursts = 0
+
+        def acquire_burst(self, k: int) -> CaptureFrames:
+            self._bursts += 1
+            shape = (200, 240) if self._bursts <= 2 else (210, 240)
+            self.frame_shape = shape
+            return super().acquire_burst(k)
+
+    camera = TwoShapeCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    pupil = PupilProfile.from_dict({
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "lcd_coordinate_convention": "physical_mono_xy",
+        "lcd_display_index": 1,
+        "subpixel_axis": 1,
+        "lcd_physical_center": [120.0, 100.0],
+        "lcd_physical_radius": 30.0,
+        "extra": {"physical_shape": [200, 240]},
+    })
+    plan = PerBandPupilOpenCalibrationPlan.from_dict({
+        "camera_profile_id": "per_band_pupil_open_v1",
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "frames_per_capture": 2,
+        "full_scale": 255,
+        "lcd_settle_ms": 0,
+        "allow_test_lcd_settle_below_refresh": True,
+        "wavelengths": [
+            {
+                "wavelength_nm": 450,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 1,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+            {
+                "wavelength_nm": 550,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 1,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+        ],
+    })
+
+    with pytest.raises(PerBandCalibrationError, match="frame shape changed"):
+        calibrate_per_band_pupil_open_camera_profile(
+            plan,
+            pupil_profile=pupil,
+            camera=camera,
+            lcd=lcd,
+            tls=tls,
+            runtime_policy="no_hardware",
+        )
 
 
 def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None:

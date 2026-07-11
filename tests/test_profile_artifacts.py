@@ -134,6 +134,46 @@ def test_pupil_profile_roundtrip_json(tmp_path: Path) -> None:
     assert loaded.recommended_roi == (893, 679, 512, 512)
 
 
+def test_camera_profile_rejects_unknown_peak_pixel_domain() -> None:
+    data = broadband_camera_profile_dict()
+    data["camera"]["peak_pixel_domain"] = "full_frame"
+
+    with pytest.raises(ProfileError, match="peak_pixel_domain"):
+        CameraProfile.from_dict(data)
+
+
+def test_camera_profile_requires_peak_domain_when_full_frame_peak_present() -> None:
+    data = broadband_camera_profile_dict()
+    data["camera"]["full_frame_peak_pixel"] = 255.0
+
+    with pytest.raises(ProfileError, match="peak_pixel_domain is required"):
+        CameraProfile.from_dict(data)
+
+
+def test_camera_profile_accepts_dual_peak_fields() -> None:
+    data = broadband_camera_profile_dict()
+    data["camera"]["peak_pixel_domain"] = "valid_pixel_domain"
+    data["camera"]["full_frame_peak_pixel"] = 255.0
+    data["camera"]["full_frame_saturated_pixel_count"] = 3
+
+    profile = CameraProfile.from_dict(data)
+
+    assert profile.peak_pixel_domain == "valid_pixel_domain"
+    assert profile.full_frame_peak_pixel == 255.0
+    assert profile.full_frame_saturated_pixel_count == 3
+    reloaded = CameraProfile.from_dict(profile.to_dict())
+    assert reloaded.full_frame_saturated_pixel_count == 3
+
+
+def test_per_wavelength_settings_reject_negative_saturated_count() -> None:
+    data = per_band_camera_profile_dict()
+    data["camera"]["per_wavelength"]["450"]["peak_pixel_domain"] = "valid_pixel_domain"
+    data["camera"]["per_wavelength"]["450"]["full_frame_saturated_pixel_count"] = -1
+
+    with pytest.raises(ProfileError, match="non-negative"):
+        CameraProfile.from_dict(data)
+
+
 def test_per_band_profile_requires_selected_pupil_open() -> None:
     data = per_band_camera_profile_dict()
     data["lcd_state"]["mode"] = "all_open"

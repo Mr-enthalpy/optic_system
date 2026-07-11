@@ -370,6 +370,11 @@ def _validate_peak_domain_fields(
 ) -> None:
     import math
 
+    if peak_pixel_domain not in (None, "valid_pixel_domain"):
+        raise ProfileError(
+            "peak_pixel_domain must be None or 'valid_pixel_domain', "
+            f"got {peak_pixel_domain!r}"
+        )
     if full_frame_peak_pixel is not None and not math.isfinite(float(full_frame_peak_pixel)):
         raise ProfileError("full_frame_peak_pixel must be finite when present")
     if (
@@ -377,6 +382,14 @@ def _validate_peak_domain_fields(
         and int(full_frame_saturated_pixel_count) < 0
     ):
         raise ProfileError("full_frame_saturated_pixel_count must be non-negative")
+    if (
+        full_frame_peak_pixel is not None
+        or full_frame_saturated_pixel_count is not None
+    ) and peak_pixel_domain is None:
+        raise ProfileError(
+            "peak_pixel_domain is required when full_frame peak/saturation "
+            "fields are present"
+        )
 
 
 def _validate_single_camera_settings(profile: CameraProfile) -> None:

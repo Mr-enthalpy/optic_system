@@ -245,3 +245,79 @@ def test_resolved_domain_object_fields() -> None:
     assert resolved.excluded_pixel_count == 2448
     assert resolved.frame_shape_hw == (2048, 2448)
     assert resolved.large_exclusion_override is False
+
+
+# --- explicit-mask override channel ----------------------------------------
+
+
+def test_explicit_mask_over_cap_requires_override() -> None:
+    mask = np.ones((100, 100), dtype=bool)
+    mask[:5, :] = False  # 5% > 1% cap
+    with pytest.raises(ValidPixelDomainError, match="max_excluded_fraction"):
+        resolve_valid_pixel_mask((100, 100), valid_pixel_mask=mask)
+
+
+def test_explicit_mask_override_requires_reason() -> None:
+    mask = np.ones((100, 100), dtype=bool)
+    mask[:5, :] = False
+    with pytest.raises(ValidPixelDomainError, match="explicit_mask_large_exclusion_reason"):
+        resolve_valid_pixel_mask(
+            (100, 100),
+            valid_pixel_mask=mask,
+            explicit_mask_large_exclusion_override=True,
+        )
+
+
+def test_explicit_mask_override_with_reason_allows_and_records() -> None:
+    mask = np.ones((100, 100), dtype=bool)
+    mask[:5, :] = False
+    record = describe_valid_pixel_domain(
+        frame_shape=(100, 100),
+        valid_pixel_mask=mask,
+        explicit_mask_large_exclusion_override=True,
+        explicit_mask_large_exclusion_reason="documented sensor edge defect",
+    )
+    assert record["type"] == EXPLICIT_MASK
+    assert record["large_exclusion_override"] is True
+    assert record["large_exclusion_reason"] == "documented sensor edge defect"
+    assert record["excluded_pixel_count"] == 500
+
+
+def test_explicit_mask_reason_without_override_rejected() -> None:
+    mask = np.ones((10, 10), dtype=bool)
+    with pytest.raises(ValidPixelDomainError, match="requires"):
+        resolve_valid_pixel_mask(
+            (10, 10),
+            valid_pixel_mask=mask,
+            explicit_mask_large_exclusion_reason="oops",
+        )
+
+
+def test_explicit_override_rejected_on_policy_path() -> None:
+    with pytest.raises(ValidPixelDomainError, match="applies only to the"):
+        resolve_valid_pixel_mask(
+            (100, 100),
+            {"type": "full_frame"},
+            explicit_mask_large_exclusion_override=True,
+            explicit_mask_large_exclusion_reason="n/a",
+        )
+
+
+def test_explicit_mask_is_copied_not_shared() -> None:
+    mask = np.ones((10, 10), dtype=bool)
+    resolved = resolve_valid_pixel_domain(
+        (10, 10), valid_pixel_mask=mask, max_excluded_fraction=1.0
+    )
+    digest_before = resolved.mask_digest
+    mask[0, 0] = False  # mutate caller's array after resolution
+    assert resolved.mask[0, 0]  # resolved mask unaffected
+    assert resolved.mask_digest == digest_before
+
+
+# --- max_excluded_fraction validation --------------------------------------
+
+
+@pytest.mark.parametrize("bad", [float("nan"), -0.1, 1.5])
+def test_max_excluded_fraction_must_be_in_unit_interval(bad: float) -> None:
+    with pytest.raises(ValidPixelDomainError, match="max_excluded_fraction"):
+        resolve_valid_pixel_mask((10, 10), {"type": "full_frame"}, max_excluded_fraction=bad)
