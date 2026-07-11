@@ -202,6 +202,8 @@ def evaluate_exposure_candidates(
     full_scale: float,
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     signal_percentile: float = 99.0,
     min_signal_fraction: float = 0.10,
     min_dynamic_range_fraction: float = 0.08,
@@ -223,6 +225,8 @@ def evaluate_exposure_candidates(
                 full_scale=full_scale,
                 valid_pixel_domain=valid_pixel_domain,
                 valid_pixel_mask=valid_pixel_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
                 signal_percentile=signal_percentile,
                 min_signal_fraction=min_signal_fraction,
                 min_dynamic_range_fraction=min_dynamic_range_fraction,
@@ -239,6 +243,8 @@ def evaluate_gain_binary_search(
     full_scale: float,
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     signal_percentile: float = 99.0,
     min_signal_fraction: float = 0.10,
     min_dynamic_range_fraction: float = 0.08,
@@ -272,6 +278,8 @@ def evaluate_gain_binary_search(
                 full_scale=full_scale,
                 valid_pixel_domain=valid_pixel_domain,
                 valid_pixel_mask=valid_pixel_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
                 signal_percentile=signal_percentile,
                 min_signal_fraction=min_signal_fraction,
                 min_dynamic_range_fraction=min_dynamic_range_fraction,
@@ -309,6 +317,8 @@ def evaluate_exposure_binary_search(
     full_scale: float,
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     signal_percentile: float = 99.0,
     min_signal_fraction: float = 0.10,
     min_dynamic_range_fraction: float = 0.08,
@@ -340,6 +350,8 @@ def evaluate_exposure_binary_search(
             full_scale=full_scale,
             valid_pixel_domain=valid_pixel_domain,
             valid_pixel_mask=valid_pixel_mask,
+            explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+            explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
             signal_percentile=signal_percentile,
             min_signal_fraction=min_signal_fraction,
             min_dynamic_range_fraction=min_dynamic_range_fraction,
@@ -398,6 +410,8 @@ def evaluate_capture_safety(
     full_scale: float,
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     signal_percentile: float = 99.0,
     min_signal_fraction: float = 0.10,
     min_dynamic_range_fraction: float = 0.08,
@@ -410,7 +424,13 @@ def evaluate_capture_safety(
     if avg.shape != burst_arr.shape[-2:]:
         raise ExposureSearchError("avg_frame shape must match burst frame shape")
 
-    mask = _valid_mask(avg.shape, valid_pixel_domain, valid_pixel_mask)
+    mask = _valid_mask(
+        avg.shape,
+        valid_pixel_domain,
+        valid_pixel_mask,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+    )
     valid_burst = burst_arr[:, mask]
     valid_avg = avg[mask]
     finite = bool(np.isfinite(valid_burst).all())
@@ -455,6 +475,33 @@ def evaluate_capture_safety(
     )
 
 
+def require_single_probe_frame_shape(
+    rows: list[ExposureProbeResult],
+) -> tuple[int, int]:
+    """Return the common frame shape across probes, or raise on any mismatch.
+
+    A frame-shape change within one exposure search indicates the camera ROI,
+    pixel format, or stream configuration changed mid-calibration; that must fail
+    rather than silently mixing results from different sensor domains.
+    """
+    shapes: set[tuple[int, int]] = set()
+    for row in rows:
+        report = row.metadata.get("saturation_report") or {}
+        raw = report.get("frame_shape_hw")
+        if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+            raise ExposureSearchError(
+                "probe is missing saturation_report.frame_shape_hw"
+            )
+        shapes.add((int(raw[0]), int(raw[1])))
+    if not shapes:
+        raise ExposureSearchError("no probes to check for frame shape consistency")
+    if len(shapes) != 1:
+        raise ExposureSearchError(
+            f"camera frame shape changed during exposure search: {sorted(shapes)}"
+        )
+    return next(iter(shapes))
+
+
 def select_recommended_probe(rows: list[ExposureProbeResult]) -> ExposureProbeResult:
     safe = [
         row for row in rows
@@ -485,6 +532,9 @@ def safe_exposure_profiles_by_gain(rows: list[ExposureProbeResult]) -> list[dict
             gain_rows,
             key=lambda r: (-float(r.exposure_us), -float(r.p_signal)),
         )[0]
+        report = selected.metadata.get("saturation_report") or {}
+        full_frame_peak = report.get("full_frame_peak_pixel_burst")
+        full_frame_saturated = report.get("full_frame_saturated_pixel_count")
         profiles.append({
             "gain_db": float(selected.gain_db),
             "max_safe_exposure_us": float(selected.exposure_us),
@@ -493,6 +543,13 @@ def safe_exposure_profiles_by_gain(rows: list[ExposureProbeResult]) -> list[dict
             "peak_pixel_avg": float(selected.peak_pixel_avg),
             "peak_pixel_fraction_burst": float(selected.peak_pixel_fraction_burst),
             "saturation_margin": float(selected.peak_margin_to_full_scale),
+            "peak_pixel_domain": "valid_pixel_domain",
+            "full_frame_peak_pixel": (
+                float(full_frame_peak) if full_frame_peak is not None else None
+            ),
+            "full_frame_saturated_pixel_count": (
+                int(full_frame_saturated) if full_frame_saturated is not None else None
+            ),
             "p_signal": float(selected.p_signal),
             "dynamic_range": float(selected.dynamic_range),
             "usable_signal": bool(selected.usable_signal),
@@ -513,6 +570,8 @@ def _probe_candidate(
     full_scale: float,
     valid_pixel_domain: dict[str, Any] | None,
     valid_pixel_mask: np.ndarray | None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     signal_percentile: float,
     min_signal_fraction: float,
     min_dynamic_range_fraction: float,
@@ -540,6 +599,8 @@ def _probe_candidate(
         full_scale=float(full_scale),
         valid_pixel_domain=valid_pixel_domain,
         valid_pixel_mask=valid_pixel_mask,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
         signal_percentile=signal_percentile,
         min_signal_fraction=min_signal_fraction,
         min_dynamic_range_fraction=min_dynamic_range_fraction,
@@ -551,9 +612,18 @@ def _valid_mask(
     shape: tuple[int, int],
     valid_pixel_domain: dict[str, Any] | None,
     valid_pixel_mask: np.ndarray | None,
+    *,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
 ) -> np.ndarray:
     try:
-        return resolve_valid_pixel_mask(shape, valid_pixel_domain, valid_pixel_mask)
+        return resolve_valid_pixel_mask(
+            shape,
+            valid_pixel_domain,
+            valid_pixel_mask,
+            explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+            explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+        )
     except ValidPixelDomainError as exc:
         raise ExposureSearchError(str(exc)) from exc
 

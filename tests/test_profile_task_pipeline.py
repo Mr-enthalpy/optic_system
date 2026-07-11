@@ -395,10 +395,10 @@ def test_exposure_binary_search_does_not_probe_upper_when_lower_unsafe() -> None
 
 
 def test_capture_safety_reports_excluded_bad_pixel_saturation_without_changing_decision() -> None:
-    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst = np.full((2, 200, 200), 100.0, dtype=np.float64)
     burst[1, 0, 0] = 255.0
     avg = burst.mean(axis=0)
-    valid_mask = np.ones((3, 3), dtype=bool)
+    valid_mask = np.ones((200, 200), dtype=bool)
     valid_mask[0, 0] = False
 
     row = evaluate_capture_safety(
@@ -422,10 +422,10 @@ def test_capture_safety_reports_excluded_bad_pixel_saturation_without_changing_d
 
 
 def test_capture_safety_saturation_report_uses_strict_json_for_nonfinite_excluded_pixels() -> None:
-    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst = np.full((2, 200, 200), 100.0, dtype=np.float64)
     burst[1, 0, 0] = np.inf
     avg = burst.mean(axis=0)
-    valid_mask = np.ones((3, 3), dtype=bool)
+    valid_mask = np.ones((200, 200), dtype=bool)
     valid_mask[0, 0] = False
 
     row = evaluate_capture_safety(
@@ -633,6 +633,153 @@ def test_per_band_pupil_open_calibration_outputs_profile() -> None:
     assert profile.extra["timing_policy"]["allow_test_lcd_settle_below_refresh"] is True
 
 
+def test_per_band_calibration_records_domain_and_dual_peak() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = TopRowStuckCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    pupil = PupilProfile.from_dict({
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "lcd_coordinate_convention": "physical_mono_xy",
+        "lcd_display_index": 1,
+        "subpixel_axis": 1,
+        "lcd_physical_center": [120.0, 100.0],
+        "lcd_physical_radius": 30.0,
+        "extra": {"physical_shape": [200, 240]},
+    })
+    domain = {"type": "exclude_top_rows", "top_rows": 1}
+    plan = PerBandPupilOpenCalibrationPlan.from_dict({
+        "camera_profile_id": "per_band_pupil_open_v1",
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "frames_per_capture": 2,
+        "full_scale": 255,
+        "lcd_settle_ms": 0,
+        "allow_test_lcd_settle_below_refresh": True,
+        "valid_pixel_domain": domain,
+        "wavelengths": [
+            {
+                "wavelength_nm": 450,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 3,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+        ],
+    })
+
+    result = calibrate_per_band_pupil_open_camera_profile(
+        plan,
+        pupil_profile=pupil,
+        camera=camera,
+        lcd=lcd,
+        tls=tls,
+        runtime_policy="no_hardware",
+    )
+
+    profile = result.camera_profile
+    record = profile.extra["valid_pixel_domain"]
+    assert record["resolved_policy"] == domain
+    assert record["frame_shape_hw"] == [200, 240]
+    assert record["mask_digest"].startswith("sha256:")
+
+    settings = profile.per_wavelength["450"]
+    assert settings.peak_pixel_domain == "valid_pixel_domain"
+    assert settings.full_frame_peak_pixel is not None
+    assert settings.full_frame_saturated_pixel_count is not None
+    # The excluded stuck top row inflates the full-frame peak beyond the valid peak.
+    assert settings.full_frame_peak_pixel >= settings.peak_pixel
+
+    # Backup gain candidates carry the same dual-peak provenance as the selection.
+    safe = profile.extra["safe_profiles_by_wavelength"]["450"]
+    assert safe
+    for entry in safe:
+        assert entry["peak_pixel_domain"] == "valid_pixel_domain"
+        assert "full_frame_peak_pixel" in entry
+        assert "full_frame_saturated_pixel_count" in entry
+
+
+def test_per_band_plan_rejects_invalid_domain_at_parse() -> None:
+    with pytest.raises(PerBandCalibrationError, match="top_rows must be > 0"):
+        PerBandPupilOpenCalibrationPlan.from_dict({
+            "camera_profile_id": "per_band_pupil_open_v1",
+            "pupil_profile_id": "pupil_profile_scan_v1",
+            "valid_pixel_domain": {"type": "exclude_top_rows", "top_rows": 0},
+            "wavelengths": [{"wavelength_nm": 450}],
+        })
+
+
+def test_per_band_rejects_frame_shape_change_across_wavelengths() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+
+    class TwoShapeCamera(SyntheticCamera):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._bursts = 0
+
+        def acquire_burst(self, k: int) -> CaptureFrames:
+            self._bursts += 1
+            shape = (200, 240) if self._bursts <= 2 else (210, 240)
+            self.frame_shape = shape
+            return super().acquire_burst(k)
+
+    camera = TwoShapeCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    pupil = PupilProfile.from_dict({
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "lcd_coordinate_convention": "physical_mono_xy",
+        "lcd_display_index": 1,
+        "subpixel_axis": 1,
+        "lcd_physical_center": [120.0, 100.0],
+        "lcd_physical_radius": 30.0,
+        "extra": {"physical_shape": [200, 240]},
+    })
+    plan = PerBandPupilOpenCalibrationPlan.from_dict({
+        "camera_profile_id": "per_band_pupil_open_v1",
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "frames_per_capture": 2,
+        "full_scale": 255,
+        "lcd_settle_ms": 0,
+        "allow_test_lcd_settle_below_refresh": True,
+        "wavelengths": [
+            {
+                "wavelength_nm": 450,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 1,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+            {
+                "wavelength_nm": 550,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 1,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+        ],
+    })
+
+    with pytest.raises(PerBandCalibrationError, match="frame shape changed"):
+        calibrate_per_band_pupil_open_camera_profile(
+            plan,
+            pupil_profile=pupil,
+            camera=camera,
+            lcd=lcd,
+            tls=tls,
+            runtime_policy="no_hardware",
+        )
+
+
 def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None:
     broadband_lcd = SyntheticLCD(shape=(80, 120))
     broadband_camera = SyntheticCamera(broadband_lcd)
@@ -806,8 +953,8 @@ def test_broadband_calibration_without_domain_rejects_stuck_bad_pixel() -> None:
 
 
 def test_broadband_calibration_excludes_bad_pixel_domain_and_records_policy() -> None:
-    lcd = SyntheticLCD(shape=(80, 120))
-    camera = TopRowStuckCamera(lcd=lcd)
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = TopRowStuckCamera(lcd=lcd, frame_shape=(200, 240))
     domain = {"type": "exclude_top_rows", "top_rows": 1}
 
     result = calibrate_broadband_camera_profile(
@@ -820,11 +967,56 @@ def test_broadband_calibration_excludes_bad_pixel_domain_and_records_policy() ->
 
     profile = result.camera_profile
     assert profile.exposure_us is not None
-    assert profile.extra["valid_pixel_domain"] == domain
+    record = profile.extra["valid_pixel_domain"]
+    assert record["type"] == "exclude_top_rows"
+    assert record["resolved_policy"] == domain
+    assert record["frame_shape_hw"] == [200, 240]
+    assert record["mask_digest"].startswith("sha256:")
+    # Dual peak provenance: valid-domain peak vs full-frame peak.
+    assert profile.peak_pixel_domain == "valid_pixel_domain"
+    assert profile.full_frame_peak_pixel is not None
+    assert profile.full_frame_saturated_pixel_count is not None
     # Safety decision used the valid domain; the excluded stuck row is still reported.
     report = result.probe_results[0].metadata["saturation_report"]
     assert report["valid_domain_saturated_pixel_count"] == 0
     assert report["excluded_domain_saturated_pixel_count"] > 0
+
+
+def test_broadband_calibration_explicit_mask_over_cap_needs_override() -> None:
+    lcd = SyntheticLCD(shape=(100, 100))
+    camera = TopRowStuckCamera(lcd=lcd, frame_shape=(100, 100))
+    # Exclude the top 5 rows (5% > 1% cap) via an explicit mask.
+    mask = np.ones((100, 100), dtype=bool)
+    mask[:5, :] = False
+
+    # Without an override the over-cap explicit mask is rejected (fail-fast preflight).
+    with pytest.raises(BroadbandCalibrationError, match="max_excluded_fraction"):
+        calibrate_broadband_camera_profile(
+            _broadband_plan(None),
+            camera=camera,
+            lcd=lcd,
+            tls=FakePassThroughTLS(),
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+
+    # With an audited override it succeeds and records the reason.
+    result = calibrate_broadband_camera_profile(
+        _broadband_plan(None),
+        camera=camera,
+        lcd=lcd,
+        tls=FakePassThroughTLS(),
+        valid_pixel_mask=mask,
+        explicit_mask_large_exclusion_override=True,
+        explicit_mask_large_exclusion_reason="documented sensor edge defect",
+        runtime_policy="no_hardware",
+    )
+    record = result.camera_profile.extra["valid_pixel_domain"]
+    assert record["type"] == "explicit_mask"
+    assert record["large_exclusion_override_requested"] is True
+    assert record["large_exclusion_override_applied"] is True
+    assert record["large_exclusion_reason"] == "documented sensor edge defect"
+    assert record["excluded_pixel_count"] == 500
 
 
 def test_broadband_plan_round_trips_valid_pixel_domain() -> None:
@@ -847,7 +1039,7 @@ def test_broadband_plan_rejects_non_mapping_valid_pixel_domain() -> None:
 
 
 def test_capture_safety_accepts_valid_pixel_domain_policy() -> None:
-    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst = np.full((2, 200, 200), 100.0, dtype=np.float64)
     burst[:, 0, :] = 255.0
     avg = burst.mean(axis=0)
 
@@ -871,5 +1063,172 @@ def test_capture_safety_accepts_valid_pixel_domain_policy() -> None:
             gain_db=0.0,
             full_scale=255.0,
             valid_pixel_domain={"type": "full_frame"},
-            valid_pixel_mask=np.ones((3, 3), dtype=bool),
+            valid_pixel_mask=np.ones((200, 200), dtype=bool),
         )
+
+
+def test_broadband_calibration_rejects_frame_shape_change_within_search() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+
+    class ShiftingShapeCamera(SyntheticCamera):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._bursts = 0
+
+        def acquire_burst(self, k: int) -> CaptureFrames:
+            self._bursts += 1
+            # Lower-bound probe uses one shape, later probes a different one.
+            self.frame_shape = (200, 240) if self._bursts <= 1 else (100, 240)
+            return super().acquire_burst(k)
+
+    camera = ShiftingShapeCamera(lcd=lcd, frame_shape=(200, 240))
+
+    with pytest.raises(ExposureSearchError, match="frame shape changed"):
+        calibrate_broadband_camera_profile(
+            _broadband_plan(None),
+            camera=camera,
+            lcd=lcd,
+            tls=FakePassThroughTLS(),
+            runtime_policy="no_hardware",
+        )
+
+
+def test_broadband_calibration_rejects_numeric_valid_pixel_mask() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
+    mask = np.ones((200, 240), dtype=np.uint8)
+
+    with pytest.raises(BroadbandCalibrationError, match="boolean dtype"):
+        calibrate_broadband_camera_profile(
+            _broadband_plan(None),
+            camera=camera,
+            lcd=lcd,
+            tls=FakePassThroughTLS(),
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+
+
+def test_per_band_calibration_rejects_numeric_valid_pixel_mask() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    pupil = PupilProfile.from_dict({
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "lcd_coordinate_convention": "physical_mono_xy",
+        "lcd_display_index": 1,
+        "subpixel_axis": 1,
+        "lcd_physical_center": [120.0, 100.0],
+        "lcd_physical_radius": 30.0,
+        "extra": {"physical_shape": [200, 240]},
+    })
+    plan = PerBandPupilOpenCalibrationPlan.from_dict({
+        "camera_profile_id": "per_band_pupil_open_v1",
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "frames_per_capture": 2,
+        "full_scale": 255,
+        "lcd_settle_ms": 0,
+        "allow_test_lcd_settle_below_refresh": True,
+        "wavelengths": [
+            {
+                "wavelength_nm": 450,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 1,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+        ],
+    })
+    mask = np.ones((200, 240), dtype=np.float64)
+
+    with pytest.raises(PerBandCalibrationError, match="boolean dtype"):
+        calibrate_per_band_pupil_open_camera_profile(
+            plan,
+            pupil_profile=pupil,
+            camera=camera,
+            lcd=lcd,
+            tls=tls,
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+
+
+def test_broadband_preflight_rejects_before_hardware_actions() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    plan = _broadband_plan({"type": "full_frame"})
+    mask = np.ones((200, 240), dtype=bool)
+
+    # Both a policy and an explicit mask: rejected in preflight before any
+    # LCD mask display or TLS pass-through move.
+    with pytest.raises(BroadbandCalibrationError, match="not both"):
+        calibrate_broadband_camera_profile(
+            plan,
+            camera=camera,
+            lcd=lcd,
+            tls=tls,
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+
+    assert lcd.last_mask_id is None
+    assert tls.pass_through_calls == 0
+    assert camera.acquire_counts == []
+
+
+def test_per_band_preflight_rejects_before_hardware_actions() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    pupil = PupilProfile.from_dict({
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "lcd_coordinate_convention": "physical_mono_xy",
+        "lcd_display_index": 1,
+        "subpixel_axis": 1,
+        "lcd_physical_center": [120.0, 100.0],
+        "lcd_physical_radius": 30.0,
+        "extra": {"physical_shape": [200, 240]},
+    })
+    plan = PerBandPupilOpenCalibrationPlan.from_dict({
+        "camera_profile_id": "per_band_pupil_open_v1",
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "frames_per_capture": 2,
+        "full_scale": 255,
+        "lcd_settle_ms": 0,
+        "allow_test_lcd_settle_below_refresh": True,
+        "valid_pixel_domain": {"type": "full_frame"},
+        "wavelengths": [
+            {
+                "wavelength_nm": 450,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 1,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+        ],
+    })
+    mask = np.ones((200, 240), dtype=bool)
+
+    with pytest.raises(PerBandCalibrationError, match="not both"):
+        calibrate_per_band_pupil_open_camera_profile(
+            plan,
+            pupil_profile=pupil,
+            camera=camera,
+            lcd=lcd,
+            tls=tls,
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+
+    assert lcd.last_mask_id is None
+    assert tls.wavelengths == []
+    assert camera.acquire_counts == []

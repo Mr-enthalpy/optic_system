@@ -155,6 +155,22 @@ def test_gaussian_frame_estimates_known_sensor_energy_center() -> None:
     assert estimate.background_value > 0.0
 
 
+def test_estimate_frame_energy_center_rejects_empty_mask() -> None:
+    frame = np.ones((16, 20), dtype=np.float64)
+    mask = np.zeros((16, 20), dtype=bool)
+
+    with pytest.raises(SensorEnergyCenterError, match="zero valid pixels"):
+        estimate_frame_energy_center(frame, valid_pixel_mask=mask)
+
+
+def test_estimate_frame_energy_center_rejects_numeric_mask() -> None:
+    frame = np.ones((16, 20), dtype=np.float64)
+    mask = np.ones((16, 20), dtype=np.uint8)
+
+    with pytest.raises(SensorEnergyCenterError, match="boolean dtype"):
+        estimate_frame_energy_center(frame, valid_pixel_mask=mask)
+
+
 def test_background_offset_does_not_shift_center_after_correction() -> None:
     base = _gaussian_frame((64, 80), center_xy=(30.0, 25.0), background=0.0)
     shifted = base + 500.0
@@ -221,16 +237,17 @@ def test_valid_pixel_domain_excludes_contaminating_region(tmp_path: Path) -> Non
     filtered = derive_sensor_energy_center_profile(
         survey_h5,
         output_json,
-        valid_pixel_domain={"type": "exclude_top_rows", "top_rows": 8},
+        valid_pixel_domain={"type": "exclude_xyxy", "xyxy": [0, 0, 6, 6]},
     )
 
     assert contaminated.center_xy[0] < 10.0
     assert abs(filtered.center_xy[0] - 40.0) < 0.1
     assert abs(filtered.center_xy[1] - 32.0) < 0.1
-    assert filtered.bg_policy["valid_pixel_domain"] == {
-        "type": "exclude_top_rows",
-        "top_rows": 8,
+    assert filtered.bg_policy["valid_pixel_domain"]["resolved_policy"] == {
+        "type": "exclude_xyxy",
+        "xyxy": [0, 0, 6, 6],
     }
+    assert filtered.bg_policy["valid_pixel_domain"]["excluded_pixel_count"] == 36
 
 
 def test_rejects_raw_frames_avg_input(tmp_path: Path) -> None:

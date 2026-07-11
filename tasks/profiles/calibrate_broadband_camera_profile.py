@@ -22,6 +22,8 @@ from tasks.valid_pixel_domain import (
     ValidPixelDomainError,
     coerce_valid_pixel_domain,
     describe_valid_pixel_domain,
+    freeze_explicit_valid_pixel_mask,
+    resolve_valid_pixel_mask,
 )
 
 from .camera_profile import (
@@ -35,6 +37,7 @@ from .exposure_search import (
     ExposureProbeResult,
     ExposureSearchCamera,
     evaluate_gain_binary_search,
+    require_single_probe_frame_shape,
     safe_exposure_profiles_by_gain,
     select_recommended_probe,
 )
@@ -138,6 +141,8 @@ def calibrate_broadband_camera_profile(
     lcd: BroadbandCalibrationLCD,
     tls: PassThroughTLS | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     runtime_policy: RuntimePolicy | str | None = None,
 ) -> BroadbandCameraCalibrationResult:
     policy = normalize_runtime_policy(runtime_policy)
@@ -150,6 +155,33 @@ def calibrate_broadband_camera_profile(
         require_tls=True,
     )
     validate_no_fake_devices(devices, policy=policy)
+    # Fail-fast preflight BEFORE any hardware state change (LCD mask / TLS move):
+    # canonicalize the policy, enforce policy/mask mutual exclusion, freeze an
+    # explicit mask (2D boolean dtype; not silently coerced), and pre-validate the
+    # explicit-mask domain (override channel, exclusion cap, zero-valid-pixel).
+    # Policy xyxy-vs-frame bounds still need the first frame shape and are checked
+    # during the search.
+    try:
+        canonical_domain = coerce_valid_pixel_domain(plan.valid_pixel_domain)
+        if canonical_domain is not None and valid_pixel_mask is not None:
+            raise ValidPixelDomainError(
+                "pass either valid_pixel_domain or valid_pixel_mask, not both"
+            )
+        frozen_mask = (
+            freeze_explicit_valid_pixel_mask(valid_pixel_mask)
+            if valid_pixel_mask is not None
+            else None
+        )
+        if frozen_mask is not None:
+            resolve_valid_pixel_mask(
+                frozen_mask.shape,
+                valid_pixel_mask=frozen_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+            )
+    except ValidPixelDomainError as exc:
+        raise BroadbandCalibrationError(str(exc)) from exc
+    valid_pixel_mask = frozen_mask
     _validate_test_settle_override(
         allow_test_override=plan.allow_test_lcd_settle_below_refresh,
         lcd_settle_ms=plan.lcd_settle_ms,
@@ -176,10 +208,21 @@ def calibrate_broadband_camera_profile(
         exposure_search,
         frames_per_capture=plan.frames_per_capture,
         full_scale=plan.full_scale,
-        valid_pixel_domain=plan.valid_pixel_domain,
+        valid_pixel_domain=canonical_domain,
         valid_pixel_mask=valid_pixel_mask,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
     )
+    frame_shape = require_single_probe_frame_shape(rows)
     recommended = select_recommended_probe(rows)
+    valid_pixel_domain_record = describe_valid_pixel_domain(
+        frame_shape=frame_shape,
+        valid_pixel_domain=canonical_domain,
+        valid_pixel_mask=valid_pixel_mask,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+    )
+    full_frame_peak, full_frame_saturated = _full_frame_peak_stats(recommended)
     profile = CameraProfile(
         camera_profile_id=plan.camera_profile_id,
         profile_family=BROADBAND_PASSTHROUGH,
@@ -203,15 +246,16 @@ def calibrate_broadband_camera_profile(
         peak_pixel=float(recommended.peak_pixel_burst),
         saturation_margin=float(recommended.peak_margin_to_full_scale),
         frames_per_capture=int(plan.frames_per_capture),
+        peak_pixel_domain="valid_pixel_domain",
+        full_frame_peak_pixel=full_frame_peak,
+        full_frame_saturated_pixel_count=full_frame_saturated,
         extra={
             "selection_policy": "pass_through_gain_outer_binary_exposure_inner",
             "default_selection_policy": "low_gain_then_strong_signal_then_long_exposure",
             "full_scale": float(plan.full_scale),
             "exposure_search": exposure_search.to_dict(),
             "safe_profiles_by_gain": safe_exposure_profiles_by_gain(rows),
-            "valid_pixel_domain": describe_valid_pixel_domain(
-                plan.valid_pixel_domain, valid_pixel_mask
-            ),
+            "valid_pixel_domain": valid_pixel_domain_record,
             "timing_policy": {
                 "lcd_settle_ms": float(plan.lcd_settle_ms),
                 "allow_test_lcd_settle_below_refresh": bool(
@@ -308,6 +352,17 @@ def _coerce_domain(value: Any) -> dict[str, Any] | None:
         return coerce_valid_pixel_domain(value)
     except ValidPixelDomainError as exc:
         raise BroadbandCalibrationError(str(exc)) from exc
+
+
+def _full_frame_peak_stats(
+    recommended: ExposureProbeResult,
+) -> tuple[float | None, int | None]:
+    report = recommended.metadata.get("saturation_report") or {}
+    peak = report.get("full_frame_peak_pixel_burst")
+    saturated = report.get("full_frame_saturated_pixel_count")
+    peak_val = float(peak) if peak is not None else None
+    saturated_val = int(saturated) if saturated is not None else None
+    return peak_val, saturated_val
 
 
 def _settle_lcd(settle_ms: float, *, allow_test_below_refresh: bool = False) -> None:

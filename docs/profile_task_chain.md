@@ -85,13 +85,81 @@ real TLS adapter in hardware mode.
   condition. Configuration errors, frame-shape errors, and backend exceptions
   must fail the task.
 - Bad-pixel exclusion is driven by the plan-level ``valid_pixel_domain``
-  policy.  The policy is resolved to a boolean mask at capture time (when the
-  frame shape is known) and passed to the exposure-search safety decision.
-  The calibration persists the policy in ``CameraProfile.extra["valid_pixel_domain"]``
-  for provenance.  The shared policy vocabulary (``tasks/valid_pixel_domain.py``)
-  supports ``full_frame``, ``exclude_top_rows``, and ``exclude_xyxy``.  Saturation
-  reports must still record full-burst all-pixel saturation diagnostics so
-  excluded saturated pixels are auditable without changing the safety decision.
+  policy.  This is *valid-pixel-domain-aware calibration/analysis* — bad pixels
+  are excluded from measurement decisions and provenance is recorded; it is not
+  end-to-end bad-pixel correction of scientific PSF data (that is a later,
+  dictionary-level concern).
+- The policy vocabulary (``tasks/valid_pixel_domain.py``) supports ``full_frame``,
+  ``exclude_top_rows`` (requires a positive ``top_rows``), and ``exclude_xyxy``
+  (requires ``x1 > x0`` and ``y1 > y0``).  ``coerce_valid_pixel_domain`` performs
+  strict frame-independent validation at plan-parse time: unknown ``type`` values,
+  unknown fields, missing/zero ``top_rows``, and inverted/negative rectangles are
+  rejected (fail-fast).
+- The calibration entry points run a fail-fast preflight BEFORE any hardware
+  state change (LCD mask display or TLS move): they re-canonicalize the policy
+  (so directly-constructed plans are checked too), enforce policy/mask mutual
+  exclusion, freeze the explicit mask, and pre-validate the explicit-mask domain
+  (override channel, exclusion cap, zero-valid-pixel).  Only the ``exclude_xyxy``
+  vs actual-frame bounds check is deferred until the first frame shape is known.
+- At capture time the policy is resolved to a boolean mask; out-of-bounds
+  rectangles are rejected (never silently clipped), the mask must leave at least
+  one valid pixel, and the excluded fraction must not exceed
+  ``MAX_EXCLUDED_FRACTION`` (default ``0.01``).  Excluding more requires an
+  explicit ``large_exclusion_override: true`` together with a non-empty
+  ``large_exclusion_reason``.  The override lifts only the fraction cap; it never
+  relaxes coordinate validity, field completeness, or the "at least one valid
+  pixel" rule.  When an explicit boolean ``valid_pixel_mask`` is supplied instead
+  of a policy, it must be a 2D array with boolean dtype (values are not silently
+  coerced from numeric/NaN data), the same cap applies, and over-cap exclusion
+  requires ``explicit_mask_large_exclusion_override`` plus
+  ``explicit_mask_large_exclusion_reason``.  These two parameters are threaded
+  through the calibration and analysis entry points
+  (``calibrate_broadband_camera_profile``,
+  ``calibrate_per_band_pupil_open_camera_profile``,
+  ``derive_sensor_energy_center_profile`` and the exposure-search helpers) so an
+  explicit mask can still cover a large documented defect through an audited
+  override.
+- The calibration persists a **resolved-domain provenance record** in
+  ``CameraProfile.extra["valid_pixel_domain"]`` (via ``describe_valid_pixel_domain``,
+  which requires the frame shape).  The record includes ``resolved_policy``,
+  ``frame_shape_hw``, ``valid_pixel_count``, ``excluded_pixel_count``,
+  ``excluded_fraction``, ``max_excluded_fraction`` (the cap actually applied),
+  ``mask_digest`` (a versioned sha256 of the resolved mask), and the override
+  provenance.  The override is recorded as two distinct flags:
+  ``large_exclusion_override_requested`` (the caller asked for it) and
+  ``large_exclusion_override_applied`` (it was actually needed to pass the cap),
+  so a defensive override on an in-cap policy never claims it was used.
+  The resolved-domain object exposes ``resolved_policy`` / ``requested_policy``
+  as read-only copies and freezes its mask, so provenance cannot drift after
+  resolution.  The mask SHA-256 digest is computed only when a provenance record
+  is produced (``resolve_valid_pixel_domain`` / ``describe_valid_pixel_domain``);
+  the per-probe / per-frame ``resolve_valid_pixel_mask`` path skips it to avoid
+  hashing native-sensor-sized masks repeatedly.
+  ``analyze_diffraction_support`` records the same
+  resolved record in ``PeakSupportAnalysisManifest.valid_pixel_domain`` so reports
+  using different exclusions are distinguishable.
+- Saturation reports must still record full-burst all-pixel saturation
+  diagnostics so excluded saturated pixels are auditable without changing the
+  safety decision.
+- Peak provenance is disambiguated: ``peak_pixel`` remains the exposure-safety
+  decision peak (valid domain) and new profiles set
+  ``peak_pixel_domain="valid_pixel_domain"``.  ``full_frame_peak_pixel`` and
+  ``full_frame_saturated_pixel_count`` record the unmasked full-burst statistics.
+  These fields are optional (backward compatible) and appear on both the broadband
+  ``CameraProfile`` and each ``PerWavelengthCameraSettings``.  They are parsed
+  strictly on load: ``full_frame_peak_pixel`` must be a finite number (bool and
+  string values are rejected, not coerced) and ``full_frame_saturated_pixel_count``
+  must be a non-negative integer.  Backup safe-exposure
+  candidates published in ``safe_profiles_by_gain`` /
+  ``safe_profiles_by_wavelength`` carry the same ``peak_pixel_domain`` /
+  ``full_frame_peak_pixel`` / ``full_frame_saturated_pixel_count`` provenance so
+  every candidate in a profile is semantically unambiguous.  Every exposure
+  search (broadband and each per-band wavelength) verifies that all of its probes
+  share one camera frame shape via ``require_single_probe_frame_shape``; a
+  mid-search shape change (unexpected ROI / pixel-format / stream reconfiguration)
+  fails the calibration rather than mixing sensor domains.  Per-band calibration
+  additionally verifies that the frame shape is identical across all wavelengths
+  before recording the shared valid-domain provenance record.
 - The default selected profile should prefer low gain, then stronger signal,
   then longer exposure.
 

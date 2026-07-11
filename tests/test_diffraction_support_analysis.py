@@ -190,6 +190,32 @@ def test_manifest_round_trips_and_p99_is_visualization_only(tmp_path: Path) -> N
     assert manifest.corr_policy["p99_display_tail_normalization_is_visualization_only"] is True
 
 
+def test_manifest_records_resolved_valid_pixel_domain(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support.h5"
+    _write_synthetic_survey(survey_h5)
+
+    manifest = analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[100],
+        valid_pixel_domain={"type": "exclude_xyxy", "xyxy": [0, 0, 4, 4]},
+    )
+
+    record = manifest.valid_pixel_domain
+    assert record is not None
+    assert record["resolved_policy"] == {"type": "exclude_xyxy", "xyxy": [0, 0, 4, 4]}
+    assert record["frame_shape_hw"] == [64, 64]
+    assert record["excluded_pixel_count"] == 16
+    assert record["mask_digest"].startswith("sha256:")
+
+    with h5py.File(str(report_h5), "r") as f:
+        manifest_json = json.loads(_decode(f["metadata/manifest_json"][()]))
+    reloaded = PeakSupportAnalysisManifest.from_dict(manifest_json)
+    assert reloaded.valid_pixel_domain == record
+
+
 def test_acquired_frame_extent_maps_to_acquired_frame_coordinate_frame(tmp_path: Path) -> None:
     survey_h5 = tmp_path / "survey_acquired.h5"
     report_h5 = tmp_path / "support.h5"

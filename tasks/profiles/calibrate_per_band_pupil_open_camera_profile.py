@@ -21,6 +21,8 @@ from tasks.valid_pixel_domain import (
     ValidPixelDomainError,
     coerce_valid_pixel_domain,
     describe_valid_pixel_domain,
+    freeze_explicit_valid_pixel_mask,
+    resolve_valid_pixel_mask,
 )
 
 from .camera_profile import (
@@ -36,6 +38,7 @@ from .exposure_search import (
     ExposureProbeResult,
     ExposureSearchCamera,
     evaluate_gain_binary_search,
+    require_single_probe_frame_shape,
     safe_exposure_profiles_by_gain,
     select_recommended_probe,
 )
@@ -163,6 +166,8 @@ def calibrate_per_band_pupil_open_camera_profile(
     lcd: PerBandLCD,
     tls: PerBandTLS | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     runtime_policy: RuntimePolicy | str | None = None,
 ) -> PerBandPupilOpenCalibrationResult:
     policy = normalize_runtime_policy(runtime_policy)
@@ -175,6 +180,31 @@ def calibrate_per_band_pupil_open_camera_profile(
         require_tls=True,
     )
     validate_no_fake_devices(devices, policy=policy)
+    # Fail-fast preflight BEFORE any hardware state change (pupil mask / TLS move):
+    # canonicalize the policy, enforce policy/mask mutual exclusion, freeze an
+    # explicit mask (2D boolean dtype; not silently coerced), and pre-validate the
+    # explicit-mask domain (override channel, exclusion cap, zero-valid-pixel).
+    try:
+        canonical_domain = coerce_valid_pixel_domain(plan.valid_pixel_domain)
+        if canonical_domain is not None and valid_pixel_mask is not None:
+            raise ValidPixelDomainError(
+                "pass either valid_pixel_domain or valid_pixel_mask, not both"
+            )
+        frozen_mask = (
+            freeze_explicit_valid_pixel_mask(valid_pixel_mask)
+            if valid_pixel_mask is not None
+            else None
+        )
+        if frozen_mask is not None:
+            resolve_valid_pixel_mask(
+                frozen_mask.shape,
+                valid_pixel_mask=frozen_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+            )
+    except ValidPixelDomainError as exc:
+        raise PerBandCalibrationError(str(exc)) from exc
+    valid_pixel_mask = frozen_mask
     _validate_test_settle_override(
         allow_test_override=plan.allow_test_lcd_settle_below_refresh,
         lcd_settle_ms=plan.lcd_settle_ms,
@@ -204,6 +234,7 @@ def calibrate_per_band_pupil_open_camera_profile(
     safe_profiles_by_wavelength: dict[str, list[dict[str, Any]]] = {}
     probe_results: dict[str, list[ExposureProbeResult]] = {}
     wavelengths_nm: list[float] = []
+    resolved_frame_shape: tuple[int, int] | None = None
     for spec in plan.wavelengths:
         if spec.wavelength_nm <= 0.0:
             raise PerBandCalibrationError("per-band monochromatic calibration wavelengths must be positive")
@@ -220,21 +251,35 @@ def calibrate_per_band_pupil_open_camera_profile(
             exposure_search,
             frames_per_capture=plan.frames_per_capture,
             full_scale=plan.full_scale,
-            valid_pixel_domain=plan.valid_pixel_domain,
+            valid_pixel_domain=canonical_domain,
             valid_pixel_mask=valid_pixel_mask,
+            explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+            explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
         )
         for row in rows:
             row.metadata["tls_outer_loop_wavelength_nm"] = float(spec.wavelength_nm)
+        current_shape = require_single_probe_frame_shape(rows)
+        if resolved_frame_shape is None:
+            resolved_frame_shape = current_shape
+        elif current_shape != resolved_frame_shape:
+            raise PerBandCalibrationError(
+                "camera frame shape changed across wavelengths: "
+                f"{resolved_frame_shape} != {current_shape}"
+            )
         selected = select_recommended_probe(rows)
         key = _wavelength_key(spec.wavelength_nm)
         probe_results[key] = rows
         safe_profiles_by_wavelength[key] = safe_exposure_profiles_by_gain(rows)
+        full_frame_peak, full_frame_saturated = _full_frame_peak_stats(selected)
         per_wavelength[key] = PerWavelengthCameraSettings(
             exposure_us=float(selected.exposure_us),
             gain_db=float(selected.gain_db),
             peak_pixel=float(selected.peak_pixel_burst),
             saturation_margin=float(selected.peak_margin_to_full_scale),
             frames_per_capture=int(plan.frames_per_capture),
+            peak_pixel_domain="valid_pixel_domain",
+            full_frame_peak_pixel=full_frame_peak,
+            full_frame_saturated_pixel_count=full_frame_saturated,
         )
 
     profile = CameraProfile(
@@ -258,7 +303,11 @@ def calibrate_per_band_pupil_open_camera_profile(
             "tls_iteration_order": "outermost_by_wavelength",
             "safe_profiles_by_wavelength": safe_profiles_by_wavelength,
             "valid_pixel_domain": describe_valid_pixel_domain(
-                plan.valid_pixel_domain, valid_pixel_mask
+                frame_shape=resolved_frame_shape,
+                valid_pixel_domain=canonical_domain,
+                valid_pixel_mask=valid_pixel_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
             ),
             "timing_policy": {
                 "lcd_settle_ms": float(plan.lcd_settle_ms),
@@ -300,6 +349,17 @@ def _coerce_domain(value: Any) -> dict[str, Any] | None:
         return coerce_valid_pixel_domain(value)
     except ValidPixelDomainError as exc:
         raise PerBandCalibrationError(str(exc)) from exc
+
+
+def _full_frame_peak_stats(
+    recommended: ExposureProbeResult,
+) -> tuple[float | None, int | None]:
+    report = recommended.metadata.get("saturation_report") or {}
+    peak = report.get("full_frame_peak_pixel_burst")
+    saturated = report.get("full_frame_saturated_pixel_count")
+    peak_val = float(peak) if peak is not None else None
+    saturated_val = int(saturated) if saturated is not None else None
+    return peak_val, saturated_val
 
 
 def _settle_lcd(settle_ms: float, *, allow_test_below_refresh: bool = False) -> None:

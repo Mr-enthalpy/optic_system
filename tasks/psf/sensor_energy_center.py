@@ -17,8 +17,7 @@ from tasks.artifacts.errors import ArtifactIOError
 from tasks.artifacts.frame_source import open_full_frame_survey_source
 from tasks.valid_pixel_domain import (
     ValidPixelDomainError,
-    describe_valid_pixel_domain,
-    resolve_valid_pixel_mask,
+    resolve_valid_pixel_domain,
 )
 
 
@@ -182,6 +181,15 @@ def estimate_frame_energy_center(
     valid_pixel_mask: np.ndarray | None = None,
     bg_percentile: float = 5.0,
 ) -> EnergyCenterEstimate:
+    """Estimate the energy-weighted center of a single frame.
+
+    ``valid_pixel_mask`` must already be a resolved, validated domain (e.g. from
+    :func:`tasks.valid_pixel_domain.resolve_valid_pixel_domain`).  This low-level
+    helper intentionally does not re-apply the exclusion-fraction cap, so callers
+    passing a mask directly are responsible for having enforced the cap / audited
+    override upstream.  ``derive_sensor_energy_center_profile`` resolves and caps
+    the mask before calling this.
+    """
     arr = np.asarray(frame, dtype=np.float64)
     if arr.ndim != 2:
         raise SensorEnergyCenterError(f"frame must be 2D, got {arr.shape}")
@@ -221,6 +229,8 @@ def derive_sensor_energy_center_profile(
     bg_percentile: float = 5.0,
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     notes: str | None = None,
 ) -> SensorEnergyCenterProfile:
     source_path = Path(survey_h5)
@@ -238,11 +248,18 @@ def derive_sensor_energy_center_profile(
                 "convert raw capture to survey first"
             ) from exc
         descriptor = source.descriptor
-        resolved_valid_mask = _valid_mask_from_domain(
-            descriptor.frame_shape,
-            valid_pixel_domain,
-            valid_pixel_mask,
-        )
+        try:
+            resolved_domain = resolve_valid_pixel_domain(
+                descriptor.frame_shape,
+                valid_pixel_domain,
+                valid_pixel_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+            )
+        except ValidPixelDomainError as exc:
+            raise SensorEnergyCenterError(str(exc)) from exc
+        resolved_valid_mask = resolved_domain.mask
+        valid_pixel_domain_record = resolved_domain.to_record()
         centers: list[tuple[float, float]] = []
         background_values: list[float] = []
         total_energy: list[float] = []
@@ -286,7 +303,7 @@ def derive_sensor_energy_center_profile(
             "method": "percentile",
             "percentile": float(bg_percentile),
             "domain": "valid_pixels",
-            "valid_pixel_domain": _valid_pixel_domain_record(valid_pixel_domain, valid_pixel_mask),
+            "valid_pixel_domain": valid_pixel_domain_record,
             "thesis_algorithm_source": "audited_thesis_energy_center_algorithm",
         },
         corr_policy={
@@ -363,28 +380,27 @@ def validate_center_profile_for_frame_source(
 
 
 def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> np.ndarray:
-    try:
-        return resolve_valid_pixel_mask(shape, valid_pixel_mask=valid_pixel_mask)
-    except ValidPixelDomainError as exc:
-        raise SensorEnergyCenterError(str(exc)) from exc
-
-
-def _valid_mask_from_domain(
-    shape: tuple[int, int],
-    valid_pixel_domain: dict[str, Any] | None,
-    valid_pixel_mask: np.ndarray | None,
-) -> np.ndarray:
-    try:
-        return resolve_valid_pixel_mask(shape, valid_pixel_domain, valid_pixel_mask)
-    except ValidPixelDomainError as exc:
-        raise SensorEnergyCenterError(str(exc)) from exc
-
-
-def _valid_pixel_domain_record(
-    valid_pixel_domain: dict[str, Any] | None,
-    valid_pixel_mask: np.ndarray | None,
-) -> dict[str, Any]:
-    return describe_valid_pixel_domain(valid_pixel_domain, valid_pixel_mask)
+    h, w = int(shape[0]), int(shape[1])
+    if valid_pixel_mask is None:
+        return np.ones((h, w), dtype=bool)
+    # The mask is already a validated/resolved domain (enforced upstream, possibly
+    # with an audited large-exclusion override).  Do not re-apply the exclusion
+    # cap, but still guard the interface contract: 2D boolean dtype, matching
+    # shape, and at least one valid pixel (numeric/NaN arrays are rejected).
+    raw = np.asarray(valid_pixel_mask)
+    if raw.ndim != 2:
+        raise SensorEnergyCenterError("valid_pixel_mask must be a 2D boolean array")
+    if raw.dtype != np.bool_:
+        raise SensorEnergyCenterError(
+            f"valid_pixel_mask must have boolean dtype, got {raw.dtype}"
+        )
+    if raw.shape != (h, w):
+        raise SensorEnergyCenterError(
+            f"valid_pixel_mask shape {raw.shape} does not match {(h, w)}"
+        )
+    if not np.any(raw):
+        raise SensorEnergyCenterError("valid_pixel_mask leaves zero valid pixels")
+    return raw
 
 
 def _wavelength_key(value: float) -> str:

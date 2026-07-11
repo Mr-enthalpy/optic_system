@@ -100,6 +100,9 @@ class PerWavelengthCameraSettings:
     peak_pixel: float | None = None
     saturation_margin: float | None = None
     frames_per_capture: int | None = None
+    peak_pixel_domain: str | None = None
+    full_frame_peak_pixel: float | None = None
+    full_frame_saturated_pixel_count: int | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PerWavelengthCameraSettings:
@@ -109,6 +112,14 @@ class PerWavelengthCameraSettings:
             peak_pixel=_optional_float(d.get("peak_pixel")),
             saturation_margin=_optional_float(d.get("saturation_margin")),
             frames_per_capture=_optional_int(d.get("frames_per_capture")),
+            peak_pixel_domain=_optional_str(d.get("peak_pixel_domain")),
+            full_frame_peak_pixel=_optional_finite_number(
+                d.get("full_frame_peak_pixel"), "full_frame_peak_pixel"
+            ),
+            full_frame_saturated_pixel_count=_optional_count(
+                d.get("full_frame_saturated_pixel_count"),
+                "full_frame_saturated_pixel_count",
+            ),
         )
         settings.validate()
         return settings
@@ -118,6 +129,11 @@ class PerWavelengthCameraSettings:
             raise ProfileError("exposure_us must be positive")
         if self.frames_per_capture is not None and self.frames_per_capture < 1:
             raise ProfileError("frames_per_capture must be >= 1")
+        _validate_peak_domain_fields(
+            peak_pixel_domain=self.peak_pixel_domain,
+            full_frame_peak_pixel=self.full_frame_peak_pixel,
+            full_frame_saturated_pixel_count=self.full_frame_saturated_pixel_count,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -130,6 +146,12 @@ class PerWavelengthCameraSettings:
             result["saturation_margin"] = self.saturation_margin
         if self.frames_per_capture is not None:
             result["frames_per_capture"] = self.frames_per_capture
+        if self.peak_pixel_domain is not None:
+            result["peak_pixel_domain"] = self.peak_pixel_domain
+        if self.full_frame_peak_pixel is not None:
+            result["full_frame_peak_pixel"] = self.full_frame_peak_pixel
+        if self.full_frame_saturated_pixel_count is not None:
+            result["full_frame_saturated_pixel_count"] = self.full_frame_saturated_pixel_count
         return result
 
 
@@ -146,6 +168,9 @@ class CameraProfile:
     peak_pixel: float | None = None
     saturation_margin: float | None = None
     frames_per_capture: int | None = None
+    peak_pixel_domain: str | None = None
+    full_frame_peak_pixel: float | None = None
+    full_frame_saturated_pixel_count: int | None = None
     depends_on_pupil_profile_id: str | None = None
     source_raw_capture_file: str | None = None
     created_at: str | None = None
@@ -185,6 +210,20 @@ class CameraProfile:
             frames_per_capture=_optional_int(
                 d.get("frames_per_capture", camera_block.get("frames_per_capture"))
             ),
+            peak_pixel_domain=_optional_str(
+                d.get("peak_pixel_domain", camera_block.get("peak_pixel_domain"))
+            ),
+            full_frame_peak_pixel=_optional_finite_number(
+                d.get("full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel")),
+                "full_frame_peak_pixel",
+            ),
+            full_frame_saturated_pixel_count=_optional_count(
+                d.get(
+                    "full_frame_saturated_pixel_count",
+                    camera_block.get("full_frame_saturated_pixel_count"),
+                ),
+                "full_frame_saturated_pixel_count",
+            ),
             depends_on_pupil_profile_id=_optional_str(
                 d.get("depends_on_pupil_profile_id")
                 or (_optional_dict(d.get("depends_on")) or {}).get("pupil_profile_id")
@@ -203,6 +242,16 @@ class CameraProfile:
             raise ProfileError("camera_profile_id must not be empty")
         if not self.valid_for:
             raise ProfileError("valid_for must not be empty")
+        _validate_peak_domain_fields(
+            peak_pixel_domain=self.peak_pixel_domain,
+            full_frame_peak_pixel=self.full_frame_peak_pixel,
+            full_frame_saturated_pixel_count=self.full_frame_saturated_pixel_count,
+        )
+        for key, settings in self.per_wavelength.items():
+            try:
+                settings.validate()
+            except ProfileError as exc:
+                raise ProfileError(f"per_wavelength[{key!r}]: {exc}") from exc
 
         if self.profile_family == BROADBAND_PASSTHROUGH:
             if self.illumination.mode != BROADBAND_PASSTHROUGH:
@@ -282,6 +331,12 @@ class CameraProfile:
                 camera["saturation_margin"] = self.saturation_margin
             if self.frames_per_capture is not None:
                 camera["frames_per_capture"] = self.frames_per_capture
+            if self.peak_pixel_domain is not None:
+                camera["peak_pixel_domain"] = self.peak_pixel_domain
+            if self.full_frame_peak_pixel is not None:
+                camera["full_frame_peak_pixel"] = self.full_frame_peak_pixel
+            if self.full_frame_saturated_pixel_count is not None:
+                camera["full_frame_saturated_pixel_count"] = self.full_frame_saturated_pixel_count
             if camera:
                 result["camera"] = camera
         for key in ("source_raw_capture_file", "created_at", "software_version"):
@@ -315,6 +370,41 @@ class CameraProfile:
         if not isinstance(data, dict):
             raise ProfileError("camera profile YAML root must be a mapping")
         return cls.from_dict(data)
+
+
+def _validate_peak_domain_fields(
+    *,
+    peak_pixel_domain: str | None,
+    full_frame_peak_pixel: float | None,
+    full_frame_saturated_pixel_count: int | None,
+) -> None:
+    import math
+
+    if peak_pixel_domain is not None and not isinstance(peak_pixel_domain, str):
+        raise ProfileError("peak_pixel_domain must be a string or null")
+    if peak_pixel_domain not in (None, "valid_pixel_domain"):
+        raise ProfileError(
+            "peak_pixel_domain must be None or 'valid_pixel_domain', "
+            f"got {peak_pixel_domain!r}"
+        )
+    if full_frame_peak_pixel is not None:
+        if isinstance(full_frame_peak_pixel, bool) or not isinstance(
+            full_frame_peak_pixel, (int, float)
+        ):
+            raise ProfileError("full_frame_peak_pixel must be a number or null")
+        if not math.isfinite(float(full_frame_peak_pixel)):
+            raise ProfileError("full_frame_peak_pixel must be finite when present")
+    _validate_optional_count(
+        full_frame_saturated_pixel_count, "full_frame_saturated_pixel_count"
+    )
+    if (
+        full_frame_peak_pixel is not None
+        or full_frame_saturated_pixel_count is not None
+    ) and peak_pixel_domain is None:
+        raise ProfileError(
+            "peak_pixel_domain is required when full_frame peak/saturation "
+            "fields are present"
+        )
 
 
 def _validate_single_camera_settings(profile: CameraProfile) -> None:
@@ -381,6 +471,19 @@ def _optional_float(value: Any) -> float | None:
         raise ProfileError(f"expected float or null, got {value!r}") from None
 
 
+def _optional_finite_number(value: Any, name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ProfileError(f"{name} must be a number or null")
+    import math
+
+    result = float(value)
+    if not math.isfinite(result):
+        raise ProfileError(f"{name} must be finite when present")
+    return result
+
+
 def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
@@ -388,6 +491,20 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         raise ProfileError(f"expected int or null, got {value!r}") from None
+
+
+def _validate_optional_count(value: Any, name: str) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ProfileError(f"{name} must be an integer or null, got {value!r}")
+    if value < 0:
+        raise ProfileError(f"{name} must be non-negative")
+
+
+def _optional_count(value: Any, name: str) -> int | None:
+    _validate_optional_count(value, name)
+    return value
 
 
 def _optional_dict(value: Any) -> dict[str, Any] | None:
