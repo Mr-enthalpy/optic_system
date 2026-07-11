@@ -135,6 +135,17 @@ def test_coerce_override_with_reason_canonicalized() -> None:
     assert canonical["large_exclusion_reason"] == "documented sensor edge defect"
 
 
+def test_coerce_policy_reason_without_override_rejected() -> None:
+    with pytest.raises(ValidPixelDomainError, match="requires large_exclusion_override=True"):
+        coerce_valid_pixel_domain(
+            {
+                "type": "exclude_top_rows",
+                "top_rows": 5,
+                "large_exclusion_reason": "orphan reason",
+            }
+        )
+
+
 # --- out-of-bounds resolution ---------------------------------------------
 
 
@@ -185,6 +196,7 @@ def test_describe_full_frame_record() -> None:
     assert record["valid_pixel_count"] == 2048 * 2448
     assert record["excluded_pixel_count"] == 0
     assert record["excluded_fraction"] == 0.0
+    assert record["max_excluded_fraction"] == MAX_EXCLUDED_FRACTION
     assert record["mask_digest"].startswith("sha256:")
     assert record["large_exclusion_override"] is False
 

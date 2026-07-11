@@ -138,6 +138,8 @@ def calibrate_broadband_camera_profile(
     lcd: BroadbandCalibrationLCD,
     tls: PassThroughTLS | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     runtime_policy: RuntimePolicy | str | None = None,
 ) -> BroadbandCameraCalibrationResult:
     policy = normalize_runtime_policy(runtime_policy)
@@ -178,6 +180,8 @@ def calibrate_broadband_camera_profile(
         full_scale=plan.full_scale,
         valid_pixel_domain=plan.valid_pixel_domain,
         valid_pixel_mask=valid_pixel_mask,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
     )
     recommended = select_recommended_probe(rows)
     frame_shape = _recommended_frame_shape(recommended)
@@ -185,6 +189,8 @@ def calibrate_broadband_camera_profile(
         frame_shape=frame_shape,
         valid_pixel_domain=plan.valid_pixel_domain,
         valid_pixel_mask=valid_pixel_mask,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
     )
     full_frame_peak, full_frame_saturated = _full_frame_peak_stats(recommended)
     profile = CameraProfile(

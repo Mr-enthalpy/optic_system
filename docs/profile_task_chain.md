@@ -105,13 +105,20 @@ real TLS adapter in hardware mode.
   pixel" rule.  When an explicit boolean ``valid_pixel_mask`` is supplied instead
   of a policy, the same cap applies and over-cap exclusion requires
   ``explicit_mask_large_exclusion_override`` plus
-  ``explicit_mask_large_exclusion_reason``.
+  ``explicit_mask_large_exclusion_reason``.  These two parameters are threaded
+  through the calibration and analysis entry points
+  (``calibrate_broadband_camera_profile``,
+  ``calibrate_per_band_pupil_open_camera_profile``,
+  ``derive_sensor_energy_center_profile`` and the exposure-search helpers) so an
+  explicit mask can still cover a large documented defect through an audited
+  override.
 - The calibration persists a **resolved-domain provenance record** in
   ``CameraProfile.extra["valid_pixel_domain"]`` (via ``describe_valid_pixel_domain``,
   which requires the frame shape).  The record includes ``resolved_policy``,
   ``frame_shape_hw``, ``valid_pixel_count``, ``excluded_pixel_count``,
-  ``excluded_fraction``, ``mask_digest`` (a versioned sha256 of the resolved mask),
-  and the override flag/reason.  ``analyze_diffraction_support`` records the same
+  ``excluded_fraction``, ``max_excluded_fraction`` (the cap actually applied),
+  ``mask_digest`` (a versioned sha256 of the resolved mask), and the override
+  flag/reason.  ``analyze_diffraction_support`` records the same
   resolved record in ``PeakSupportAnalysisManifest.valid_pixel_domain`` so reports
   using different exclusions are distinguishable.
 - Saturation reports must still record full-burst all-pixel saturation

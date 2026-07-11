@@ -163,6 +163,8 @@ def calibrate_per_band_pupil_open_camera_profile(
     lcd: PerBandLCD,
     tls: PerBandTLS | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     runtime_policy: RuntimePolicy | str | None = None,
 ) -> PerBandPupilOpenCalibrationResult:
     policy = normalize_runtime_policy(runtime_policy)
@@ -223,6 +225,8 @@ def calibrate_per_band_pupil_open_camera_profile(
             full_scale=plan.full_scale,
             valid_pixel_domain=plan.valid_pixel_domain,
             valid_pixel_mask=valid_pixel_mask,
+            explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+            explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
         )
         for row in rows:
             row.metadata["tls_outer_loop_wavelength_nm"] = float(spec.wavelength_nm)
@@ -274,6 +278,8 @@ def calibrate_per_band_pupil_open_camera_profile(
                 frame_shape=resolved_frame_shape,
                 valid_pixel_domain=plan.valid_pixel_domain,
                 valid_pixel_mask=valid_pixel_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
             ),
             "timing_policy": {
                 "lcd_settle_ms": float(plan.lcd_settle_ms),

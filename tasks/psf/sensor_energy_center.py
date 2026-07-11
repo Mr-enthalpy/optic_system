@@ -221,6 +221,8 @@ def derive_sensor_energy_center_profile(
     bg_percentile: float = 5.0,
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
     notes: str | None = None,
 ) -> SensorEnergyCenterProfile:
     source_path = Path(survey_h5)
@@ -242,6 +244,8 @@ def derive_sensor_energy_center_profile(
             descriptor.frame_shape,
             valid_pixel_domain,
             valid_pixel_mask,
+            explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+            explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
         )
         centers: list[tuple[float, float]] = []
         background_values: list[float] = []
@@ -287,7 +291,11 @@ def derive_sensor_energy_center_profile(
             "percentile": float(bg_percentile),
             "domain": "valid_pixels",
             "valid_pixel_domain": _valid_pixel_domain_record(
-                descriptor.frame_shape, valid_pixel_domain, valid_pixel_mask
+                descriptor.frame_shape,
+                valid_pixel_domain,
+                valid_pixel_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
             ),
             "thesis_algorithm_source": "audited_thesis_energy_center_algorithm",
         },
@@ -366,7 +374,12 @@ def validate_center_profile_for_frame_source(
 
 def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> np.ndarray:
     try:
-        return resolve_valid_pixel_mask(shape, valid_pixel_mask=valid_pixel_mask)
+        # The mask is already a validated/resolved domain; do not re-apply the
+        # exclusion-fraction cap here (it was enforced upstream, possibly with an
+        # explicit large-exclusion override).
+        return resolve_valid_pixel_mask(
+            shape, valid_pixel_mask=valid_pixel_mask, max_excluded_fraction=1.0
+        )
     except ValidPixelDomainError as exc:
         raise SensorEnergyCenterError(str(exc)) from exc
 
@@ -375,9 +388,18 @@ def _valid_mask_from_domain(
     shape: tuple[int, int],
     valid_pixel_domain: dict[str, Any] | None,
     valid_pixel_mask: np.ndarray | None,
+    *,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
 ) -> np.ndarray:
     try:
-        return resolve_valid_pixel_mask(shape, valid_pixel_domain, valid_pixel_mask)
+        return resolve_valid_pixel_mask(
+            shape,
+            valid_pixel_domain,
+            valid_pixel_mask,
+            explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+            explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+        )
     except ValidPixelDomainError as exc:
         raise SensorEnergyCenterError(str(exc)) from exc
 
@@ -386,11 +408,16 @@ def _valid_pixel_domain_record(
     frame_shape: tuple[int, int],
     valid_pixel_domain: dict[str, Any] | None,
     valid_pixel_mask: np.ndarray | None,
+    *,
+    explicit_mask_large_exclusion_override: bool = False,
+    explicit_mask_large_exclusion_reason: str | None = None,
 ) -> dict[str, Any]:
     return describe_valid_pixel_domain(
         frame_shape=frame_shape,
         valid_pixel_domain=valid_pixel_domain,
         valid_pixel_mask=valid_pixel_mask,
+        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
     )
 
 

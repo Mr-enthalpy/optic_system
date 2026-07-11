@@ -174,6 +174,19 @@ def test_per_wavelength_settings_reject_negative_saturated_count() -> None:
         CameraProfile.from_dict(data)
 
 
+def test_camera_profile_validate_recurses_into_per_wavelength() -> None:
+    from tasks.profiles.camera_profile import PerWavelengthCameraSettings
+
+    profile = CameraProfile.from_dict(per_band_camera_profile_dict())
+    # Inject an invalid settings object directly (bypassing from_dict validation).
+    profile.per_wavelength["450"] = PerWavelengthCameraSettings(
+        exposure_us=-1.0, gain_db=0.0
+    )
+
+    with pytest.raises(ProfileError, match="per_wavelength\\['450'\\]"):
+        profile.validate()
+
+
 def test_per_band_profile_requires_selected_pupil_open() -> None:
     data = per_band_camera_profile_dict()
     data["lcd_state"]["mode"] = "all_open"

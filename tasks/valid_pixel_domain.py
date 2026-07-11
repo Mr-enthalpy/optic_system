@@ -224,6 +224,7 @@ def resolve_valid_pixel_domain(
         mask_digest=valid_pixel_mask_digest(mask),
         large_exclusion_override=override,
         large_exclusion_reason=reason,
+        max_excluded_fraction=float(max_excluded_fraction),
     )
 
 
@@ -312,6 +313,7 @@ class ResolvedValidPixelDomain:
         "mask_digest",
         "large_exclusion_override",
         "large_exclusion_reason",
+        "max_excluded_fraction",
     )
 
     def __init__(
@@ -327,6 +329,7 @@ class ResolvedValidPixelDomain:
         mask_digest: str,
         large_exclusion_override: bool,
         large_exclusion_reason: str | None,
+        max_excluded_fraction: float,
     ) -> None:
         self.mask = mask
         self.frame_shape_hw = frame_shape_hw
@@ -338,6 +341,7 @@ class ResolvedValidPixelDomain:
         self.mask_digest = mask_digest
         self.large_exclusion_override = large_exclusion_override
         self.large_exclusion_reason = large_exclusion_reason
+        self.max_excluded_fraction = max_excluded_fraction
 
     def to_record(self) -> dict[str, Any]:
         record: dict[str, Any] = {
@@ -348,6 +352,7 @@ class ResolvedValidPixelDomain:
             "valid_pixel_count": int(self.valid_pixel_count),
             "excluded_pixel_count": int(self.excluded_pixel_count),
             "excluded_fraction": float(self.excluded_fraction),
+            "max_excluded_fraction": float(self.max_excluded_fraction),
             "mask_digest": self.mask_digest,
             "large_exclusion_override": bool(self.large_exclusion_override),
             "large_exclusion_reason": self.large_exclusion_reason,
@@ -428,6 +433,10 @@ def _coerce_override(value: dict[str, Any]) -> tuple[bool, str | None]:
                 "large_exclusion_override requires a non-empty large_exclusion_reason"
             )
         return True, reason.strip()
+    if reason is not None:
+        raise ValidPixelDomainError(
+            "large_exclusion_reason requires large_exclusion_override=True"
+        )
     return False, None
 
 

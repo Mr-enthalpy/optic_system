@@ -242,6 +242,11 @@ class CameraProfile:
             full_frame_peak_pixel=self.full_frame_peak_pixel,
             full_frame_saturated_pixel_count=self.full_frame_saturated_pixel_count,
         )
+        for key, settings in self.per_wavelength.items():
+            try:
+                settings.validate()
+            except ProfileError as exc:
+                raise ProfileError(f"per_wavelength[{key!r}]: {exc}") from exc
 
         if self.profile_family == BROADBAND_PASSTHROUGH:
             if self.illumination.mode != BROADBAND_PASSTHROUGH:

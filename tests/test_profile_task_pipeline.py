@@ -982,6 +982,42 @@ def test_broadband_calibration_excludes_bad_pixel_domain_and_records_policy() ->
     assert report["excluded_domain_saturated_pixel_count"] > 0
 
 
+def test_broadband_calibration_explicit_mask_over_cap_needs_override() -> None:
+    lcd = SyntheticLCD(shape=(100, 100))
+    camera = TopRowStuckCamera(lcd=lcd, frame_shape=(100, 100))
+    # Exclude the top 5 rows (5% > 1% cap) via an explicit mask.
+    mask = np.ones((100, 100), dtype=bool)
+    mask[:5, :] = False
+
+    # Without an override the over-cap explicit mask is rejected.
+    with pytest.raises(ExposureSearchError, match="max_excluded_fraction"):
+        calibrate_broadband_camera_profile(
+            _broadband_plan(None),
+            camera=camera,
+            lcd=lcd,
+            tls=FakePassThroughTLS(),
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+
+    # With an audited override it succeeds and records the reason.
+    result = calibrate_broadband_camera_profile(
+        _broadband_plan(None),
+        camera=camera,
+        lcd=lcd,
+        tls=FakePassThroughTLS(),
+        valid_pixel_mask=mask,
+        explicit_mask_large_exclusion_override=True,
+        explicit_mask_large_exclusion_reason="documented sensor edge defect",
+        runtime_policy="no_hardware",
+    )
+    record = result.camera_profile.extra["valid_pixel_domain"]
+    assert record["type"] == "explicit_mask"
+    assert record["large_exclusion_override"] is True
+    assert record["large_exclusion_reason"] == "documented sensor edge defect"
+    assert record["excluded_pixel_count"] == 500
+
+
 def test_broadband_plan_round_trips_valid_pixel_domain() -> None:
     domain = {"type": "exclude_xyxy", "xyxy": [0, 0, 4, 2]}
     plan = BroadbandCameraCalibrationPlan.from_dict({
