@@ -17,8 +17,7 @@ from tasks.artifacts.errors import ArtifactIOError
 from tasks.artifacts.frame_source import open_full_frame_survey_source
 from tasks.valid_pixel_domain import (
     ValidPixelDomainError,
-    describe_valid_pixel_domain,
-    resolve_valid_pixel_mask,
+    resolve_valid_pixel_domain,
 )
 
 
@@ -249,13 +248,18 @@ def derive_sensor_energy_center_profile(
                 "convert raw capture to survey first"
             ) from exc
         descriptor = source.descriptor
-        resolved_valid_mask = _valid_mask_from_domain(
-            descriptor.frame_shape,
-            valid_pixel_domain,
-            valid_pixel_mask,
-            explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
-            explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
-        )
+        try:
+            resolved_domain = resolve_valid_pixel_domain(
+                descriptor.frame_shape,
+                valid_pixel_domain,
+                valid_pixel_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+            )
+        except ValidPixelDomainError as exc:
+            raise SensorEnergyCenterError(str(exc)) from exc
+        resolved_valid_mask = resolved_domain.mask
+        valid_pixel_domain_record = resolved_domain.to_record()
         centers: list[tuple[float, float]] = []
         background_values: list[float] = []
         total_energy: list[float] = []
@@ -299,13 +303,7 @@ def derive_sensor_energy_center_profile(
             "method": "percentile",
             "percentile": float(bg_percentile),
             "domain": "valid_pixels",
-            "valid_pixel_domain": _valid_pixel_domain_record(
-                descriptor.frame_shape,
-                valid_pixel_domain,
-                valid_pixel_mask,
-                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
-                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
-            ),
+            "valid_pixel_domain": valid_pixel_domain_record,
             "thesis_algorithm_source": "audited_thesis_energy_center_algorithm",
         },
         corr_policy={
@@ -387,50 +385,16 @@ def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> 
         return np.ones((h, w), dtype=bool)
     # The mask is already a validated/resolved domain (enforced upstream, possibly
     # with an audited large-exclusion override).  Use it directly without copying,
-    # counting, or hashing per frame; only check shape.
+    # counting, or hashing per frame; only check shape and the basic non-empty
+    # invariant (the exclusion-fraction cap is intentionally not re-applied here).
     mask = np.asarray(valid_pixel_mask, dtype=bool)
     if mask.shape != (h, w):
         raise SensorEnergyCenterError(
             f"valid_pixel_mask shape {mask.shape} does not match {(h, w)}"
         )
+    if not np.any(mask):
+        raise SensorEnergyCenterError("valid_pixel_mask leaves zero valid pixels")
     return mask
-
-
-def _valid_mask_from_domain(
-    shape: tuple[int, int],
-    valid_pixel_domain: dict[str, Any] | None,
-    valid_pixel_mask: np.ndarray | None,
-    *,
-    explicit_mask_large_exclusion_override: bool = False,
-    explicit_mask_large_exclusion_reason: str | None = None,
-) -> np.ndarray:
-    try:
-        return resolve_valid_pixel_mask(
-            shape,
-            valid_pixel_domain,
-            valid_pixel_mask,
-            explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
-            explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
-        )
-    except ValidPixelDomainError as exc:
-        raise SensorEnergyCenterError(str(exc)) from exc
-
-
-def _valid_pixel_domain_record(
-    frame_shape: tuple[int, int],
-    valid_pixel_domain: dict[str, Any] | None,
-    valid_pixel_mask: np.ndarray | None,
-    *,
-    explicit_mask_large_exclusion_override: bool = False,
-    explicit_mask_large_exclusion_reason: str | None = None,
-) -> dict[str, Any]:
-    return describe_valid_pixel_domain(
-        frame_shape=frame_shape,
-        valid_pixel_domain=valid_pixel_domain,
-        valid_pixel_mask=valid_pixel_mask,
-        explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
-        explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
-    )
 
 
 def _wavelength_key(value: float) -> str:

@@ -20,8 +20,7 @@ from tasks.artifacts.json_io import (
 from tasks.runtime_mode import RuntimePolicy
 from tasks.valid_pixel_domain import (
     ValidPixelDomainError,
-    describe_valid_pixel_domain,
-    resolve_valid_pixel_mask,
+    resolve_valid_pixel_domain,
 )
 
 from .sensor_energy_center import (
@@ -192,9 +191,15 @@ def analyze_diffraction_support(
                 )
             except SensorEnergyCenterError as exc:
                 raise DiffractionSupportAnalysisError(str(exc)) from exc
-        valid_mask = _valid_pixel_mask(survey.frame_shape, valid_pixel_domain)
-        if not np.any(valid_mask):
-            raise DiffractionSupportAnalysisError("valid pixel mask is empty")
+        try:
+            resolved_domain = resolve_valid_pixel_domain(
+                survey.frame_shape,
+                valid_pixel_domain=valid_pixel_domain,
+            )
+        except ValidPixelDomainError as exc:
+            raise DiffractionSupportAnalysisError(str(exc)) from exc
+        valid_mask = resolved_domain.mask
+        valid_pixel_domain_record = resolved_domain.to_record()
 
         n = survey.frame_count
         r_count = len(radii)
@@ -296,10 +301,7 @@ def analyze_diffraction_support(
         entry_mask_ids=survey.mask_ids,
         entry_wavelengths_nm=survey.entry_wavelengths_nm,
         notes=notes,
-        valid_pixel_domain=describe_valid_pixel_domain(
-            frame_shape=survey.frame_shape,
-            valid_pixel_domain=valid_pixel_domain,
-        ),
+        valid_pixel_domain=valid_pixel_domain_record,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -789,13 +791,6 @@ def _normalize_frames(frames: np.ndarray) -> np.ndarray:
     if arr.ndim == 3:
         return arr
     raise DiffractionSupportAnalysisError(f"survey frames must be 2D or 3D, got {arr.shape}")
-
-
-def _valid_pixel_mask(shape: tuple[int, int], valid_pixel_domain: dict[str, Any] | None) -> np.ndarray:
-    try:
-        return resolve_valid_pixel_mask(shape, valid_pixel_domain)
-    except ValidPixelDomainError as exc:
-        raise DiffractionSupportAnalysisError(str(exc)) from exc
 
 
 def _resolve_center_xy(

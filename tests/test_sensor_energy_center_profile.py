@@ -155,6 +155,14 @@ def test_gaussian_frame_estimates_known_sensor_energy_center() -> None:
     assert estimate.background_value > 0.0
 
 
+def test_estimate_frame_energy_center_rejects_empty_mask() -> None:
+    frame = np.ones((16, 20), dtype=np.float64)
+    mask = np.zeros((16, 20), dtype=bool)
+
+    with pytest.raises(SensorEnergyCenterError, match="zero valid pixels"):
+        estimate_frame_energy_center(frame, valid_pixel_mask=mask)
+
+
 def test_background_offset_does_not_shift_center_after_correction() -> None:
     base = _gaussian_frame((64, 80), center_xy=(30.0, 25.0), background=0.0)
     shifted = base + 500.0
