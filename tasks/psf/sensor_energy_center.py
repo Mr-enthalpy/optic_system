@@ -182,6 +182,15 @@ def estimate_frame_energy_center(
     valid_pixel_mask: np.ndarray | None = None,
     bg_percentile: float = 5.0,
 ) -> EnergyCenterEstimate:
+    """Estimate the energy-weighted center of a single frame.
+
+    ``valid_pixel_mask`` must already be a resolved, validated domain (e.g. from
+    :func:`tasks.valid_pixel_domain.resolve_valid_pixel_domain`).  This low-level
+    helper intentionally does not re-apply the exclusion-fraction cap, so callers
+    passing a mask directly are responsible for having enforced the cap / audited
+    override upstream.  ``derive_sensor_energy_center_profile`` resolves and caps
+    the mask before calling this.
+    """
     arr = np.asarray(frame, dtype=np.float64)
     if arr.ndim != 2:
         raise SensorEnergyCenterError(f"frame must be 2D, got {arr.shape}")

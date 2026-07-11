@@ -118,7 +118,11 @@ real TLS adapter in hardware mode.
   ``frame_shape_hw``, ``valid_pixel_count``, ``excluded_pixel_count``,
   ``excluded_fraction``, ``max_excluded_fraction`` (the cap actually applied),
   ``mask_digest`` (a versioned sha256 of the resolved mask), and the override
-  flag/reason.  ``analyze_diffraction_support`` records the same
+  provenance.  The override is recorded as two distinct flags:
+  ``large_exclusion_override_requested`` (the caller asked for it) and
+  ``large_exclusion_override_applied`` (it was actually needed to pass the cap),
+  so a defensive override on an in-cap policy never claims it was used.
+  ``analyze_diffraction_support`` records the same
   resolved record in ``PeakSupportAnalysisManifest.valid_pixel_domain`` so reports
   using different exclusions are distinguishable.
 - Saturation reports must still record full-burst all-pixel saturation

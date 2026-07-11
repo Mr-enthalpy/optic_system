@@ -1013,7 +1013,8 @@ def test_broadband_calibration_explicit_mask_over_cap_needs_override() -> None:
     )
     record = result.camera_profile.extra["valid_pixel_domain"]
     assert record["type"] == "explicit_mask"
-    assert record["large_exclusion_override"] is True
+    assert record["large_exclusion_override_requested"] is True
+    assert record["large_exclusion_override_applied"] is True
     assert record["large_exclusion_reason"] == "documented sensor edge defect"
     assert record["excluded_pixel_count"] == 500
 

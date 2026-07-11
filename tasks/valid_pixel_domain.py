@@ -154,31 +154,29 @@ def resolve_valid_pixel_domain(
     ``explicit_mask_large_exclusion_override`` / ``explicit_mask_large_exclusion_reason``.
     """
     _validate_max_excluded_fraction(max_excluded_fraction)
-    h, w = int(shape[0]), int(shape[1])
+    h, w = _validate_frame_shape(shape)
     if valid_pixel_domain is not None and valid_pixel_mask is not None:
         raise ValidPixelDomainError(
             "pass either valid_pixel_domain or valid_pixel_mask, not both"
         )
 
-    override = False
+    override_requested = False
     reason: str | None = None
     requested_policy: dict[str, Any] | None = None
     resolved_policy: dict[str, Any]
+    explicit_mask = valid_pixel_mask is not None
 
-    if valid_pixel_mask is not None:
+    if explicit_mask:
         mask = np.array(valid_pixel_mask, dtype=bool, copy=True, order="C")
         if mask.shape != (h, w):
             raise ValidPixelDomainError(
                 f"valid_pixel_mask shape {mask.shape} does not match {(h, w)}"
             )
-        override, reason = _coerce_explicit_override(
+        override_requested, reason = _coerce_explicit_override(
             explicit_mask_large_exclusion_override,
             explicit_mask_large_exclusion_reason,
         )
         resolved_policy = {"type": EXPLICIT_MASK}
-        if override:
-            resolved_policy["large_exclusion_override"] = True
-            resolved_policy["large_exclusion_reason"] = reason
     else:
         if (
             explicit_mask_large_exclusion_override
@@ -194,7 +192,7 @@ def resolve_valid_pixel_domain(
             resolved_policy = {"type": FULL_FRAME}
             mask = np.ones((h, w), dtype=bool)
         else:
-            override = bool(canonical.get("large_exclusion_override", False))
+            override_requested = bool(canonical.get("large_exclusion_override", False))
             reason = canonical.get("large_exclusion_reason")
             resolved_policy = canonical
             mask = _build_mask_from_policy(canonical, h, w)
@@ -203,15 +201,34 @@ def resolve_valid_pixel_domain(
     total = int(mask.size)
     excluded_count = total - valid_count
     excluded_fraction = excluded_count / total if total else 0.0
+    over_cap = excluded_fraction > float(max_excluded_fraction)
+    # The override is *applied* only when it was requested and actually needed
+    # to pass the cap.  A defensive override on an in-cap policy is recorded as
+    # requested-but-not-applied rather than silently claiming it was used.
+    override_applied = bool(override_requested and over_cap)
 
     if valid_count == 0:
         raise ValidPixelDomainError("valid_pixel_domain leaves zero valid pixels")
-    if excluded_fraction > float(max_excluded_fraction) and not override:
+    if over_cap and not override_requested:
+        if explicit_mask:
+            hint = (
+                "set explicit_mask_large_exclusion_override=True with a non-empty "
+                "explicit_mask_large_exclusion_reason"
+            )
+        else:
+            hint = (
+                "set large_exclusion_override=True with a non-empty "
+                "large_exclusion_reason in valid_pixel_domain"
+            )
         raise ValidPixelDomainError(
             f"valid_pixel_domain excludes {excluded_fraction:.4f} of the frame, "
             f"above the max_excluded_fraction cap {float(max_excluded_fraction):.4f}; "
-            "set large_exclusion_override with a large_exclusion_reason to allow it"
+            + hint
         )
+
+    if explicit_mask and override_requested:
+        resolved_policy["large_exclusion_override"] = True
+        resolved_policy["large_exclusion_reason"] = reason
 
     return ResolvedValidPixelDomain(
         mask=mask,
@@ -222,7 +239,8 @@ def resolve_valid_pixel_domain(
         excluded_pixel_count=excluded_count,
         excluded_fraction=excluded_fraction,
         mask_digest=valid_pixel_mask_digest(mask),
-        large_exclusion_override=override,
+        large_exclusion_override_requested=override_requested,
+        large_exclusion_override_applied=override_applied,
         large_exclusion_reason=reason,
         max_excluded_fraction=float(max_excluded_fraction),
     )
@@ -311,7 +329,8 @@ class ResolvedValidPixelDomain:
         "excluded_pixel_count",
         "excluded_fraction",
         "mask_digest",
-        "large_exclusion_override",
+        "large_exclusion_override_requested",
+        "large_exclusion_override_applied",
         "large_exclusion_reason",
         "max_excluded_fraction",
     )
@@ -327,7 +346,8 @@ class ResolvedValidPixelDomain:
         excluded_pixel_count: int,
         excluded_fraction: float,
         mask_digest: str,
-        large_exclusion_override: bool,
+        large_exclusion_override_requested: bool,
+        large_exclusion_override_applied: bool,
         large_exclusion_reason: str | None,
         max_excluded_fraction: float,
     ) -> None:
@@ -341,7 +361,8 @@ class ResolvedValidPixelDomain:
         self.excluded_pixel_count = excluded_pixel_count
         self.excluded_fraction = excluded_fraction
         self.mask_digest = mask_digest
-        self.large_exclusion_override = large_exclusion_override
+        self.large_exclusion_override_requested = large_exclusion_override_requested
+        self.large_exclusion_override_applied = large_exclusion_override_applied
         self.large_exclusion_reason = large_exclusion_reason
         self.max_excluded_fraction = max_excluded_fraction
 
@@ -356,7 +377,12 @@ class ResolvedValidPixelDomain:
             "excluded_fraction": float(self.excluded_fraction),
             "max_excluded_fraction": float(self.max_excluded_fraction),
             "mask_digest": self.mask_digest,
-            "large_exclusion_override": bool(self.large_exclusion_override),
+            "large_exclusion_override_requested": bool(
+                self.large_exclusion_override_requested
+            ),
+            "large_exclusion_override_applied": bool(
+                self.large_exclusion_override_applied
+            ),
             "large_exclusion_reason": self.large_exclusion_reason,
         }
         if self.requested_policy is not None and self.requested_policy != self.resolved_policy:
@@ -446,6 +472,16 @@ def _require_int(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValidPixelDomainError(f"{name} must be an integer")
     return int(value)
+
+
+def _validate_frame_shape(shape: Any) -> tuple[int, int]:
+    if not isinstance(shape, (list, tuple)) or len(shape) != 2:
+        raise ValidPixelDomainError("frame shape must contain two integers")
+    h = _require_int(shape[0], "frame_shape[0]")
+    w = _require_int(shape[1], "frame_shape[1]")
+    if h <= 0 or w <= 0:
+        raise ValidPixelDomainError("frame shape dimensions must be positive")
+    return h, w
 
 
 def _int_quad(value: Any, name: str) -> tuple[int, int, int, int]:

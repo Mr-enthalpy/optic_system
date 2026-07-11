@@ -198,7 +198,8 @@ def test_describe_full_frame_record() -> None:
     assert record["excluded_fraction"] == 0.0
     assert record["max_excluded_fraction"] == MAX_EXCLUDED_FRACTION
     assert record["mask_digest"].startswith("sha256:")
-    assert record["large_exclusion_override"] is False
+    assert record["large_exclusion_override_requested"] is False
+    assert record["large_exclusion_override_applied"] is False
 
 
 def test_describe_records_resolved_counts() -> None:
@@ -256,7 +257,8 @@ def test_resolved_domain_object_fields() -> None:
     assert resolved.valid_pixel_count == 2048 * 2448 - 2448
     assert resolved.excluded_pixel_count == 2448
     assert resolved.frame_shape_hw == (2048, 2448)
-    assert resolved.large_exclusion_override is False
+    assert resolved.large_exclusion_override_requested is False
+    assert resolved.large_exclusion_override_applied is False
 
 
 # --- explicit-mask override channel ----------------------------------------
@@ -290,7 +292,8 @@ def test_explicit_mask_override_with_reason_allows_and_records() -> None:
         explicit_mask_large_exclusion_reason="documented sensor edge defect",
     )
     assert record["type"] == EXPLICIT_MASK
-    assert record["large_exclusion_override"] is True
+    assert record["large_exclusion_override_requested"] is True
+    assert record["large_exclusion_override_applied"] is True
     assert record["large_exclusion_reason"] == "documented sensor edge defect"
     assert record["excluded_pixel_count"] == 500
 
@@ -339,3 +342,66 @@ def test_resolved_mask_is_read_only() -> None:
 def test_max_excluded_fraction_must_be_in_unit_interval(bad: float) -> None:
     with pytest.raises(ValidPixelDomainError, match="max_excluded_fraction"):
         resolve_valid_pixel_mask((10, 10), {"type": "full_frame"}, max_excluded_fraction=bad)
+
+
+# --- frame shape validation ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_shape",
+    [(0, 100), (-1, 100), (True, 100), (100.5, 200), (100,)],
+)
+def test_frame_shape_strictly_validated(bad_shape) -> None:
+    with pytest.raises(ValidPixelDomainError, match="frame.?shape"):
+        resolve_valid_pixel_domain(bad_shape, {"type": "full_frame"})
+
+
+# --- path-specific over-cap error hint -------------------------------------
+
+
+def test_over_cap_policy_hint_points_to_policy_fields() -> None:
+    with pytest.raises(ValidPixelDomainError, match="in valid_pixel_domain"):
+        resolve_valid_pixel_mask(
+            (2048, 2448), {"type": "exclude_top_rows", "top_rows": 200}
+        )
+
+
+def test_over_cap_explicit_mask_hint_points_to_explicit_params() -> None:
+    mask = np.ones((100, 100), dtype=bool)
+    mask[:5, :] = False
+    with pytest.raises(
+        ValidPixelDomainError, match="explicit_mask_large_exclusion_override"
+    ):
+        resolve_valid_pixel_mask((100, 100), valid_pixel_mask=mask)
+
+
+# --- override requested vs applied -----------------------------------------
+
+
+def test_defensive_override_within_cap_is_requested_not_applied() -> None:
+    record = describe_valid_pixel_domain(
+        frame_shape=(2048, 2448),
+        valid_pixel_domain={
+            "type": "exclude_top_rows",
+            "top_rows": 1,
+            "large_exclusion_override": True,
+            "large_exclusion_reason": "defensive config",
+        },
+    )
+    # Exclusion is within the 1% cap: override was requested but not needed.
+    assert record["large_exclusion_override_requested"] is True
+    assert record["large_exclusion_override_applied"] is False
+
+
+def test_over_cap_override_is_requested_and_applied() -> None:
+    record = describe_valid_pixel_domain(
+        frame_shape=(2048, 2448),
+        valid_pixel_domain={
+            "type": "exclude_top_rows",
+            "top_rows": 200,
+            "large_exclusion_override": True,
+            "large_exclusion_reason": "documented sensor edge defect",
+        },
+    )
+    assert record["large_exclusion_override_requested"] is True
+    assert record["large_exclusion_override_applied"] is True
