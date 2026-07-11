@@ -22,6 +22,7 @@ from tasks.valid_pixel_domain import (
     coerce_valid_pixel_domain,
     describe_valid_pixel_domain,
     freeze_explicit_valid_pixel_mask,
+    resolve_valid_pixel_mask,
 )
 
 from .camera_profile import (
@@ -179,14 +180,31 @@ def calibrate_per_band_pupil_open_camera_profile(
         require_tls=True,
     )
     validate_no_fake_devices(devices, policy=policy)
-    # Freeze an explicit mask once so the safety search and the provenance record
-    # use the identical array across all wavelengths.  Boolean dtype is required;
-    # numeric/NaN arrays are rejected, not silently coerced.
-    if valid_pixel_mask is not None:
-        try:
-            valid_pixel_mask = freeze_explicit_valid_pixel_mask(valid_pixel_mask)
-        except ValidPixelDomainError as exc:
-            raise PerBandCalibrationError(str(exc)) from exc
+    # Fail-fast preflight BEFORE any hardware state change (pupil mask / TLS move):
+    # canonicalize the policy, enforce policy/mask mutual exclusion, freeze an
+    # explicit mask (2D boolean dtype; not silently coerced), and pre-validate the
+    # explicit-mask domain (override channel, exclusion cap, zero-valid-pixel).
+    try:
+        canonical_domain = coerce_valid_pixel_domain(plan.valid_pixel_domain)
+        if canonical_domain is not None and valid_pixel_mask is not None:
+            raise ValidPixelDomainError(
+                "pass either valid_pixel_domain or valid_pixel_mask, not both"
+            )
+        frozen_mask = (
+            freeze_explicit_valid_pixel_mask(valid_pixel_mask)
+            if valid_pixel_mask is not None
+            else None
+        )
+        if frozen_mask is not None:
+            resolve_valid_pixel_mask(
+                frozen_mask.shape,
+                valid_pixel_mask=frozen_mask,
+                explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
+                explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
+            )
+    except ValidPixelDomainError as exc:
+        raise PerBandCalibrationError(str(exc)) from exc
+    valid_pixel_mask = frozen_mask
     _validate_test_settle_override(
         allow_test_override=plan.allow_test_lcd_settle_below_refresh,
         lcd_settle_ms=plan.lcd_settle_ms,
@@ -233,7 +251,7 @@ def calibrate_per_band_pupil_open_camera_profile(
             exposure_search,
             frames_per_capture=plan.frames_per_capture,
             full_scale=plan.full_scale,
-            valid_pixel_domain=plan.valid_pixel_domain,
+            valid_pixel_domain=canonical_domain,
             valid_pixel_mask=valid_pixel_mask,
             explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
             explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,
@@ -286,7 +304,7 @@ def calibrate_per_band_pupil_open_camera_profile(
             "safe_profiles_by_wavelength": safe_profiles_by_wavelength,
             "valid_pixel_domain": describe_valid_pixel_domain(
                 frame_shape=resolved_frame_shape,
-                valid_pixel_domain=plan.valid_pixel_domain,
+                valid_pixel_domain=canonical_domain,
                 valid_pixel_mask=valid_pixel_mask,
                 explicit_mask_large_exclusion_override=explicit_mask_large_exclusion_override,
                 explicit_mask_large_exclusion_reason=explicit_mask_large_exclusion_reason,

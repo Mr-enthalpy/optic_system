@@ -197,6 +197,26 @@ def test_broadband_full_frame_saturated_count_rejects_non_integer(bad) -> None:
         CameraProfile.from_dict(data)
 
 
+@pytest.mark.parametrize("bad", [True, "255", float("nan"), float("inf")])
+def test_broadband_full_frame_peak_pixel_rejects_non_finite_number(bad) -> None:
+    data = broadband_camera_profile_dict()
+    data["camera"]["peak_pixel_domain"] = "valid_pixel_domain"
+    data["camera"]["full_frame_peak_pixel"] = bad
+
+    with pytest.raises(ProfileError, match="full_frame_peak_pixel"):
+        CameraProfile.from_dict(data)
+
+
+@pytest.mark.parametrize("bad", [True, "255", float("nan"), float("inf")])
+def test_per_wavelength_full_frame_peak_pixel_rejects_non_finite_number(bad) -> None:
+    data = per_band_camera_profile_dict()
+    data["camera"]["per_wavelength"]["450"]["peak_pixel_domain"] = "valid_pixel_domain"
+    data["camera"]["per_wavelength"]["450"]["full_frame_peak_pixel"] = bad
+
+    with pytest.raises(ProfileError, match="full_frame_peak_pixel"):
+        CameraProfile.from_dict(data)
+
+
 @pytest.mark.parametrize("bad", [1.5, True, "3"])
 def test_per_wavelength_full_frame_saturated_count_rejects_non_integer(bad) -> None:
     data = per_band_camera_profile_dict()

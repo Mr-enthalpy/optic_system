@@ -95,6 +95,12 @@ real TLS adapter in hardware mode.
   strict frame-independent validation at plan-parse time: unknown ``type`` values,
   unknown fields, missing/zero ``top_rows``, and inverted/negative rectangles are
   rejected (fail-fast).
+- The calibration entry points run a fail-fast preflight BEFORE any hardware
+  state change (LCD mask display or TLS move): they re-canonicalize the policy
+  (so directly-constructed plans are checked too), enforce policy/mask mutual
+  exclusion, freeze the explicit mask, and pre-validate the explicit-mask domain
+  (override channel, exclusion cap, zero-valid-pixel).  Only the ``exclude_xyxy``
+  vs actual-frame bounds check is deferred until the first frame shape is known.
 - At capture time the policy is resolved to a boolean mask; out-of-bounds
   rectangles are rejected (never silently clipped), the mask must leave at least
   one valid pixel, and the excluded fraction must not exceed
@@ -140,7 +146,10 @@ real TLS adapter in hardware mode.
   ``peak_pixel_domain="valid_pixel_domain"``.  ``full_frame_peak_pixel`` and
   ``full_frame_saturated_pixel_count`` record the unmasked full-burst statistics.
   These fields are optional (backward compatible) and appear on both the broadband
-  ``CameraProfile`` and each ``PerWavelengthCameraSettings``.  Backup safe-exposure
+  ``CameraProfile`` and each ``PerWavelengthCameraSettings``.  They are parsed
+  strictly on load: ``full_frame_peak_pixel`` must be a finite number (bool and
+  string values are rejected, not coerced) and ``full_frame_saturated_pixel_count``
+  must be a non-negative integer.  Backup safe-exposure
   candidates published in ``safe_profiles_by_gain`` /
   ``safe_profiles_by_wavelength`` carry the same ``peak_pixel_domain`` /
   ``full_frame_peak_pixel`` / ``full_frame_saturated_pixel_count`` provenance so

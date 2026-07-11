@@ -989,8 +989,8 @@ def test_broadband_calibration_explicit_mask_over_cap_needs_override() -> None:
     mask = np.ones((100, 100), dtype=bool)
     mask[:5, :] = False
 
-    # Without an override the over-cap explicit mask is rejected.
-    with pytest.raises(ExposureSearchError, match="max_excluded_fraction"):
+    # Without an override the over-cap explicit mask is rejected (fail-fast preflight).
+    with pytest.raises(BroadbandCalibrationError, match="max_excluded_fraction"):
         calibrate_broadband_camera_profile(
             _broadband_plan(None),
             camera=camera,
@@ -1156,3 +1156,79 @@ def test_per_band_calibration_rejects_numeric_valid_pixel_mask() -> None:
             runtime_policy="no_hardware",
         )
 
+
+def test_broadband_preflight_rejects_before_hardware_actions() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    plan = _broadband_plan({"type": "full_frame"})
+    mask = np.ones((200, 240), dtype=bool)
+
+    # Both a policy and an explicit mask: rejected in preflight before any
+    # LCD mask display or TLS pass-through move.
+    with pytest.raises(BroadbandCalibrationError, match="not both"):
+        calibrate_broadband_camera_profile(
+            plan,
+            camera=camera,
+            lcd=lcd,
+            tls=tls,
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+
+    assert lcd.last_mask_id is None
+    assert tls.pass_through_calls == 0
+    assert camera.acquire_counts == []
+
+
+def test_per_band_preflight_rejects_before_hardware_actions() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    pupil = PupilProfile.from_dict({
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "lcd_coordinate_convention": "physical_mono_xy",
+        "lcd_display_index": 1,
+        "subpixel_axis": 1,
+        "lcd_physical_center": [120.0, 100.0],
+        "lcd_physical_radius": 30.0,
+        "extra": {"physical_shape": [200, 240]},
+    })
+    plan = PerBandPupilOpenCalibrationPlan.from_dict({
+        "camera_profile_id": "per_band_pupil_open_v1",
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "frames_per_capture": 2,
+        "full_scale": 255,
+        "lcd_settle_ms": 0,
+        "allow_test_lcd_settle_below_refresh": True,
+        "valid_pixel_domain": {"type": "full_frame"},
+        "wavelengths": [
+            {
+                "wavelength_nm": 450,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 1,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+        ],
+    })
+    mask = np.ones((200, 240), dtype=bool)
+
+    with pytest.raises(PerBandCalibrationError, match="not both"):
+        calibrate_per_band_pupil_open_camera_profile(
+            plan,
+            pupil_profile=pupil,
+            camera=camera,
+            lcd=lcd,
+            tls=tls,
+            valid_pixel_mask=mask,
+            runtime_policy="no_hardware",
+        )
+
+    assert lcd.last_mask_id is None
+    assert tls.wavelengths == []
+    assert camera.acquire_counts == []

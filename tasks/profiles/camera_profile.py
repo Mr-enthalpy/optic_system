@@ -113,7 +113,9 @@ class PerWavelengthCameraSettings:
             saturation_margin=_optional_float(d.get("saturation_margin")),
             frames_per_capture=_optional_int(d.get("frames_per_capture")),
             peak_pixel_domain=_optional_str(d.get("peak_pixel_domain")),
-            full_frame_peak_pixel=_optional_float(d.get("full_frame_peak_pixel")),
+            full_frame_peak_pixel=_optional_finite_number(
+                d.get("full_frame_peak_pixel"), "full_frame_peak_pixel"
+            ),
             full_frame_saturated_pixel_count=_optional_count(
                 d.get("full_frame_saturated_pixel_count"),
                 "full_frame_saturated_pixel_count",
@@ -211,8 +213,9 @@ class CameraProfile:
             peak_pixel_domain=_optional_str(
                 d.get("peak_pixel_domain", camera_block.get("peak_pixel_domain"))
             ),
-            full_frame_peak_pixel=_optional_float(
-                d.get("full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel"))
+            full_frame_peak_pixel=_optional_finite_number(
+                d.get("full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel")),
+                "full_frame_peak_pixel",
             ),
             full_frame_saturated_pixel_count=_optional_count(
                 d.get(
@@ -466,6 +469,19 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         raise ProfileError(f"expected float or null, got {value!r}") from None
+
+
+def _optional_finite_number(value: Any, name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ProfileError(f"{name} must be a number or null")
+    import math
+
+    result = float(value)
+    if not math.isfinite(result):
+        raise ProfileError(f"{name} must be finite when present")
+    return result
 
 
 def _optional_int(value: Any) -> int | None:
