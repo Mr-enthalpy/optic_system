@@ -257,6 +257,16 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   compatibility + `.validate()` + `artifact_type` match), never from filename.
   It returns a `ValidityResult` rather than raising.
 
+Provenance reconstructibility (valid-pixel-domain records):
+
+- Policy-derived valid-pixel domains are reconstructible from the record:
+  `resolved_policy` + `frame_shape_hw` fully regenerate the mask.
+- Explicit-mask domains carry resolved, identity-verifiable provenance only: the
+  record stores the pixel counts and a versioned `mask_digest`, which verify
+  whether another mask is identical but do not by themselves reconstruct the
+  excluded pixel positions. Persisting or referencing the actual mask is deferred
+  to the `SensorValidPixelProfile` artifact (Round 2).
+
 ## Task architecture
 
 Historical files under `tasks/` are not assumed to define the current architecture.
