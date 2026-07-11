@@ -180,6 +180,13 @@ def calibrate_broadband_camera_profile(
         valid_pixel_mask=valid_pixel_mask,
     )
     recommended = select_recommended_probe(rows)
+    frame_shape = _recommended_frame_shape(recommended)
+    valid_pixel_domain_record = describe_valid_pixel_domain(
+        frame_shape=frame_shape,
+        valid_pixel_domain=plan.valid_pixel_domain,
+        valid_pixel_mask=valid_pixel_mask,
+    )
+    full_frame_peak, full_frame_saturated = _full_frame_peak_stats(recommended)
     profile = CameraProfile(
         camera_profile_id=plan.camera_profile_id,
         profile_family=BROADBAND_PASSTHROUGH,
@@ -203,15 +210,16 @@ def calibrate_broadband_camera_profile(
         peak_pixel=float(recommended.peak_pixel_burst),
         saturation_margin=float(recommended.peak_margin_to_full_scale),
         frames_per_capture=int(plan.frames_per_capture),
+        peak_pixel_domain="valid_pixel_domain",
+        full_frame_peak_pixel=full_frame_peak,
+        full_frame_saturated_pixel_count=full_frame_saturated,
         extra={
             "selection_policy": "pass_through_gain_outer_binary_exposure_inner",
             "default_selection_policy": "low_gain_then_strong_signal_then_long_exposure",
             "full_scale": float(plan.full_scale),
             "exposure_search": exposure_search.to_dict(),
             "safe_profiles_by_gain": safe_exposure_profiles_by_gain(rows),
-            "valid_pixel_domain": describe_valid_pixel_domain(
-                plan.valid_pixel_domain, valid_pixel_mask
-            ),
+            "valid_pixel_domain": valid_pixel_domain_record,
             "timing_policy": {
                 "lcd_settle_ms": float(plan.lcd_settle_ms),
                 "allow_test_lcd_settle_below_refresh": bool(
@@ -308,6 +316,27 @@ def _coerce_domain(value: Any) -> dict[str, Any] | None:
         return coerce_valid_pixel_domain(value)
     except ValidPixelDomainError as exc:
         raise BroadbandCalibrationError(str(exc)) from exc
+
+
+def _recommended_frame_shape(recommended: ExposureProbeResult) -> tuple[int, int]:
+    report = recommended.metadata.get("saturation_report") or {}
+    shape = report.get("frame_shape_hw")
+    if not isinstance(shape, (list, tuple)) or len(shape) != 2:
+        raise BroadbandCalibrationError(
+            "recommended probe is missing saturation_report.frame_shape_hw"
+        )
+    return (int(shape[0]), int(shape[1]))
+
+
+def _full_frame_peak_stats(
+    recommended: ExposureProbeResult,
+) -> tuple[float | None, int | None]:
+    report = recommended.metadata.get("saturation_report") or {}
+    peak = report.get("full_frame_peak_pixel_burst")
+    saturated = report.get("full_frame_saturated_pixel_count")
+    peak_val = float(peak) if peak is not None else None
+    saturated_val = int(saturated) if saturated is not None else None
+    return peak_val, saturated_val
 
 
 def _settle_lcd(settle_ms: float, *, allow_test_below_refresh: bool = False) -> None:

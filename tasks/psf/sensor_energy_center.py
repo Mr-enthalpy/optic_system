@@ -286,7 +286,9 @@ def derive_sensor_energy_center_profile(
             "method": "percentile",
             "percentile": float(bg_percentile),
             "domain": "valid_pixels",
-            "valid_pixel_domain": _valid_pixel_domain_record(valid_pixel_domain, valid_pixel_mask),
+            "valid_pixel_domain": _valid_pixel_domain_record(
+                descriptor.frame_shape, valid_pixel_domain, valid_pixel_mask
+            ),
             "thesis_algorithm_source": "audited_thesis_energy_center_algorithm",
         },
         corr_policy={
@@ -381,10 +383,15 @@ def _valid_mask_from_domain(
 
 
 def _valid_pixel_domain_record(
+    frame_shape: tuple[int, int],
     valid_pixel_domain: dict[str, Any] | None,
     valid_pixel_mask: np.ndarray | None,
 ) -> dict[str, Any]:
-    return describe_valid_pixel_domain(valid_pixel_domain, valid_pixel_mask)
+    return describe_valid_pixel_domain(
+        frame_shape=frame_shape,
+        valid_pixel_domain=valid_pixel_domain,
+        valid_pixel_mask=valid_pixel_mask,
+    )
 
 
 def _wavelength_key(value: float) -> str:

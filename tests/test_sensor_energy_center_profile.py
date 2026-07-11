@@ -221,16 +221,17 @@ def test_valid_pixel_domain_excludes_contaminating_region(tmp_path: Path) -> Non
     filtered = derive_sensor_energy_center_profile(
         survey_h5,
         output_json,
-        valid_pixel_domain={"type": "exclude_top_rows", "top_rows": 8},
+        valid_pixel_domain={"type": "exclude_xyxy", "xyxy": [0, 0, 6, 6]},
     )
 
     assert contaminated.center_xy[0] < 10.0
     assert abs(filtered.center_xy[0] - 40.0) < 0.1
     assert abs(filtered.center_xy[1] - 32.0) < 0.1
-    assert filtered.bg_policy["valid_pixel_domain"] == {
-        "type": "exclude_top_rows",
-        "top_rows": 8,
+    assert filtered.bg_policy["valid_pixel_domain"]["resolved_policy"] == {
+        "type": "exclude_xyxy",
+        "xyxy": [0, 0, 6, 6],
     }
+    assert filtered.bg_policy["valid_pixel_domain"]["excluded_pixel_count"] == 36
 
 
 def test_rejects_raw_frames_avg_input(tmp_path: Path) -> None:

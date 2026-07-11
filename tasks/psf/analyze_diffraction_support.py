@@ -20,6 +20,7 @@ from tasks.artifacts.json_io import (
 from tasks.runtime_mode import RuntimePolicy
 from tasks.valid_pixel_domain import (
     ValidPixelDomainError,
+    describe_valid_pixel_domain,
     resolve_valid_pixel_mask,
 )
 
@@ -69,6 +70,7 @@ class PeakSupportAnalysisManifest:
     entry_mask_ids: list[str]
     entry_wavelengths_nm: list[float]
     notes: str | None = None
+    valid_pixel_domain: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PeakSupportAnalysisManifest":
@@ -87,6 +89,10 @@ class PeakSupportAnalysisManifest:
             entry_mask_ids=[str(x) for x in data["entry_mask_ids"]],
             entry_wavelengths_nm=[float(x) for x in data["entry_wavelengths_nm"]],
             notes=data.get("notes"),
+            valid_pixel_domain=(
+                dict(data["valid_pixel_domain"])
+                if data.get("valid_pixel_domain") is not None else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -290,6 +296,10 @@ def analyze_diffraction_support(
         entry_mask_ids=survey.mask_ids,
         entry_wavelengths_nm=survey.entry_wavelengths_nm,
         notes=notes,
+        valid_pixel_domain=describe_valid_pixel_domain(
+            frame_shape=survey.frame_shape,
+            valid_pixel_domain=valid_pixel_domain,
+        ),
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

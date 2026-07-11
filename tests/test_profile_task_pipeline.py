@@ -395,10 +395,10 @@ def test_exposure_binary_search_does_not_probe_upper_when_lower_unsafe() -> None
 
 
 def test_capture_safety_reports_excluded_bad_pixel_saturation_without_changing_decision() -> None:
-    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst = np.full((2, 200, 200), 100.0, dtype=np.float64)
     burst[1, 0, 0] = 255.0
     avg = burst.mean(axis=0)
-    valid_mask = np.ones((3, 3), dtype=bool)
+    valid_mask = np.ones((200, 200), dtype=bool)
     valid_mask[0, 0] = False
 
     row = evaluate_capture_safety(
@@ -422,10 +422,10 @@ def test_capture_safety_reports_excluded_bad_pixel_saturation_without_changing_d
 
 
 def test_capture_safety_saturation_report_uses_strict_json_for_nonfinite_excluded_pixels() -> None:
-    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst = np.full((2, 200, 200), 100.0, dtype=np.float64)
     burst[1, 0, 0] = np.inf
     avg = burst.mean(axis=0)
-    valid_mask = np.ones((3, 3), dtype=bool)
+    valid_mask = np.ones((200, 200), dtype=bool)
     valid_mask[0, 0] = False
 
     row = evaluate_capture_safety(
@@ -633,6 +633,76 @@ def test_per_band_pupil_open_calibration_outputs_profile() -> None:
     assert profile.extra["timing_policy"]["allow_test_lcd_settle_below_refresh"] is True
 
 
+def test_per_band_calibration_records_domain_and_dual_peak() -> None:
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = TopRowStuckCamera(lcd=lcd, frame_shape=(200, 240))
+    tls = FakePassThroughTLS()
+    pupil = PupilProfile.from_dict({
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "lcd_coordinate_convention": "physical_mono_xy",
+        "lcd_display_index": 1,
+        "subpixel_axis": 1,
+        "lcd_physical_center": [120.0, 100.0],
+        "lcd_physical_radius": 30.0,
+        "extra": {"physical_shape": [200, 240]},
+    })
+    domain = {"type": "exclude_top_rows", "top_rows": 1}
+    plan = PerBandPupilOpenCalibrationPlan.from_dict({
+        "camera_profile_id": "per_band_pupil_open_v1",
+        "pupil_profile_id": "pupil_profile_scan_v1",
+        "frames_per_capture": 2,
+        "full_scale": 255,
+        "lcd_settle_ms": 0,
+        "allow_test_lcd_settle_below_refresh": True,
+        "valid_pixel_domain": domain,
+        "wavelengths": [
+            {
+                "wavelength_nm": 450,
+                "exposure_search": {
+                    "min_exposure_us": 600,
+                    "max_exposure_us": 1200,
+                    "gains_db": [0.0],
+                    "iterations": 3,
+                    "camera_param_settle_ms": 0,
+                    "discard_frames_after_param_change": 0,
+                },
+            },
+        ],
+    })
+
+    result = calibrate_per_band_pupil_open_camera_profile(
+        plan,
+        pupil_profile=pupil,
+        camera=camera,
+        lcd=lcd,
+        tls=tls,
+        runtime_policy="no_hardware",
+    )
+
+    profile = result.camera_profile
+    record = profile.extra["valid_pixel_domain"]
+    assert record["resolved_policy"] == domain
+    assert record["frame_shape_hw"] == [200, 240]
+    assert record["mask_digest"].startswith("sha256:")
+
+    settings = profile.per_wavelength["450"]
+    assert settings.peak_pixel_domain == "valid_pixel_domain"
+    assert settings.full_frame_peak_pixel is not None
+    assert settings.full_frame_saturated_pixel_count is not None
+    # The excluded stuck top row inflates the full-frame peak beyond the valid peak.
+    assert settings.full_frame_peak_pixel >= settings.peak_pixel
+
+
+def test_per_band_plan_rejects_invalid_domain_at_parse() -> None:
+    with pytest.raises(PerBandCalibrationError, match="top_rows must be > 0"):
+        PerBandPupilOpenCalibrationPlan.from_dict({
+            "camera_profile_id": "per_band_pupil_open_v1",
+            "pupil_profile_id": "pupil_profile_scan_v1",
+            "valid_pixel_domain": {"type": "exclude_top_rows", "top_rows": 0},
+            "wavelengths": [{"wavelength_nm": 450}],
+        })
+
+
 def test_profile_scan_stages_resume_from_saved_artifacts(tmp_path: Path) -> None:
     broadband_lcd = SyntheticLCD(shape=(80, 120))
     broadband_camera = SyntheticCamera(broadband_lcd)
@@ -806,8 +876,8 @@ def test_broadband_calibration_without_domain_rejects_stuck_bad_pixel() -> None:
 
 
 def test_broadband_calibration_excludes_bad_pixel_domain_and_records_policy() -> None:
-    lcd = SyntheticLCD(shape=(80, 120))
-    camera = TopRowStuckCamera(lcd=lcd)
+    lcd = SyntheticLCD(shape=(200, 240))
+    camera = TopRowStuckCamera(lcd=lcd, frame_shape=(200, 240))
     domain = {"type": "exclude_top_rows", "top_rows": 1}
 
     result = calibrate_broadband_camera_profile(
@@ -820,7 +890,15 @@ def test_broadband_calibration_excludes_bad_pixel_domain_and_records_policy() ->
 
     profile = result.camera_profile
     assert profile.exposure_us is not None
-    assert profile.extra["valid_pixel_domain"] == domain
+    record = profile.extra["valid_pixel_domain"]
+    assert record["type"] == "exclude_top_rows"
+    assert record["resolved_policy"] == domain
+    assert record["frame_shape_hw"] == [200, 240]
+    assert record["mask_digest"].startswith("sha256:")
+    # Dual peak provenance: valid-domain peak vs full-frame peak.
+    assert profile.peak_pixel_domain == "valid_pixel_domain"
+    assert profile.full_frame_peak_pixel is not None
+    assert profile.full_frame_saturated_pixel_count is not None
     # Safety decision used the valid domain; the excluded stuck row is still reported.
     report = result.probe_results[0].metadata["saturation_report"]
     assert report["valid_domain_saturated_pixel_count"] == 0
@@ -847,7 +925,7 @@ def test_broadband_plan_rejects_non_mapping_valid_pixel_domain() -> None:
 
 
 def test_capture_safety_accepts_valid_pixel_domain_policy() -> None:
-    burst = np.full((2, 3, 3), 100.0, dtype=np.float64)
+    burst = np.full((2, 200, 200), 100.0, dtype=np.float64)
     burst[:, 0, :] = 255.0
     avg = burst.mean(axis=0)
 
@@ -871,5 +949,5 @@ def test_capture_safety_accepts_valid_pixel_domain_policy() -> None:
             gain_db=0.0,
             full_scale=255.0,
             valid_pixel_domain={"type": "full_frame"},
-            valid_pixel_mask=np.ones((3, 3), dtype=bool),
+            valid_pixel_mask=np.ones((200, 200), dtype=bool),
         )

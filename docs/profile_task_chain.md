@@ -85,13 +85,41 @@ real TLS adapter in hardware mode.
   condition. Configuration errors, frame-shape errors, and backend exceptions
   must fail the task.
 - Bad-pixel exclusion is driven by the plan-level ``valid_pixel_domain``
-  policy.  The policy is resolved to a boolean mask at capture time (when the
-  frame shape is known) and passed to the exposure-search safety decision.
-  The calibration persists the policy in ``CameraProfile.extra["valid_pixel_domain"]``
-  for provenance.  The shared policy vocabulary (``tasks/valid_pixel_domain.py``)
-  supports ``full_frame``, ``exclude_top_rows``, and ``exclude_xyxy``.  Saturation
-  reports must still record full-burst all-pixel saturation diagnostics so
-  excluded saturated pixels are auditable without changing the safety decision.
+  policy.  This is *valid-pixel-domain-aware calibration/analysis* — bad pixels
+  are excluded from measurement decisions and provenance is recorded; it is not
+  end-to-end bad-pixel correction of scientific PSF data (that is a later,
+  dictionary-level concern).
+- The policy vocabulary (``tasks/valid_pixel_domain.py``) supports ``full_frame``,
+  ``exclude_top_rows`` (requires a positive ``top_rows``), and ``exclude_xyxy``
+  (requires ``x1 > x0`` and ``y1 > y0``).  ``coerce_valid_pixel_domain`` performs
+  strict frame-independent validation at plan-parse time: unknown ``type`` values,
+  unknown fields, missing/zero ``top_rows``, and inverted/negative rectangles are
+  rejected (fail-fast).
+- At capture time the policy is resolved to a boolean mask; out-of-bounds
+  rectangles are rejected (never silently clipped), the mask must leave at least
+  one valid pixel, and the excluded fraction must not exceed
+  ``MAX_EXCLUDED_FRACTION`` (default ``0.01``).  Excluding more requires an
+  explicit ``large_exclusion_override: true`` together with a non-empty
+  ``large_exclusion_reason``.  The override lifts only the fraction cap; it never
+  relaxes coordinate validity, field completeness, or the "at least one valid
+  pixel" rule.
+- The calibration persists a **resolved-domain provenance record** in
+  ``CameraProfile.extra["valid_pixel_domain"]`` (via ``describe_valid_pixel_domain``,
+  which requires the frame shape).  The record includes ``resolved_policy``,
+  ``frame_shape_hw``, ``valid_pixel_count``, ``excluded_pixel_count``,
+  ``excluded_fraction``, ``mask_digest`` (a versioned sha256 of the resolved mask),
+  and the override flag/reason.  ``analyze_diffraction_support`` records the same
+  resolved record in ``PeakSupportAnalysisManifest.valid_pixel_domain`` so reports
+  using different exclusions are distinguishable.
+- Saturation reports must still record full-burst all-pixel saturation
+  diagnostics so excluded saturated pixels are auditable without changing the
+  safety decision.
+- Peak provenance is disambiguated: ``peak_pixel`` remains the exposure-safety
+  decision peak (valid domain) and new profiles set
+  ``peak_pixel_domain="valid_pixel_domain"``.  ``full_frame_peak_pixel`` and
+  ``full_frame_saturated_pixel_count`` record the unmasked full-burst statistics.
+  These fields are optional (backward compatible) and appear on both the broadband
+  ``CameraProfile`` and each ``PerWavelengthCameraSettings``.
 - The default selected profile should prefer low gain, then stronger signal,
   then longer exposure.
 

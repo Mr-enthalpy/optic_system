@@ -9,11 +9,25 @@ This module is the single source of truth for the policy vocabulary so that the
 exposure-search, sensor-energy-center, and diffraction-support pipelines all
 accept and record the same ``valid_pixel_domain`` policies.
 
+This is *valid-pixel-domain-aware calibration and analysis*: bad pixels are
+excluded from measurement decisions and provenance is recorded.  It is **not**
+end-to-end bad-pixel correction of the scientific PSF data (interpolation /
+median replacement of defective pixels in processed PSF products is a separate,
+later concern that belongs to the PSF-dictionary layer, not here).
+
 Policy vocabulary (``valid_pixel_domain`` is a mapping with a ``type`` key):
 
 * ``{"type": "full_frame"}`` -- keep every pixel (the default when omitted).
-* ``{"type": "exclude_top_rows", "top_rows": N}`` -- drop the top ``N`` rows.
-* ``{"type": "exclude_xyxy", "xyxy": [x0, y0, x1, y1]}`` -- drop a rectangle.
+* ``{"type": "exclude_top_rows", "top_rows": N}`` -- drop the top ``N`` rows
+  (``N`` must be a positive integer).
+* ``{"type": "exclude_xyxy", "xyxy": [x0, y0, x1, y1]}`` -- drop a rectangle
+  (``x1 > x0`` and ``y1 > y0``; out-of-bounds rectangles are rejected, not
+  clipped).
+
+Any policy may also carry ``large_exclusion_override`` / ``large_exclusion_reason``
+to lift the ``MAX_EXCLUDED_FRACTION`` cap for a documented large sensor defect.
+The override lifts *only* the exclusion-fraction cap; it never relaxes coordinate
+validity, field completeness, or the "at least one valid pixel" requirement.
 
 A caller may instead pass an explicit boolean ``valid_pixel_mask`` array, but
 not both a policy and a mask.
@@ -21,6 +35,8 @@ not both a policy and a mask.
 
 from __future__ import annotations
 
+import hashlib
+import struct
 from typing import Any
 
 import numpy as np
@@ -31,21 +47,107 @@ EXCLUDE_TOP_ROWS = "exclude_top_rows"
 EXCLUDE_XYXY = "exclude_xyxy"
 EXPLICIT_MASK = "explicit_mask"
 
+KNOWN_POLICY_TYPES = frozenset({FULL_FRAME, EXCLUDE_TOP_ROWS, EXCLUDE_XYXY})
+
+# Default upper bound on the fraction of the frame a policy may exclude before an
+# explicit large_exclusion_override is required.
+MAX_EXCLUDED_FRACTION = 0.01
+
+# Provenance record schema version emitted by describe_valid_pixel_domain.
+VALID_PIXEL_DOMAIN_RECORD_SCHEMA_VERSION = 1
+
+# Common optional keys any policy may carry.
+_OVERRIDE_KEYS = frozenset({"large_exclusion_override", "large_exclusion_reason"})
+_ALLOWED_KEYS_BY_TYPE: dict[str, frozenset[str]] = {
+    FULL_FRAME: frozenset({"type"}) | _OVERRIDE_KEYS,
+    EXCLUDE_TOP_ROWS: frozenset({"type", "top_rows"}) | _OVERRIDE_KEYS,
+    EXCLUDE_XYXY: frozenset({"type", "xyxy"}) | _OVERRIDE_KEYS,
+}
+
 
 class ValidPixelDomainError(ValueError):
     """Raised when a valid-pixel-domain policy or mask is invalid."""
 
 
-def resolve_valid_pixel_mask(
+def coerce_valid_pixel_domain(value: Any) -> dict[str, Any] | None:
+    """Validate and canonicalize a plan-supplied ``valid_pixel_domain`` value.
+
+    Performs all *frame-shape-independent* validation up front (fail-fast at plan
+    parse time), and returns a canonical dict containing only known keys.  Returns
+    ``None`` when ``value`` is ``None``.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValidPixelDomainError("valid_pixel_domain must be a mapping or null")
+
+    policy_type = value.get("type", FULL_FRAME)
+    if policy_type is None:
+        policy_type = FULL_FRAME
+    policy_type = str(policy_type)
+    if policy_type not in KNOWN_POLICY_TYPES:
+        raise ValidPixelDomainError(
+            f"unsupported valid_pixel_domain.type: {policy_type!r}; "
+            f"known types: {sorted(KNOWN_POLICY_TYPES)}"
+        )
+
+    unknown = set(value) - _ALLOWED_KEYS_BY_TYPE[policy_type]
+    if unknown:
+        raise ValidPixelDomainError(
+            f"unknown valid_pixel_domain field(s) for type {policy_type!r}: "
+            f"{sorted(unknown)}"
+        )
+
+    canonical: dict[str, Any] = {"type": policy_type}
+
+    if policy_type == EXCLUDE_TOP_ROWS:
+        if "top_rows" not in value:
+            raise ValidPixelDomainError(
+                "exclude_top_rows requires an integer top_rows field"
+            )
+        top_rows = _require_int(value["top_rows"], "valid_pixel_domain.top_rows")
+        if top_rows <= 0:
+            raise ValidPixelDomainError("valid_pixel_domain.top_rows must be > 0")
+        canonical["top_rows"] = top_rows
+    elif policy_type == EXCLUDE_XYXY:
+        if "xyxy" not in value:
+            raise ValidPixelDomainError(
+                "exclude_xyxy requires a four-integer xyxy field"
+            )
+        x0, y0, x1, y1 = _int_quad(value["xyxy"], "valid_pixel_domain.xyxy")
+        if x1 <= x0 or y1 <= y0:
+            raise ValidPixelDomainError(
+                "valid_pixel_domain.xyxy must satisfy x1 > x0 and y1 > y0"
+            )
+        if x0 < 0 or y0 < 0:
+            raise ValidPixelDomainError(
+                "valid_pixel_domain.xyxy coordinates must be non-negative"
+            )
+        canonical["xyxy"] = [x0, y0, x1, y1]
+
+    override, reason = _coerce_override(value)
+    if override:
+        canonical["large_exclusion_override"] = True
+        canonical["large_exclusion_reason"] = reason
+    elif "large_exclusion_override" in value or "large_exclusion_reason" in value:
+        # Explicit false override: keep it visible but drop empty reason.
+        canonical["large_exclusion_override"] = False
+
+    return canonical
+
+
+def resolve_valid_pixel_domain(
     shape: tuple[int, int],
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
-) -> np.ndarray:
-    """Resolve a ``[H, W]`` boolean valid-pixel mask.
+    *,
+    max_excluded_fraction: float = MAX_EXCLUDED_FRACTION,
+) -> "ResolvedValidPixelDomain":
+    """Resolve a policy or explicit mask into a mask plus full provenance.
 
-    ``True`` marks a pixel that participates in the decision.  Provide either a
-    ``valid_pixel_domain`` policy or an explicit ``valid_pixel_mask`` array, not
-    both.  Returns an all-``True`` mask when neither is given.
+    Enforces the frame-shape-dependent constraints: out-of-bounds rectangles are
+    rejected, at least one valid pixel must remain, and the excluded fraction must
+    not exceed ``max_excluded_fraction`` unless ``large_exclusion_override`` is set.
     """
     h, w = int(shape[0]), int(shape[1])
     if valid_pixel_domain is not None and valid_pixel_mask is not None:
@@ -53,68 +155,231 @@ def resolve_valid_pixel_mask(
             "pass either valid_pixel_domain or valid_pixel_mask, not both"
         )
 
+    override = False
+    reason: str | None = None
+    requested_policy: dict[str, Any] | None = None
+    resolved_policy: dict[str, Any]
+
     if valid_pixel_mask is not None:
         mask = np.asarray(valid_pixel_mask, dtype=bool)
         if mask.shape != (h, w):
             raise ValidPixelDomainError(
                 f"valid_pixel_mask shape {mask.shape} does not match {(h, w)}"
             )
-        if not np.any(mask):
-            raise ValidPixelDomainError("valid_pixel_mask leaves zero valid pixels")
-        return mask
-
-    mask = np.ones((h, w), dtype=bool)
-    if not valid_pixel_domain:
-        return mask
-
-    policy_type = str(valid_pixel_domain.get("type") or FULL_FRAME)
-    if policy_type == FULL_FRAME:
-        return mask
-    if policy_type == EXCLUDE_TOP_ROWS:
-        top_rows = int(valid_pixel_domain.get("top_rows", 0))
-        if top_rows < 0:
-            raise ValidPixelDomainError("valid_pixel_domain.top_rows must be non-negative")
-        if top_rows > 0:
-            mask[:top_rows, :] = False
-    elif policy_type == EXCLUDE_XYXY:
-        x0, y0, x1, y1 = _int_quad(valid_pixel_domain.get("xyxy"), "valid_pixel_domain.xyxy")
-        x0 = max(0, min(w, x0))
-        x1 = max(0, min(w, x1))
-        y0 = max(0, min(h, y0))
-        y1 = max(0, min(h, y1))
-        if x1 > x0 and y1 > y0:
-            mask[y0:y1, x0:x1] = False
+        resolved_policy = {"type": EXPLICIT_MASK}
     else:
-        raise ValidPixelDomainError(f"unsupported valid_pixel_domain.type: {policy_type}")
+        canonical = coerce_valid_pixel_domain(valid_pixel_domain)
+        requested_policy = dict(valid_pixel_domain) if valid_pixel_domain else None
+        if not canonical:
+            resolved_policy = {"type": FULL_FRAME}
+            mask = np.ones((h, w), dtype=bool)
+        else:
+            override = bool(canonical.get("large_exclusion_override", False))
+            reason = canonical.get("large_exclusion_reason")
+            resolved_policy = canonical
+            mask = _build_mask_from_policy(canonical, h, w)
 
-    if not np.any(mask):
+    valid_count = int(np.count_nonzero(mask))
+    total = int(mask.size)
+    excluded_count = total - valid_count
+    excluded_fraction = excluded_count / total if total else 0.0
+
+    if valid_count == 0:
         raise ValidPixelDomainError("valid_pixel_domain leaves zero valid pixels")
-    return mask
+    if excluded_fraction > float(max_excluded_fraction) and not override:
+        raise ValidPixelDomainError(
+            f"valid_pixel_domain excludes {excluded_fraction:.4f} of the frame, "
+            f"above the max_excluded_fraction cap {float(max_excluded_fraction):.4f}; "
+            "set large_exclusion_override with a large_exclusion_reason to allow it"
+        )
+
+    return ResolvedValidPixelDomain(
+        mask=mask,
+        frame_shape_hw=(h, w),
+        resolved_policy=resolved_policy,
+        requested_policy=requested_policy,
+        valid_pixel_count=valid_count,
+        excluded_pixel_count=excluded_count,
+        excluded_fraction=excluded_fraction,
+        mask_digest=valid_pixel_mask_digest(mask),
+        large_exclusion_override=override,
+        large_exclusion_reason=reason,
+    )
 
 
-def coerce_valid_pixel_domain(value: Any) -> dict[str, Any] | None:
-    """Validate a plan-supplied ``valid_pixel_domain`` value, returning it as a dict."""
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValidPixelDomainError("valid_pixel_domain must be a mapping or null")
-    return dict(value)
+def resolve_valid_pixel_mask(
+    shape: tuple[int, int],
+    valid_pixel_domain: dict[str, Any] | None = None,
+    valid_pixel_mask: np.ndarray | None = None,
+    *,
+    max_excluded_fraction: float = MAX_EXCLUDED_FRACTION,
+) -> np.ndarray:
+    """Resolve a ``[H, W]`` boolean valid-pixel mask.
+
+    ``True`` marks a pixel that participates in the decision.  Provide either a
+    ``valid_pixel_domain`` policy or an explicit ``valid_pixel_mask`` array, not
+    both.  Returns an all-``True`` mask when neither is given.  Thin wrapper over
+    :func:`resolve_valid_pixel_domain` for callers that only need the mask.
+    """
+    return resolve_valid_pixel_domain(
+        shape,
+        valid_pixel_domain,
+        valid_pixel_mask,
+        max_excluded_fraction=max_excluded_fraction,
+    ).mask
 
 
 def describe_valid_pixel_domain(
+    *,
+    frame_shape: tuple[int, int],
     valid_pixel_domain: dict[str, Any] | None = None,
     valid_pixel_mask: np.ndarray | None = None,
+    max_excluded_fraction: float = MAX_EXCLUDED_FRACTION,
 ) -> dict[str, Any]:
-    """Return a JSON-serializable provenance record for the resolved domain."""
-    if valid_pixel_domain is not None:
-        return dict(valid_pixel_domain)
-    if valid_pixel_mask is not None:
-        m = np.asarray(valid_pixel_mask)
-        return {"type": EXPLICIT_MASK, "shape_hw": [int(m.shape[0]), int(m.shape[1])]}
-    return {"type": FULL_FRAME}
+    """Return a JSON-serializable resolved provenance record for the domain.
+
+    ``frame_shape`` is required: the record always reflects the actual resolved
+    mask (counts, fraction, digest), never just the requested policy text.
+    """
+    resolved = resolve_valid_pixel_domain(
+        frame_shape,
+        valid_pixel_domain,
+        valid_pixel_mask,
+        max_excluded_fraction=max_excluded_fraction,
+    )
+    return resolved.to_record()
+
+
+def valid_pixel_mask_digest(mask: np.ndarray) -> str:
+    """Return a stable sha256 digest identifying the resolved boolean mask.
+
+    The digest identifies the *resolved mask*, not the policy text: two different
+    policies that resolve to the same mask deliberately produce the same digest.
+    A version prefix and fixed-width shape encoding guard against layout ambiguity
+    and future serialization changes.
+    """
+    canonical = np.ascontiguousarray(mask, dtype=np.uint8)
+    if canonical.ndim != 2:
+        raise ValidPixelDomainError("valid_pixel_mask must be 2D for digesting")
+    h, w = int(canonical.shape[0]), int(canonical.shape[1])
+    payload = (
+        b"optic_system.valid_pixel_mask.v1\0"
+        + struct.pack(">II", h, w)
+        + canonical.tobytes(order="C")
+    )
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+class ResolvedValidPixelDomain:
+    """Resolved valid-pixel mask plus reproducible provenance."""
+
+    __slots__ = (
+        "mask",
+        "frame_shape_hw",
+        "resolved_policy",
+        "requested_policy",
+        "valid_pixel_count",
+        "excluded_pixel_count",
+        "excluded_fraction",
+        "mask_digest",
+        "large_exclusion_override",
+        "large_exclusion_reason",
+    )
+
+    def __init__(
+        self,
+        *,
+        mask: np.ndarray,
+        frame_shape_hw: tuple[int, int],
+        resolved_policy: dict[str, Any],
+        requested_policy: dict[str, Any] | None,
+        valid_pixel_count: int,
+        excluded_pixel_count: int,
+        excluded_fraction: float,
+        mask_digest: str,
+        large_exclusion_override: bool,
+        large_exclusion_reason: str | None,
+    ) -> None:
+        self.mask = mask
+        self.frame_shape_hw = frame_shape_hw
+        self.resolved_policy = resolved_policy
+        self.requested_policy = requested_policy
+        self.valid_pixel_count = valid_pixel_count
+        self.excluded_pixel_count = excluded_pixel_count
+        self.excluded_fraction = excluded_fraction
+        self.mask_digest = mask_digest
+        self.large_exclusion_override = large_exclusion_override
+        self.large_exclusion_reason = large_exclusion_reason
+
+    def to_record(self) -> dict[str, Any]:
+        record: dict[str, Any] = {
+            "schema_version": VALID_PIXEL_DOMAIN_RECORD_SCHEMA_VERSION,
+            "type": str(self.resolved_policy.get("type")),
+            "frame_shape_hw": [int(self.frame_shape_hw[0]), int(self.frame_shape_hw[1])],
+            "resolved_policy": dict(self.resolved_policy),
+            "valid_pixel_count": int(self.valid_pixel_count),
+            "excluded_pixel_count": int(self.excluded_pixel_count),
+            "excluded_fraction": float(self.excluded_fraction),
+            "mask_digest": self.mask_digest,
+            "large_exclusion_override": bool(self.large_exclusion_override),
+            "large_exclusion_reason": self.large_exclusion_reason,
+        }
+        if self.requested_policy is not None and self.requested_policy != self.resolved_policy:
+            record["requested_policy"] = dict(self.requested_policy)
+        return record
+
+
+def _build_mask_from_policy(canonical: dict[str, Any], h: int, w: int) -> np.ndarray:
+    mask = np.ones((h, w), dtype=bool)
+    policy_type = canonical["type"]
+    if policy_type == FULL_FRAME:
+        return mask
+    if policy_type == EXCLUDE_TOP_ROWS:
+        top_rows = int(canonical["top_rows"])
+        if top_rows >= h:
+            raise ValidPixelDomainError(
+                f"valid_pixel_domain.top_rows {top_rows} covers the whole frame height {h}"
+            )
+        mask[:top_rows, :] = False
+        return mask
+    if policy_type == EXCLUDE_XYXY:
+        x0, y0, x1, y1 = canonical["xyxy"]
+        if x1 > w or y1 > h:
+            raise ValidPixelDomainError(
+                f"valid_pixel_domain.xyxy {canonical['xyxy']} is out of bounds for "
+                f"frame shape {(h, w)}"
+            )
+        mask[y0:y1, x0:x1] = False
+        return mask
+    raise ValidPixelDomainError(f"unsupported valid_pixel_domain.type: {policy_type}")
+
+
+def _coerce_override(value: dict[str, Any]) -> tuple[bool, str | None]:
+    override = value.get("large_exclusion_override", False)
+    if not isinstance(override, bool):
+        raise ValidPixelDomainError(
+            "valid_pixel_domain.large_exclusion_override must be a boolean"
+        )
+    reason = value.get("large_exclusion_reason")
+    if override:
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValidPixelDomainError(
+                "large_exclusion_override requires a non-empty large_exclusion_reason"
+            )
+        return True, reason.strip()
+    return False, None
+
+
+def _require_int(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValidPixelDomainError(f"{name} must be an integer")
+    return int(value)
 
 
 def _int_quad(value: Any, name: str) -> tuple[int, int, int, int]:
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         raise ValidPixelDomainError(f"{name} must contain four integers")
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValidPixelDomainError(f"{name} must contain four integers")
     return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))
