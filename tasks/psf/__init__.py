@@ -8,6 +8,10 @@ from .build_peak_patch_psf_dictionary import (
     PeakPatchPSFDictionaryManifest,
     build_peak_patch_psf_dictionary,
 )
+from .bad_pixel_correction import (
+    BadPixelCorrectionError,
+    correct_bad_pixels,
+)
 from .compact_dense_export import (
     CompactDenseExportError,
     render_peak_patch_dense_view,
@@ -41,6 +45,7 @@ from .sensor_energy_center import (
 
 __all__ = [
     "CompactDenseExportError",
+    "BadPixelCorrectionError",
     "DiffractionSupportAnalysisError",
     "FullFramePSFSurveyError",
     "FullFramePSFSurveyManifest",
@@ -56,6 +61,7 @@ __all__ = [
     "analyze_diffraction_support",
     "build_full_frame_psf_survey",
     "build_peak_patch_psf_dictionary",
+    "correct_bad_pixels",
     "derive_peak_layout_profile",
     "derive_sensor_energy_center_profile",
     "estimate_frame_energy_center",
