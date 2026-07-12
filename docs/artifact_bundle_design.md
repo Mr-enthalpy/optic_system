@@ -2,9 +2,10 @@
 
 ## Status
 
-This is the target contract for a later catalog implementation. It does not
-change existing task output paths, rewrite legacy manifests, or provide a
-global artifact lookup service.
+The local bundle data structures and integrity helpers now exist in
+`tasks/artifacts/bundle.py`. They do not change existing task output paths,
+rewrite legacy manifests, provide global artifact lookup, or implement a
+catalog.
 
 ## Location And Bundle Boundary
 
@@ -22,8 +23,9 @@ arbitrary HDF5 file or JSON sidecar:
 checks the resolved path remains under that root, including after resolving
 existing junctions or symlinks.
 
-Each generation directory will contain one canonical bundle manifest and its
-payloads. A representative future manifest is:
+Each generation directory may contain one canonical bundle manifest and its
+payloads. The current `ArtifactBundleManifest` serializes the following
+representation:
 
 ```json
 {
@@ -40,16 +42,52 @@ payloads. A representative future manifest is:
     "manifest_sidecar": {
       "rel_path": "survey.manifest.json",
       "media_type": "application/json",
+      "size_bytes": 456,
       "sha256": "sha256:..."
     }
   }
 }
 ```
 
-The bundle validator must verify payload presence, containment, digest, media
-type, and artifact-specific agreement between HDF5 and any JSON sidecar. The
-current `check_validity()` helper is not a bundle or HDF5 validator; unsupported
-types fail closed until those validators are implemented.
+`ArtifactLocation` stores only `storage_root` plus a relative generation
+directory. `ArtifactPayload` records a relative payload path, declared media
+type, size, and canonical `sha256:<64 lowercase hexadecimal characters>`.
+Payload paths cannot be absolute or contain parent traversal, and local
+validation repeats containment after resolving the candidate path under the
+generation directory.
+
+`validate_bundle()` verifies payload presence, regular-file status, byte count,
+and streaming SHA-256. When the explicit `data` payload role is present, it
+dispatches to `check_validity(bundle.artifact_type, data_path)` and requires the
+payload schema version to agree with the bundle. It does not infer an artifact
+type from a filename or media type. A bundle with inventory but without an
+explicit primary payload is `unsupported` for full artifact validation, not
+silently treated as valid.
+
+Bundle JSON writes use a temporary file, flush/close, and `os.replace`. The
+validator does not register an artifact, choose a current generation, promote
+trust, supersede a predecessor, or write catalog events.
+
+## Local Validation Boundary
+
+`tasks/artifacts/validation.py` distinguishes five local outcomes:
+
+- `valid`: the declared local representation is readable and structurally
+  consistent.
+- `invalid`: a validator found a structural contradiction.
+- `unsupported`: the type is known but no complete structural validator exists.
+- `legacy_unversioned`: the serialized representation lacks explicit schema
+  version metadata.
+- `unreadable`: the location or serialized payload cannot be read or parsed.
+
+These are not trust states. A structurally valid raw capture can remain
+scientifically unreviewed, and an unsupported representation is not evidence
+that it is corrupt. JSON manifest validation checks only the JSON contract;
+HDF5 validation checks embedded manifests plus the HDF5 datasets/metadata that
+belong to that artifact type.
+
+Storage roots are intentionally external to the repository: `StorageConfig`
+rejects a root inside the repository and a root that contains the repository.
 
 ## References And Legacy Paths
 
@@ -87,9 +125,10 @@ generation.
 
 ## Deferred Implementation
 
-Before catalog implementation, the repository needs artifact-specific JSON and
-HDF5 validators, payload inventories and digests, and a canonical logical-key
-definition. Destructive garbage collection is out of scope for the first
-catalog version; initial tooling may only report orphan candidates or a dry-run
-plan. Resume semantics for large HDF5 products will use committed-entry markers
-and finalized state, while small JSON-derived artifacts can use atomic writes.
+Before catalog implementation, the repository still needs a canonical logical
+key, immutable catalog records/events/index semantics, dependency-closure
+queries, and an explicit trust-promotion policy. Destructive garbage collection
+is out of scope for the first catalog version; initial tooling may only report
+orphan candidates or a dry-run plan. Resume semantics for large HDF5 products
+will use committed-entry markers and finalized state, while small JSON-derived
+artifacts can use atomic writes.

@@ -11,6 +11,7 @@ import numpy as np
 from tasks.artifacts.coordinate_frame import (
     camera_frame_extent_from_hdf5,
     require_full_sensor_extent,
+    validate_coordinate_frame_extent,
 )
 from tasks.artifacts.h5_arrays import read_mask_arrays
 from tasks.artifacts.json_io import (
@@ -93,6 +94,44 @@ class FullFramePSFSurveyManifest:
         data["frame_shape"] = list(self.frame_shape)
         emit_schema_version(data, "full_frame_psf_survey")
         return data
+
+    def validate(self) -> None:
+        """Validate JSON manifest structure, not its HDF5 sidecar payload."""
+        try:
+            validate_coordinate_frame_extent(
+                "sensor_full_frame",
+                self.camera_frame_extent,
+                self.frame_shape,
+                require_full_sensor=True,
+            )
+        except ValueError as exc:
+            raise FullFramePSFSurveyError(str(exc)) from exc
+
+        entry_count = len(self.entry_wavelengths_nm)
+        if entry_count < 1:
+            raise FullFramePSFSurveyError("survey manifest must contain entries")
+        if len(self.entry_illumination_json) != entry_count:
+            raise FullFramePSFSurveyError(
+                "entry_illumination_json length must match entry_wavelengths_nm"
+            )
+        if len(self.entry_mask_ids) != entry_count:
+            raise FullFramePSFSurveyError(
+                "entry_mask_ids length must match entry_wavelengths_nm"
+            )
+        if self.unique_wavelengths_nm != unique_preserve_order(
+            self.entry_wavelengths_nm
+        ):
+            raise FullFramePSFSurveyError(
+                "unique_wavelengths_nm must match entry order-preserving uniqueness"
+            )
+        if self.unique_mask_ids != unique_preserve_order(self.entry_mask_ids):
+            raise FullFramePSFSurveyError(
+                "unique_mask_ids must match entry order-preserving uniqueness"
+            )
+        if not isinstance(self.survey_policy, dict):
+            raise FullFramePSFSurveyError("survey_policy must be a mapping")
+        if not isinstance(self.full_frame_role, str) or not self.full_frame_role.strip():
+            raise FullFramePSFSurveyError("full_frame_role must be non-empty")
 
     def to_json(self, path: str | Path | None = None) -> str:
         text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
@@ -280,6 +319,9 @@ def _write_survey_h5(
     string_dtype = h5_string_dtype()
     with h5py.File(output_path, "w") as dst:
         dst.attrs["artifact_type"] = "full_frame_psf_survey"
+        from tasks.artifact_versioning import schema_compat
+
+        dst.attrs["schema_version"] = schema_compat("full_frame_psf_survey").current
         dst.attrs["survey_id"] = manifest.survey_id
         grp = dst.require_group("full_frame_survey")
         frames = grp.create_dataset(

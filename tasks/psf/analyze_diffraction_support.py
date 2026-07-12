@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ import h5py
 import numpy as np
 
 from tasks.artifacts.errors import ArtifactIOError
+from tasks.artifacts.coordinate_frame import validate_coordinate_frame_extent
 from tasks.artifacts.frame_source import (
     frame_dataset_count_and_shape as _shared_frame_dataset_count_and_shape,
     open_full_frame_survey_source,
@@ -109,6 +111,44 @@ class PeakSupportAnalysisManifest:
         emit_schema_version(out, "peak_support_analysis_report")
         out["frame_shape"] = [int(self.frame_shape[0]), int(self.frame_shape[1])]
         return out
+
+    def validate(self) -> None:
+        """Validate report-manifest structure without judging support quality."""
+        try:
+            validate_coordinate_frame_extent(
+                self.coordinate_frame,
+                self.camera_frame_extent,
+                self.frame_shape,
+            )
+        except ValueError as exc:
+            raise DiffractionSupportAnalysisError(str(exc)) from exc
+        if not isinstance(self.report_id, str) or not self.report_id.strip():
+            raise DiffractionSupportAnalysisError("report_id must be non-empty")
+        if not self.tau_values or not self.support_radii:
+            raise DiffractionSupportAnalysisError(
+                "tau_values and support_radii must be non-empty"
+            )
+        for name, values in (
+            ("tau_values", self.tau_values),
+            ("support_radii", self.support_radii),
+        ):
+            for index, value in enumerate(values):
+                if not math.isfinite(float(value)):
+                    raise DiffractionSupportAnalysisError(
+                        f"{name}[{index}] must be finite"
+                    )
+        if len(self.entry_mask_ids) != len(self.entry_wavelengths_nm):
+            raise DiffractionSupportAnalysisError(
+                "entry_mask_ids and entry_wavelengths_nm must have equal length"
+            )
+        for name, value in (
+            ("bg_policy", self.bg_policy),
+            ("corr_policy", self.corr_policy),
+            ("radial_policy", self.radial_policy),
+            ("component_policy", self.component_policy),
+        ):
+            if not isinstance(value, dict):
+                raise DiffractionSupportAnalysisError(f"{name} must be a mapping")
 
     def to_json_text(self) -> str:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)
@@ -659,6 +699,12 @@ def _write_report_h5(
 ) -> None:
     string_dtype = h5py.string_dtype(encoding="utf-8")
     with h5py.File(str(path), "w") as f:
+        from tasks.artifact_versioning import schema_compat
+
+        f.attrs["artifact_type"] = "peak_support_analysis_report"
+        f.attrs["schema_version"] = schema_compat(
+            "peak_support_analysis_report"
+        ).current
         support = f.require_group("support_analysis")
         support.create_dataset("tau_values", data=np.asarray(tau_values, dtype=np.float64))
         support.create_dataset("support_radii", data=np.asarray(support_radii, dtype=np.float64))

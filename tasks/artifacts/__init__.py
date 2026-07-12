@@ -8,6 +8,16 @@ from .coordinate_frame import (
     read_camera_frame_extent_from_group,
     resolve_coordinate_frame,
     validate_coordinate_frame_descriptor,
+    validate_coordinate_frame_extent,
+)
+from .bundle import (
+    ArtifactBundleError,
+    ArtifactBundleManifest,
+    ArtifactLocation,
+    ArtifactPayload,
+    compute_file_sha256,
+    inspect_payload,
+    validate_bundle,
 )
 from .frame_source import (
     FrameSource,
@@ -35,7 +45,11 @@ from .manifest import (
 
 __all__ = [
     "ArtifactManifestBase",
+    "ArtifactBundleError",
+    "ArtifactBundleManifest",
     "ArtifactRef",
+    "ArtifactLocation",
+    "ArtifactPayload",
     "CameraFrameExtent",
     "CoordinateFrameDescriptor",
     "FrameSource",
@@ -46,9 +60,11 @@ __all__ = [
     "camera_frame_extent_json_dict",
     "camera_frame_extent_to_dict",
     "canonical_json",
+    "compute_file_sha256",
     "decode_h5_string",
     "frame_dataset_count_and_shape",
     "json_dumps_stable",
+    "inspect_payload",
     "manifest_from_json_dict",
     "manifest_to_json_dict",
     "open_full_frame_survey_source",
@@ -58,6 +74,8 @@ __all__ = [
     "read_manifest_json",
     "resolve_coordinate_frame",
     "validate_coordinate_frame_descriptor",
+    "validate_coordinate_frame_extent",
+    "validate_bundle",
     "write_json_dataset",
     "write_manifest_json",
 ]

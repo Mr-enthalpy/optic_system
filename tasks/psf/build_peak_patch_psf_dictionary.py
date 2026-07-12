@@ -11,6 +11,7 @@ import numpy as np
 from tasks.artifacts.coordinate_frame import (
     camera_frame_extent_from_hdf5,
     require_full_sensor_extent,
+    validate_coordinate_frame_extent,
 )
 from tasks.artifacts.h5_arrays import read_mask_arrays
 from tasks.artifacts.json_io import (
@@ -102,6 +103,59 @@ class PeakPatchPSFDictionaryManifest:
         data["frame_shape"] = list(self.frame_shape)
         emit_schema_version(data, "peak_patch_psf_dictionary")
         return data
+
+    def validate(self) -> None:
+        """Validate JSON dictionary-manifest structure, not the HDF5 payload."""
+        try:
+            dictionary_extent = validate_coordinate_frame_extent(
+                self.peak_layout_coordinate_frame,
+                self.camera_frame_extent,
+                self.frame_shape,
+            )
+            layout_extent = validate_coordinate_frame_extent(
+                self.peak_layout_coordinate_frame,
+                self.peak_layout_camera_frame_extent,
+                self.frame_shape,
+            )
+        except ValueError as exc:
+            raise PeakPatchPSFDictionaryError(str(exc)) from exc
+        # The builder can retain an explicitly audited raw/layout extent mismatch.
+        # Both descriptors still have to be legal in the same declared coordinate
+        # frame and match the dictionary frame shape, which the calls above check.
+
+        if len(self.entry_wavelengths_nm) != len(self.entry_mask_ids):
+            raise PeakPatchPSFDictionaryError(
+                "entry_wavelengths_nm and entry_mask_ids must have equal length"
+            )
+        peak_count = len(self.peak_ids)
+        if peak_count < 1 or len(set(self.peak_ids)) != peak_count:
+            raise PeakPatchPSFDictionaryError("peak_ids must be non-empty and unique")
+        if len(self.patch_shape_hw) != peak_count or len(self.patch_origin_xy) != peak_count:
+            raise PeakPatchPSFDictionaryError(
+                "peak_ids, patch_shape_hw, and patch_origin_xy must have equal length"
+            )
+        h, w = self.frame_shape
+        for index in range(peak_count):
+            ph, pw = _positive_pair(
+                self.patch_shape_hw[index],
+                f"patch_shape_hw[{index}]",
+            )
+            x0, y0 = _nonnegative_pair(
+                self.patch_origin_xy[index],
+                f"patch_origin_xy[{index}]",
+            )
+            if x0 + pw > w or y0 + ph > h:
+                raise PeakPatchPSFDictionaryError(
+                    f"patch {index} extends outside frame_shape"
+                )
+        if not isinstance(self.applied_background_policy, str) or not self.applied_background_policy.strip():
+            raise PeakPatchPSFDictionaryError(
+                "applied_background_policy must be non-empty"
+            )
+        if not isinstance(self.applied_normalization_policy, str) or not self.applied_normalization_policy.strip():
+            raise PeakPatchPSFDictionaryError(
+                "applied_normalization_policy must be non-empty"
+            )
 
     def to_json(self, path: str | Path | None = None) -> str:
         text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
@@ -295,6 +349,9 @@ def _write_dictionary_h5(
     patch_shape = tuple(layout.patch_shape_hw[0])
     with h5py.File(output_path, "w") as dst:
         dst.attrs["artifact_type"] = "peak_patch_psf_dictionary"
+        from tasks.artifact_versioning import schema_compat
+
+        dst.attrs["schema_version"] = schema_compat("peak_patch_psf_dictionary").current
         dst.attrs["dictionary_id"] = manifest.dictionary_id
         grp = dst.require_group("peak_patch_dictionary")
         patches = grp.create_dataset(
@@ -438,6 +495,24 @@ def _int_list_or_none(value: Any) -> list[int] | None:
     if not isinstance(value, (list, tuple)):
         return None
     return [int(v) for v in value]
+
+
+def _positive_pair(value: Any, name: str) -> tuple[int, int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise PeakPatchPSFDictionaryError(f"{name} must contain two integers")
+    pair = (int(value[0]), int(value[1]))
+    if pair[0] <= 0 or pair[1] <= 0:
+        raise PeakPatchPSFDictionaryError(f"{name} dimensions must be positive")
+    return pair
+
+
+def _nonnegative_pair(value: Any, name: str) -> tuple[int, int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise PeakPatchPSFDictionaryError(f"{name} must contain two integers")
+    pair = (int(value[0]), int(value[1]))
+    if pair[0] < 0 or pair[1] < 0:
+        raise PeakPatchPSFDictionaryError(f"{name} must be non-negative")
+    return pair
 
 
 def _output_dtype(output_dtype: str) -> np.dtype:

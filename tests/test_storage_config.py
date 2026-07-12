@@ -144,3 +144,21 @@ def test_relativize_outside_root(tmp_path):
 
     with pytest.raises(StorageConfigError):
         cfg.relativize(tmp_path / "elsewhere" / "x.h5")
+
+
+def test_storage_root_inside_repository_is_rejected(tmp_path, monkeypatch):
+    repository = tmp_path / "optic_system"
+    repository.mkdir()
+    monkeypatch.setattr("tasks.storage_config._repo_root", lambda: repository)
+
+    with pytest.raises(StorageConfigError, match="must not overlap"):
+        StorageConfig(roots={DEFAULT_STORAGE_ROOT: repository / "data"})
+
+
+def test_storage_root_containing_repository_is_rejected(tmp_path, monkeypatch):
+    repository = tmp_path / "optic_system"
+    repository.mkdir()
+    monkeypatch.setattr("tasks.storage_config._repo_root", lambda: repository)
+
+    with pytest.raises(StorageConfigError, match="must not overlap"):
+        StorageConfig(roots={DEFAULT_STORAGE_ROOT: tmp_path})

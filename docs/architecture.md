@@ -231,11 +231,11 @@ them. Do not invent final schemas for external repositories inside
 ### Target data lifecycle: storage config and artifact versioning
 
 This section describes the target data-lifecycle architecture. The storage
-configuration and schema registry exist now, but a catalog, artifact bundles,
-and migration of legacy manifest path fields do not. Existing artifacts may
-still contain task-local source paths such as `source_raw_capture_h5`; those
-fields are not catalog locations and must not be treated as portable storage
-references.
+configuration, schema registry, local structural validators, and local bundle
+primitives exist now. A catalog, trust-promotion workflow, and migration of
+legacy manifest path fields do not. Existing artifacts may still contain
+task-local source paths such as `source_raw_capture_h5`; those fields are not
+catalog locations and must not be treated as portable storage references.
 
 Storage-location config layer (`tasks/storage_config.py`):
 
@@ -247,6 +247,9 @@ Storage-location config layer (`tasks/storage_config.py`):
   `StorageConfig.resolve()`; `relativize()` performs the inverse. Resolution
   checks containment after resolving the real path, so `..` traversal and
   junction/symlink escapes are rejected.
+- A configured storage root must not overlap the repository directory in either
+  direction. Measured payload storage therefore remains external to the
+  git-tracked source tree.
 - No drive letters or absolute data paths are hardcoded anywhere. A missing
   configuration is a hard error.
 
@@ -259,19 +262,42 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   `schema_version` via `emit_schema_version`. Strict reads reject a missing
   version as `legacy_unversioned`; compatibility loaders opt into legacy mode
   explicitly. Legacy compatibility is not catalog eligibility.
-- `check_validity(artifact_type, path)` is a strict local JSON-artifact check:
-  it requires an explicit artifact type and schema version, a readable loader,
-  and an implemented `.validate()` method. Types without a complete validator,
-  including current HDF5-only types, fail closed with
-  `validator_not_implemented`; path existence is never valid by itself.
+- `tasks.artifacts.validation.check_validity(artifact_type, path)` is a strict
+  local structural check. The caller supplies the canonical artifact type; the
+  validator never infers it from a filename or suffix. JSON manifests require
+  explicit type/schema fields, successful loading, and `.validate()`. Raw
+  capture, full-frame survey, support report, and patch dictionary HDF5 payloads
+  also have artifact-specific structural validators.
+- `ValidityResult` reports one machine-readable outcome: `valid` means
+  structurally validated; `invalid` means a validator found an internal
+  contradiction; `unsupported` means the known type lacks a complete validator;
+  `legacy_unversioned` means explicit schema metadata is absent; and `unreadable`
+  covers unavailable or unparsable local payloads. Unsupported is not evidence
+  that data is invalid, and neither readability nor structural validity is a
+  scientific-trust decision.
 - `ValidityResult` intentionally does not retain the input path. A future
   catalog owns `(storage_root, rel_path)` separately, so machine-specific
   absolute paths cannot leak into tracked catalog records.
 
-The planned bundle and catalog-location contract is documented in
-[`artifact_bundle_design.md`](artifact_bundle_design.md). It is design work,
-not a claim that current single-file or sidecar artifacts already satisfy that
-contract.
+Artifact bundle foundation (`tasks/artifacts/bundle.py`):
+
+- `ArtifactLocation` records a named storage root plus a relative generation
+  directory. `ArtifactBundleManifest` inventories one artifact ID/type/schema
+  and its `ArtifactPayload` files, each with a storage-relative path, media
+  type, byte count, and canonical `sha256:<lowercase-hex>` digest.
+- Bundle records reject absolute and parent-traversal payload paths. Local
+  validation resolves every payload under the supplied generation directory,
+  verifies existence, size, and streaming SHA-256, then dispatches the explicit
+  `data` payload role to the declared artifact validator. Bundle JSON writes
+  use temporary-file replacement.
+- These primitives do not register artifacts, select a current generation,
+  promote trust, supersede data, or migrate existing task outputs. They are the
+  local integrity boundary required before a catalog can be introduced.
+
+The future catalog-location contract is documented in
+[`artifact_bundle_design.md`](artifact_bundle_design.md). The local bundle
+primitives do not imply that current single-file or sidecar task outputs have
+already been migrated into generation directories.
 
 Provenance reconstructibility (valid-pixel-domain records):
 

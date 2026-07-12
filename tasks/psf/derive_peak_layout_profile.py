@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import numpy as np
 from tasks.artifacts.coordinate_frame import (
     camera_frame_extent_from_dict,
     resolve_coordinate_frame,
+    validate_coordinate_frame_extent,
 )
 from tasks.artifacts.json_io import read_json_dataset_or_attr
 
@@ -116,6 +118,80 @@ class PeakLayoutProfileManifest:
         data["frame_shape"] = list(self.frame_shape)
         emit_schema_version(data, "peak_layout_profile")
         return data
+
+    def validate(self) -> None:
+        """Validate measured peak-layout structure without scientific judgement."""
+        try:
+            validate_coordinate_frame_extent(
+                self.coordinate_frame,
+                self.camera_frame_extent,
+                self.frame_shape,
+            )
+        except ValueError as exc:
+            raise PeakLayoutProfileError(str(exc)) from exc
+
+        if not self.peak_ids or any(
+            not isinstance(peak_id, str) or not peak_id.strip()
+            for peak_id in self.peak_ids
+        ):
+            raise PeakLayoutProfileError("peak_ids must be non-empty strings")
+        if len(set(self.peak_ids)) != len(self.peak_ids):
+            raise PeakLayoutProfileError("peak_ids must be unique")
+
+        peak_count = len(self.peak_ids)
+        aligned = {
+            "center_xy": self.center_xy,
+            "patch_shape_hw": self.patch_shape_hw,
+            "patch_origin_xy": self.patch_origin_xy,
+            "stability_score": self.stability_score,
+            "amplitude_range": self.amplitude_range,
+            "local_background_stats": self.local_background_stats,
+        }
+        for name, values in aligned.items():
+            if len(values) != peak_count:
+                raise PeakLayoutProfileError(
+                    f"{name} length must match peak_ids length"
+                )
+        if self.center_xy_rel is not None and len(self.center_xy_rel) != peak_count:
+            raise PeakLayoutProfileError(
+                "center_xy_rel length must match peak_ids length"
+            )
+
+        h, w = self.frame_shape
+        for index in range(peak_count):
+            _finite_pair(self.center_xy[index], f"center_xy[{index}]")
+            if self.center_xy_rel is not None:
+                _finite_pair(self.center_xy_rel[index], f"center_xy_rel[{index}]")
+            ph, pw = _positive_int_pair(
+                self.patch_shape_hw[index],
+                f"patch_shape_hw[{index}]",
+            )
+            x0, y0 = _nonnegative_int_pair(
+                self.patch_origin_xy[index],
+                f"patch_origin_xy[{index}]",
+            )
+            if x0 + pw > w or y0 + ph > h:
+                raise PeakLayoutProfileError(
+                    f"patch {index} extends outside frame_shape"
+                )
+            _finite_number(self.stability_score[index], f"stability_score[{index}]")
+            low, high = _finite_pair(
+                self.amplitude_range[index],
+                f"amplitude_range[{index}]",
+            )
+            if low > high:
+                raise PeakLayoutProfileError(
+                    f"amplitude_range[{index}] must be ordered"
+                )
+
+        if not _subset_values(self.valid_wavelengths_nm, self.survey_wavelengths_nm):
+            raise PeakLayoutProfileError(
+                "valid_wavelengths_nm must be contained in survey_wavelengths_nm"
+            )
+        if not set(self.valid_mask_ids).issubset(set(self.survey_mask_ids)):
+            raise PeakLayoutProfileError(
+                "valid_mask_ids must be contained in survey_mask_ids"
+            )
 
     def to_json(self, path: str | Path | None = None) -> str:
         text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
@@ -439,3 +515,44 @@ def _float_pair(value: Any, name: str) -> tuple[float, float]:
 
 def _int_pairs(data: dict[str, Any], key: str) -> list[list[int]]:
     return [[int(pair[0]), int(pair[1])] for pair in _require_list(data, key)]
+
+
+def _finite_number(value: Any, name: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise PeakLayoutProfileError(f"{name} must be a finite number") from exc
+    if not math.isfinite(number):
+        raise PeakLayoutProfileError(f"{name} must be finite")
+    return number
+
+
+def _finite_pair(value: Any, name: str) -> tuple[float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise PeakLayoutProfileError(f"{name} must contain two numbers")
+    return (
+        _finite_number(value[0], f"{name}[0]"),
+        _finite_number(value[1], f"{name}[1]"),
+    )
+
+
+def _positive_int_pair(value: Any, name: str) -> tuple[int, int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise PeakLayoutProfileError(f"{name} must contain two integers")
+    pair = (int(value[0]), int(value[1]))
+    if pair[0] <= 0 or pair[1] <= 0:
+        raise PeakLayoutProfileError(f"{name} dimensions must be positive")
+    return pair
+
+
+def _nonnegative_int_pair(value: Any, name: str) -> tuple[int, int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise PeakLayoutProfileError(f"{name} must contain two integers")
+    pair = (int(value[0]), int(value[1]))
+    if pair[0] < 0 or pair[1] < 0:
+        raise PeakLayoutProfileError(f"{name} must be non-negative")
+    return pair
+
+
+def _subset_values(values: list[float], candidates: list[float]) -> bool:
+    return all(any(float(value) == float(item) for item in candidates) for value in values)

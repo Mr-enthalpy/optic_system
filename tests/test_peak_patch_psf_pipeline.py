@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from tasks.capture_plan import CapturePlan
+from tasks.artifacts.validation import ValidityOutcome, check_validity
 from tasks.profiles import CameraProfile, PupilProfile
 from tasks.psf import (
     FullFramePSFSurveyError,
@@ -220,6 +221,9 @@ def test_builds_full_frame_survey_as_scout_artifact(tmp_path: Path) -> None:
     assert manifest.full_frame_role == "scout"
     assert manifest.entry_mask_ids == ["mask_a", "mask_a", "mask_b", "mask_b"]
     assert manifest.unique_wavelengths_nm == [450.0, 550.0]
+    assert check_validity(
+        "full_frame_psf_survey", survey_path
+    ).outcome is ValidityOutcome.VALID
     with h5py.File(survey_path, "r") as f:
         assert f["full_frame_survey/frames_avg"].shape == (4, 20, 20)
         raw_illumination = f["full_frame_survey/entry_illumination_json"][0]
@@ -325,6 +329,9 @@ def test_builds_peak_patch_dictionary_from_raw_capture_and_layout(tmp_path: Path
     assert manifest.dictionary_id == "peak_patch_dict_v1"
     assert manifest.entry_wavelengths_nm == [450.0, 550.0, 450.0, 550.0]
     assert manifest.unique_mask_ids == ["mask_a", "mask_b"]
+    assert check_validity(
+        "peak_patch_psf_dictionary", dictionary_path
+    ).outcome is ValidityOutcome.VALID
     with h5py.File(dictionary_path, "r") as f:
         assert f["peak_patch_dictionary/patches"].shape == (4, 2, 5, 5)
         assert f["peak_patch_dictionary/patches"].dtype == np.float32

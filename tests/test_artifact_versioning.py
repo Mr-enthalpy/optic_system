@@ -14,6 +14,7 @@ from tasks.artifact_versioning import (
     read_schema_version,
     schema_compat,
 )
+from tasks.artifacts.validation import ValidityOutcome
 from tasks.profiles import CameraProfile, PupilProfile
 from tasks.psf.build_full_frame_psf_survey import FullFramePSFSurveyManifest
 
@@ -105,7 +106,8 @@ def test_check_validity_type_mismatch(tmp_path: Path):
     result = check_validity("camera_profile", path)
 
     assert not result.ok
-    assert any("artifact_type mismatch" in e for e in result.errors)
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("artifact_type_mismatch",)
 
 
 def test_check_validity_incompatible_schema(tmp_path: Path):
@@ -118,7 +120,8 @@ def test_check_validity_incompatible_schema(tmp_path: Path):
     result = check_validity("pupil_profile", path)
 
     assert not result.ok
-    assert any("newer" in e for e in result.errors)
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("schema_incompatible",)
 
 
 def test_check_validity_rejects_unversioned_legacy_artifact(tmp_path: Path):
@@ -131,7 +134,8 @@ def test_check_validity_rejects_unversioned_legacy_artifact(tmp_path: Path):
     result = check_validity("pupil_profile", path)
 
     assert not result.ok
-    assert any("legacy_unversioned" in error for error in result.errors)
+    assert result.outcome is ValidityOutcome.LEGACY_UNVERSIONED
+    assert result.reason_codes == ("legacy_unversioned",)
 
 
 def test_check_validity_requires_artifact_type(tmp_path: Path):
@@ -148,7 +152,7 @@ def test_check_validity_requires_artifact_type(tmp_path: Path):
 
 
 @pytest.mark.parametrize("artifact_type", ["raw_capture", "peak_support_analysis_report"])
-def test_check_validity_fails_closed_without_implemented_validator(
+def test_check_validity_reports_unreadable_hdf5_payload(
     tmp_path: Path,
     artifact_type: str,
 ):
@@ -158,10 +162,10 @@ def test_check_validity_fails_closed_without_implemented_validator(
     result = check_validity(artifact_type, path)
 
     assert not result.ok
-    assert any("validator_not_implemented" in error for error in result.errors)
+    assert result.outcome is ValidityOutcome.UNREADABLE
 
 
-def test_check_validity_fails_closed_for_json_loader_without_validate(
+def test_check_validity_validates_full_frame_survey_json_manifest(
     tmp_path: Path,
 ):
     manifest = FullFramePSFSurveyManifest(
@@ -189,5 +193,4 @@ def test_check_validity_fails_closed_for_json_loader_without_validate(
 
     result = check_validity("full_frame_psf_survey", path)
 
-    assert not result.ok
-    assert any("validator_not_implemented" in error for error in result.errors)
+    assert result.outcome is ValidityOutcome.VALID

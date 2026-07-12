@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import pytest
 
+from tasks.artifacts.validation import ValidityOutcome, check_validity
 from tasks.psf.analyze_diffraction_support import (
     DiffractionSupportAnalysisError,
     PeakSupportAnalysisManifest,
@@ -92,6 +93,9 @@ def test_builds_peak_support_analysis_report_from_synthetic_survey(tmp_path: Pat
     assert manifest.coordinate_frame == "sensor_full_frame"
     assert manifest.entry_mask_ids == ["mask_a"]
     assert report_h5.exists()
+    assert check_validity(
+        "peak_support_analysis_report", report_h5
+    ).outcome is ValidityOutcome.VALID
 
     with h5py.File(str(report_h5), "r") as f:
         assert f["support_analysis/frame_shape"][()].tolist() == [64, 64]

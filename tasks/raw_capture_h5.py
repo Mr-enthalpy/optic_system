@@ -150,6 +150,7 @@ class RawCaptureWriter:
         f.attrs["plan_id"] = self._plan.plan_id
         f.attrs["created_at_ns"] = self._created_at_ns
         f.attrs["software_version"] = SOFTWARE_NAME
+        f.attrs["artifact_type"] = "raw_capture"
         f.attrs["raw_capture_schema_version"] = RAW_CAPTURE_SCHEMA_VERSION
         f.attrs["capture_role"] = _capture_role(self._plan)
         f.attrs["hdf5_writer_version"] = "1.0"

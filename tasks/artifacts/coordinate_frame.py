@@ -193,10 +193,79 @@ def validate_coordinate_frame_descriptor(
         raise ValueError("frame_shape does not match")
 
 
+def validate_coordinate_frame_extent(
+    coordinate_frame: str,
+    camera_frame_extent: Mapping[str, Any],
+    frame_shape: tuple[int, int],
+    *,
+    require_full_sensor: bool = False,
+) -> CameraFrameExtent:
+    """Validate one artifact's coordinate-frame and extent structural contract.
+
+    This checks only representational consistency: supported frame vocabulary,
+    positive dimensions, frame-shape agreement, and sensor bounds.  It does not
+    make a scientific judgement about the recorded coordinate origin.
+    """
+    if coordinate_frame not in SUPPORTED_COORDINATE_FRAMES:
+        raise ValueError(
+            f"unsupported coordinate_frame {coordinate_frame!r}; "
+            f"expected one of {sorted(SUPPORTED_COORDINATE_FRAMES)}"
+        )
+    frame_hw = _positive_int_pair(frame_shape, "frame_shape")
+    if not isinstance(camera_frame_extent, Mapping):
+        raise ValueError("camera_frame_extent must be a mapping")
+    extent = camera_frame_extent_from_dict(
+        camera_frame_extent,
+        fallback_shape=frame_hw,
+    )
+    if not extent.mode:
+        raise ValueError("camera_frame_extent.mode must be non-empty")
+    if extent.shape_hw != frame_hw:
+        raise ValueError("camera_frame_extent.shape_hw does not match frame_shape")
+    if extent.origin_xy[0] < 0 or extent.origin_xy[1] < 0:
+        raise ValueError("camera_frame_extent.origin_xy must be non-negative")
+
+    if extent.sensor_shape_hw is not None:
+        sensor_hw = _positive_int_pair(
+            extent.sensor_shape_hw,
+            "camera_frame_extent.sensor_shape_hw",
+        )
+        if (
+            extent.origin_xy[0] + extent.shape_hw[1] > sensor_hw[1]
+            or extent.origin_xy[1] + extent.shape_hw[0] > sensor_hw[0]
+        ):
+            raise ValueError("camera_frame_extent lies outside sensor_shape_hw")
+
+    if coordinate_frame == "sensor_full_frame":
+        if extent.mode != "full_sensor":
+            raise ValueError(
+                "sensor_full_frame coordinate_frame requires full_sensor extent mode"
+            )
+        if extent.origin_xy != (0, 0):
+            raise ValueError(
+                "sensor_full_frame coordinate_frame requires origin_xy [0, 0]"
+            )
+        if extent.sensor_shape_hw is not None and extent.sensor_shape_hw != frame_hw:
+            raise ValueError(
+                "sensor_full_frame sensor_shape_hw does not match frame_shape"
+            )
+
+    if require_full_sensor and extent.mode != "full_sensor":
+        raise ValueError("full_sensor camera frame extent is required")
+    return extent
+
+
 def _int_pair(value: Any, name: str) -> tuple[int, int]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ValueError(f"{name} must contain two integers")
     return (int(value[0]), int(value[1]))
+
+
+def _positive_int_pair(value: Any, name: str) -> tuple[int, int]:
+    pair = _int_pair(value, name)
+    if pair[0] <= 0 or pair[1] <= 0:
+        raise ValueError(f"{name} dimensions must be positive")
+    return pair
 
 
 def _optional_str(value: Any) -> str | None:

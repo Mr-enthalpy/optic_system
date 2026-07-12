@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from tasks.artifacts.coordinate_frame import (
     CoordinateFrameDescriptor,
     camera_frame_extent_from_dict,
     validate_coordinate_frame_descriptor,
+    validate_coordinate_frame_extent,
 )
 from tasks.artifacts.errors import ArtifactIOError
 from tasks.artifacts.frame_source import open_full_frame_survey_source
@@ -154,6 +156,69 @@ class SensorEnergyCenterProfile:
                 int(self.camera_frame_shape[1]),
             ]
         return data
+
+    def validate(self) -> None:
+        """Validate structural center-profile consistency, not scientific trust."""
+        frame_shape = self.camera_frame_shape
+        if frame_shape is None:
+            try:
+                frame_shape = camera_frame_extent_from_dict(
+                    self.camera_frame_extent
+                ).shape_hw
+            except ValueError as exc:
+                raise SensorEnergyCenterError(
+                    f"camera_frame_extent is invalid: {exc}"
+                ) from exc
+        try:
+            validate_coordinate_frame_extent(
+                self.coordinate_frame,
+                self.camera_frame_extent,
+                frame_shape,
+            )
+        except ValueError as exc:
+            raise SensorEnergyCenterError(str(exc)) from exc
+
+        _finite_pair(self.center_xy, "center_xy")
+        _finite_pair(
+            self.global_center_std_xy,
+            "global_center_std_xy",
+            nonnegative=True,
+        )
+        _finite_number(
+            self.max_center_deviation_px,
+            "max_center_deviation_px",
+            nonnegative=True,
+        )
+
+        per_entry_lengths = {
+            len(self.per_entry_center_xy),
+            len(self.per_entry_mask_ids),
+            len(self.per_entry_wavelengths_nm),
+            len(self.per_entry_background_value),
+            len(self.per_entry_total_corr_energy),
+            len(self.per_entry_fallback_used),
+        }
+        if len(per_entry_lengths) != 1:
+            raise SensorEnergyCenterError(
+                "all per-entry center-profile arrays must have equal length"
+            )
+        for index, center in enumerate(self.per_entry_center_xy):
+            _finite_pair(center, f"per_entry_center_xy[{index}]")
+
+        if set(self.per_wavelength_mean_center_xy) != set(
+            self.per_wavelength_center_std_xy
+        ):
+            raise SensorEnergyCenterError(
+                "per-wavelength center mean/std keys must match"
+            )
+        for key, center in self.per_wavelength_mean_center_xy.items():
+            _finite_pair(center, f"per_wavelength_mean_center_xy[{key!r}]")
+        for key, std in self.per_wavelength_center_std_xy.items():
+            _finite_pair(
+                std,
+                f"per_wavelength_center_std_xy[{key!r}]",
+                nonnegative=True,
+            )
 
     def to_json(self, path: str | Path | None = None) -> str:
         text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
@@ -459,6 +524,24 @@ def _float_pair(value: Any, name: str) -> tuple[float, float]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise SensorEnergyCenterError(f"{name} must contain two numbers")
     return (float(value[0]), float(value[1]))
+
+
+def _finite_number(value: Any, name: str, *, nonnegative: bool = False) -> None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SensorEnergyCenterError(f"{name} must be a finite number") from exc
+    if not math.isfinite(number):
+        raise SensorEnergyCenterError(f"{name} must be finite")
+    if nonnegative and number < 0:
+        raise SensorEnergyCenterError(f"{name} must be nonnegative")
+
+
+def _finite_pair(value: Any, name: str, *, nonnegative: bool = False) -> None:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise SensorEnergyCenterError(f"{name} must contain two numbers")
+    _finite_number(value[0], f"{name}[0]", nonnegative=nonnegative)
+    _finite_number(value[1], f"{name}[1]", nonnegative=nonnegative)
 
 
 def _int_pair(value: Any, name: str) -> tuple[int, int]:
