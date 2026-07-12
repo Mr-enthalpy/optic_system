@@ -228,6 +228,61 @@ Raw capture HDF5 and external handoffs are distinct formats. Do not conflate
 them. Do not invent final schemas for external repositories inside
 `optic_system`.
 
+### Target data lifecycle: storage config and artifact versioning
+
+This section describes the target data-lifecycle architecture. The storage
+configuration and schema registry exist now, but a catalog, artifact bundles,
+and migration of legacy manifest path fields do not. Existing artifacts may
+still contain task-local source paths such as `source_raw_capture_h5`; those
+fields are not catalog locations and must not be treated as portable storage
+references.
+
+Storage-location config layer (`tasks/storage_config.py`):
+
+- A `primary` storage root is required; additional named roots are supported.
+- Configured through `config/storage.local.yaml` (gitignored; see
+  `config/storage.example.yaml`) or the `OPTIC_SYSTEM_DATA_ROOT` environment
+  override. The env override takes priority over the file.
+- Artifacts are addressed by `(storage_root, rel_path)` and resolved with
+  `StorageConfig.resolve()`; `relativize()` performs the inverse. Resolution
+  checks containment after resolving the real path, so `..` traversal and
+  junction/symlink escapes are rejected.
+- No drive letters or absolute data paths are hardcoded anywhere. A missing
+  configuration is a hard error.
+
+Artifact schema versioning (`tasks/artifact_versioning.py`):
+
+- `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` are the single
+  source of truth for each artifact type's version and read-compatibility
+  window.
+- Every new serialized artifact emits a round-trippable integer
+  `schema_version` via `emit_schema_version`. Strict reads reject a missing
+  version as `legacy_unversioned`; compatibility loaders opt into legacy mode
+  explicitly. Legacy compatibility is not catalog eligibility.
+- `check_validity(artifact_type, path)` is a strict local JSON-artifact check:
+  it requires an explicit artifact type and schema version, a readable loader,
+  and an implemented `.validate()` method. Types without a complete validator,
+  including current HDF5-only types, fail closed with
+  `validator_not_implemented`; path existence is never valid by itself.
+- `ValidityResult` intentionally does not retain the input path. A future
+  catalog owns `(storage_root, rel_path)` separately, so machine-specific
+  absolute paths cannot leak into tracked catalog records.
+
+The planned bundle and catalog-location contract is documented in
+[`artifact_bundle_design.md`](artifact_bundle_design.md). It is design work,
+not a claim that current single-file or sidecar artifacts already satisfy that
+contract.
+
+Provenance reconstructibility (valid-pixel-domain records):
+
+- Policy-derived valid-pixel domains are reconstructible from the record:
+  `resolved_policy` + `frame_shape_hw` fully regenerate the mask.
+- Explicit-mask domains carry resolved, identity-verifiable provenance only: the
+  record stores the pixel counts and a versioned `mask_digest`, which verify
+  whether another mask is identical but do not by themselves reconstruct the
+  excluded pixel positions. Persisting or referencing the actual mask is deferred
+  to the `SensorValidPixelProfile` artifact (Round 2).
+
 ## Task architecture
 
 Historical files under `tasks/` are not assumed to define the current architecture.

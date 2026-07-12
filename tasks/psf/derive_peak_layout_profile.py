@@ -53,6 +53,9 @@ class PeakLayoutProfileManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PeakLayoutProfileManifest:
+        from tasks.artifact_versioning import read_schema_version
+
+        read_schema_version(data, "peak_layout_profile", legacy_mode=True)
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise PeakLayoutProfileError("frame_shape must contain [H, W]")
@@ -106,9 +109,12 @@ class PeakLayoutProfileManifest:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        from tasks.artifact_versioning import emit_schema_version
+
         data = asdict(self)
         data["artifact_type"] = "peak_layout_profile"
         data["frame_shape"] = list(self.frame_shape)
+        emit_schema_version(data, "peak_layout_profile")
         return data
 
     def to_json(self, path: str | Path | None = None) -> str:

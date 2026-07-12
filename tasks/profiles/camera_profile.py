@@ -179,6 +179,9 @@ class CameraProfile:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CameraProfile:
+        from tasks.artifact_versioning import read_schema_version
+
+        read_schema_version(d, "camera_profile", legacy_mode=True)
         profile_family = _require_str(d, "profile_family")
         illumination = CameraProfileIllumination.from_dict(
             _require_dict(d, "illumination")
@@ -301,6 +304,8 @@ class CameraProfile:
         raise ProfileError(f"unsupported camera profile family: {self.profile_family!r}")
 
     def to_dict(self) -> dict[str, Any]:
+        from tasks.artifact_versioning import emit_schema_version
+
         result: dict[str, Any] = {
             "artifact_type": "camera_profile",
             "camera_profile_id": self.camera_profile_id,
@@ -345,6 +350,7 @@ class CameraProfile:
                 result[key] = value
         if self.extra:
             result["extra"] = self.extra
+        emit_schema_version(result, "camera_profile")
         return result
 
     def to_json(self, path: str | Path | None = None) -> str:

@@ -6,3 +6,4 @@ __pycache__/
 *.pyd
 data/raw/
 plans/generated_masks/
+config/storage.local.yaml
