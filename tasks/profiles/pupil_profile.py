@@ -29,7 +29,7 @@ class PupilProfile:
     def from_dict(cls, d: dict[str, Any]) -> PupilProfile:
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(d, "pupil_profile")
+        read_schema_version(d, "pupil_profile", legacy_mode=True)
         profile = cls(
             pupil_profile_id=_require_str(d, "pupil_profile_id"),
             lcd_coordinate_convention=_require_str(d, "lcd_coordinate_convention"),

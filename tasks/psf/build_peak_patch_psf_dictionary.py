@@ -63,7 +63,7 @@ class PeakPatchPSFDictionaryManifest:
     def from_dict(cls, data: dict[str, Any]) -> PeakPatchPSFDictionaryManifest:
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(data, "peak_patch_psf_dictionary")
+        read_schema_version(data, "peak_patch_psf_dictionary", legacy_mode=True)
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise PeakPatchPSFDictionaryError("frame_shape must contain [H, W]")

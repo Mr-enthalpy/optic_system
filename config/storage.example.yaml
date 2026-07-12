@@ -5,8 +5,8 @@
 # paths; artifacts are addressed by (storage_root, rel_path) and resolved
 # through this file or the OPTIC_SYSTEM_DATA_ROOT environment override.
 #
-# Single storage root named `primary` (decision: single-root granularity).
-# Paths must be absolute. No data may live inside the repository.
+# `primary` is required. Additional named roots are supported when a future
+# catalog needs them. Paths must be absolute. No data may live inside the repo.
 
 storage_roots:
   primary: D:\optic_system_data

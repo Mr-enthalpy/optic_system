@@ -86,6 +86,50 @@ def test_resolve_rejects_absolute_rel_path(tmp_path):
         cfg.resolve(str(tmp_path / "abs.h5"))
 
 
+@pytest.mark.parametrize("rel_path", ["../escape.h5", "a/../../escape.h5"])
+def test_resolve_rejects_parent_escape(tmp_path, rel_path):
+    base = tmp_path / "root"
+    base.mkdir()
+    cfg = StorageConfig(roots={DEFAULT_STORAGE_ROOT: base})
+
+    with pytest.raises(StorageConfigError, match="escapes storage_root"):
+        cfg.resolve(rel_path)
+
+
+def test_resolve_rejects_windows_drive_qualified_rel_path(tmp_path):
+    cfg = StorageConfig(roots={DEFAULT_STORAGE_ROOT: tmp_path})
+
+    with pytest.raises(StorageConfigError, match="without a drive or root"):
+        cfg.resolve(r"C:\\escape.h5")
+
+
+def test_direct_constructor_rejects_relative_root():
+    with pytest.raises(StorageConfigError, match="must be an absolute path"):
+        StorageConfig(roots={DEFAULT_STORAGE_ROOT: "relative/root"})
+
+
+def test_direct_constructor_normalizes_and_freezes_roots(tmp_path):
+    base = tmp_path / "root"
+    base.mkdir()
+    cfg = StorageConfig(roots={DEFAULT_STORAGE_ROOT: base / "."})
+
+    assert cfg.base_dir() == base.resolve()
+    with pytest.raises(TypeError):
+        cfg.roots["other"] = tmp_path / "other"
+
+
+def test_named_secondary_root_is_supported(tmp_path):
+    primary = tmp_path / "primary"
+    secondary = tmp_path / "secondary"
+    cfg = StorageConfig(
+        roots={DEFAULT_STORAGE_ROOT: primary, "secondary": secondary}
+    )
+
+    assert cfg.resolve("artifact.h5", storage_root="secondary") == (
+        secondary / "artifact.h5"
+    ).resolve()
+
+
 def test_resolve_unknown_root(tmp_path):
     cfg = StorageConfig(roots={DEFAULT_STORAGE_ROOT: tmp_path})
 

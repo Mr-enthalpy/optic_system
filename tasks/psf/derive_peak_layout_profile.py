@@ -55,7 +55,7 @@ class PeakLayoutProfileManifest:
     def from_dict(cls, data: dict[str, Any]) -> PeakLayoutProfileManifest:
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(data, "peak_layout_profile")
+        read_schema_version(data, "peak_layout_profile", legacy_mode=True)
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise PeakLayoutProfileError("frame_shape must contain [H, W]")

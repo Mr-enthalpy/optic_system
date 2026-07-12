@@ -10,16 +10,22 @@ schema-compatibility, ``.validate()``, and coordinate-frame checks into a single
 data-based validity judgement (never filename-based).
 
 It must not import artifact modules at module import time; loaders are imported
-lazily inside ``check_validity`` to avoid circular imports.
+lazily inside ``check_validity`` to avoid circular imports.  This module does
+not yet validate artifact bundles or HDF5 payloads; types without an implemented
+validator fail closed.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 
 class SchemaCompatibilityError(ValueError):
     """Raised when an artifact schema_version is outside the readable window."""
+
+
+class LegacyUnversionedArtifactError(SchemaCompatibilityError):
+    """Raised when strict validation encounters an artifact without a version."""
 
 
 # Current schema version emitted when writing each artifact type.
@@ -70,23 +76,35 @@ def emit_schema_version(data: dict[str, Any], artifact_type: str) -> dict[str, A
     return data
 
 
-def read_schema_version(data: Mapping[str, Any], artifact_type: str) -> int:
+def read_schema_version(
+    data: Mapping[str, Any],
+    artifact_type: str,
+    *,
+    legacy_mode: bool = False,
+) -> int:
     """Read and validate ``schema_version`` from a serialized artifact mapping.
 
-    A missing ``schema_version`` is treated as the current version for backward
-    compatibility with artifacts written before versioning was wired in. A version
-    outside ``[min_readable, current]`` raises ``SchemaCompatibilityError``.
+    Strict callers reject missing versions as ``legacy_unversioned``.  Explicit
+    compatibility loaders may pass ``legacy_mode=True`` to read pre-versioning
+    artifacts, but that mode must not be used for catalog eligibility or
+    validity decisions.  A present version must be a JSON integer (not a bool,
+    float, or string) and remain inside ``[min_readable, current]``.
     """
     compat = schema_compat(artifact_type)
-    raw = data.get("schema_version")
-    if raw is None:
-        return compat.current
-    try:
-        version = int(raw)
-    except (TypeError, ValueError):
+    if not isinstance(legacy_mode, bool):
+        raise SchemaCompatibilityError("legacy_mode must be a boolean")
+    if "schema_version" not in data:
+        if legacy_mode:
+            return compat.current
+        raise LegacyUnversionedArtifactError(
+            f"legacy_unversioned: {artifact_type} is missing required schema_version"
+        )
+    raw = data["schema_version"]
+    if isinstance(raw, bool) or not isinstance(raw, int):
         raise SchemaCompatibilityError(
             f"{artifact_type} schema_version must be an integer, got {raw!r}"
-        ) from None
+        )
+    version = raw
     if version < compat.min_readable:
         raise SchemaCompatibilityError(
             f"{artifact_type} schema_version {version} is older than the minimum "
@@ -103,7 +121,6 @@ def read_schema_version(data: Mapping[str, Any], artifact_type: str) -> int:
 @dataclass(frozen=True)
 class ValidityResult:
     artifact_type: str
-    path: str
     ok: bool
     schema_version: int | None = None
     errors: tuple[str, ...] = ()
@@ -111,6 +128,8 @@ class ValidityResult:
 
 
 # Maps artifact_type -> (module, loader classmethod/function name) for lazy import.
+# A loader alone is not a validator: ``check_validity`` requires the loaded
+# object to expose ``validate()`` and fails closed when it does not.
 _JSON_LOADERS: dict[str, tuple[str, str]] = {
     "camera_profile": ("tasks.profiles.camera_profile", "CameraProfile"),
     "pupil_profile": ("tasks.profiles.pupil_profile", "PupilProfile"),
@@ -145,12 +164,16 @@ def _load_json_artifact(artifact_type: str, path: Path) -> Any:
 def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
     """Judge an artifact's validity from its data, not its filename.
 
-    Runs schema-version compatibility, the artifact's own ``.validate()`` when
-    present, and coordinate-frame descriptor sanity when applicable. Returns a
-    ``ValidityResult`` rather than raising, so callers (catalog, orchestrator)
-    can record the outcome.
+    This is a strict local JSON-artifact check.  It verifies a declared type,
+    explicit schema version, loader readability, and an implemented
+    ``validate()`` method.  Types without a validator, including HDF5-only
+    artifact types, return ``ok=False`` with ``validator_not_implemented``.
+
+    The result deliberately does not retain ``path`` so it can never be copied
+    into a future catalog as a machine-specific absolute location.  Artifact
+    bundle and payload validation are separate future work.
     """
-    path = Path(path)
+    artifact_path = Path(path)
     errors: list[str] = []
     warnings: list[str] = []
     schema_version: int | None = None
@@ -158,46 +181,43 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
     if artifact_type not in CURRENT_SCHEMA_VERSIONS:
         return ValidityResult(
             artifact_type=artifact_type,
-            path=str(path),
             ok=False,
             errors=(f"unknown artifact_type {artifact_type!r}",),
         )
 
-    if not path.exists():
+    if not artifact_path.exists():
         return ValidityResult(
             artifact_type=artifact_type,
-            path=str(path),
             ok=False,
-            errors=(f"artifact path does not exist: {path}",),
+            errors=("artifact location does not exist",),
         )
 
     if artifact_type not in _JSON_LOADERS:
-        warnings.append(
-            f"no data-level validity loader registered for {artifact_type!r}; "
-            "path existence only"
-        )
         return ValidityResult(
             artifact_type=artifact_type,
-            path=str(path),
-            ok=True,
-            warnings=tuple(warnings),
+            ok=False,
+            errors=(
+                f"validator_not_implemented: no data-level validator for "
+                f"artifact_type {artifact_type!r}",
+            ),
         )
 
     import json
 
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(artifact_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return ValidityResult(
             artifact_type=artifact_type,
-            path=str(path),
             ok=False,
-            errors=(f"failed to read artifact JSON: {exc}",),
+            errors=(f"failed to read artifact JSON ({type(exc).__name__})",),
         )
 
     if isinstance(raw, Mapping):
         found_type = raw.get("artifact_type")
-        if found_type is not None and found_type != artifact_type:
+        if not isinstance(found_type, str) or not found_type.strip():
+            errors.append("artifact_type is required and must be a non-empty string")
+        elif found_type != artifact_type:
             errors.append(
                 f"artifact_type mismatch: expected {artifact_type!r}, "
                 f"found {found_type!r}"
@@ -212,7 +232,6 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
     if errors:
         return ValidityResult(
             artifact_type=artifact_type,
-            path=str(path),
             ok=False,
             schema_version=schema_version,
             errors=tuple(errors),
@@ -220,27 +239,33 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
         )
 
     try:
-        artifact = _load_json_artifact(artifact_type, path)
+        artifact = _load_json_artifact(artifact_type, artifact_path)
     except Exception as exc:  # noqa: BLE001 - surfaced as a validity error
         return ValidityResult(
             artifact_type=artifact_type,
-            path=str(path),
             ok=False,
             schema_version=schema_version,
-            errors=(f"artifact failed to load/validate: {exc}",),
+            errors=(
+                f"artifact loader rejected serialized data "
+                f"({type(exc).__name__})",
+            ),
             warnings=tuple(warnings),
         )
 
     validate = getattr(artifact, "validate", None)
-    if callable(validate):
+    if not callable(validate):
+        errors.append(
+            f"validator_not_implemented: artifact_type {artifact_type!r} "
+            "does not expose validate()"
+        )
+    else:
         try:
             validate()
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"validate() failed: {exc}")
+            errors.append(f"validate() failed ({type(exc).__name__})")
 
     return ValidityResult(
         artifact_type=artifact_type,
-        path=str(path),
         ok=not errors,
         schema_version=schema_version,
         errors=tuple(errors),

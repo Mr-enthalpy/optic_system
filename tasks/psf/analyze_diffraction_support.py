@@ -75,7 +75,11 @@ class PeakSupportAnalysisManifest:
     def from_dict(cls, data: dict[str, Any]) -> "PeakSupportAnalysisManifest":
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(data, "peak_support_analysis_report")
+        read_schema_version(
+            data,
+            "peak_support_analysis_report",
+            legacy_mode=True,
+        )
         return cls(
             report_id=str(data["report_id"]),
             source_survey_h5=str(data["source_survey_h5"]),

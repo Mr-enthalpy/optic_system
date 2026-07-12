@@ -53,7 +53,11 @@ class SensorEnergyCenterProfile:
     def from_dict(cls, data: dict[str, Any]) -> "SensorEnergyCenterProfile":
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(data, "sensor_energy_center_profile")
+        read_schema_version(
+            data,
+            "sensor_energy_center_profile",
+            legacy_mode=True,
+        )
         return cls(
             center_profile_id=_require_str(data, "center_profile_id"),
             source_survey_h5=_require_str(data, "source_survey_h5"),

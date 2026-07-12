@@ -7,15 +7,17 @@ addressed by ``(storage_root, rel_path)`` and resolved to an absolute path
 through a machine-specific, gitignored config file (``config/storage.local.yaml``)
 or the ``OPTIC_SYSTEM_DATA_ROOT`` environment override.
 
-Design decisions (locked):
-- single storage root named ``primary``;
+Design decisions:
+- a ``primary`` storage root is required for normal task use; additional named
+  roots are supported for future catalog locations;
 - config file ``config/storage.local.yaml`` (gitignored) + env override;
 - no hardcoded drive letters anywhere; hard error if unconfigured.
 """
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from types import MappingProxyType
 from typing import Mapping
 
 
@@ -39,19 +41,57 @@ class StorageConfig:
 
     roots: Mapping[str, Path]
 
+    def __post_init__(self) -> None:
+        """Canonicalize and freeze configured storage roots.
+
+        ``StorageConfig`` is intentionally safe to construct directly in tests
+        and callers, not only through ``load_storage_config``.  Every root is
+        therefore checked here rather than trusting the YAML loader alone.
+        """
+        if not isinstance(self.roots, Mapping) or not self.roots:
+            raise StorageConfigError("storage roots must be a non-empty mapping")
+
+        normalized: dict[str, Path] = {}
+        for raw_name, raw_base in self.roots.items():
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                raise StorageConfigError(
+                    "storage root names must be non-empty strings"
+                )
+            name = raw_name.strip()
+            if name in normalized:
+                raise StorageConfigError(
+                    f"storage root {name!r} is configured more than once"
+                )
+            try:
+                base = Path(raw_base).expanduser()
+            except TypeError as exc:
+                raise StorageConfigError(
+                    f"storage root {name!r} must be a path-like value"
+                ) from exc
+            if not base.is_absolute():
+                raise StorageConfigError(
+                    f"storage root {name!r} must be an absolute path, got {raw_base!r}"
+                )
+            normalized[name] = base.resolve()
+
+        object.__setattr__(self, "roots", MappingProxyType(normalized))
+
     def resolve(self, rel_path: str | Path, *, storage_root: str = DEFAULT_STORAGE_ROOT) -> Path:
         """Resolve ``(storage_root, rel_path)`` to an absolute path.
 
-        ``rel_path`` must be relative; absolute paths are rejected to keep the
-        catalog machine-portable.
+        ``rel_path`` must be relative and its resolved real path must remain
+        within ``storage_root``.  This containment check rejects ``..`` escapes
+        and junction/symlink escapes after path resolution.
         """
-        base = self._require_root(storage_root)
-        rel = Path(rel_path)
-        if rel.is_absolute():
-            raise StorageConfigError(
-                f"rel_path must be relative, got absolute path {rel_path!r}"
-            )
-        return (base / rel).resolve()
+        root = self._require_root(storage_root)
+        rel = _require_relative_path(rel_path, field_name="rel_path")
+        candidate = (root / rel).resolve()
+        return _require_contained_path(
+            candidate,
+            root=root,
+            storage_root=storage_root,
+            field_name="rel_path",
+        )
 
     def relativize(self, abs_path: str | Path, *, storage_root: str = DEFAULT_STORAGE_ROOT) -> str:
         """Express an absolute path as a rel_path under ``storage_root``.
@@ -60,13 +100,14 @@ class StorageConfig:
         POSIX-style relative string for stable, cross-platform catalog storage.
         """
         base = self._require_root(storage_root)
-        resolved = Path(abs_path).resolve()
-        try:
-            rel = resolved.relative_to(base)
-        except ValueError:
-            raise StorageConfigError(
-                f"path {resolved} is not under storage_root {storage_root!r} ({base})"
-            ) from None
+        candidate = _require_absolute_path(abs_path, field_name="abs_path")
+        resolved = candidate.resolve()
+        rel = _require_contained_path(
+            resolved,
+            root=base,
+            storage_root=storage_root,
+            field_name="abs_path",
+        ).relative_to(base)
         return rel.as_posix()
 
     def base_dir(self, storage_root: str = DEFAULT_STORAGE_ROOT) -> Path:
@@ -79,6 +120,54 @@ class StorageConfig:
                 f"known roots: {sorted(self.roots)}"
             )
         return self.roots[storage_root]
+
+
+def _require_relative_path(value: str | Path, *, field_name: str) -> Path:
+    """Return a portable relative path and reject drive/root-qualified inputs."""
+    try:
+        path = Path(value)
+    except TypeError as exc:
+        raise StorageConfigError(f"{field_name} must be a path-like value") from exc
+    windows_path = PureWindowsPath(str(value))
+    if (
+        path.is_absolute()
+        or path.drive
+        or path.root
+        or windows_path.is_absolute()
+        or windows_path.drive
+    ):
+        raise StorageConfigError(
+            f"{field_name} must be relative without a drive or root, got {value!r}"
+        )
+    return path
+
+
+def _require_absolute_path(value: str | Path, *, field_name: str) -> Path:
+    """Return an absolute host path for reverse storage-root addressing."""
+    try:
+        path = Path(value).expanduser()
+    except TypeError as exc:
+        raise StorageConfigError(f"{field_name} must be a path-like value") from exc
+    if not path.is_absolute():
+        raise StorageConfigError(f"{field_name} must be an absolute path, got {value!r}")
+    return path
+
+
+def _require_contained_path(
+    candidate: Path,
+    *,
+    root: Path,
+    storage_root: str,
+    field_name: str,
+) -> Path:
+    """Reject paths whose resolved location escapes a configured storage root."""
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise StorageConfigError(
+            f"{field_name} escapes storage_root {storage_root!r} after resolution"
+        ) from None
+    return candidate
 
 
 def _load_yaml_roots(config_path: Path) -> dict[str, Path]:
@@ -99,6 +188,10 @@ def _load_yaml_roots(config_path: Path) -> dict[str, Path]:
         )
     roots: dict[str, Path] = {}
     for name, value in roots_raw.items():
+        if not isinstance(name, str) or not name.strip():
+            raise StorageConfigError(
+                "storage_roots keys must be non-empty strings"
+            )
         if not isinstance(value, str) or not value.strip():
             raise StorageConfigError(
                 f"storage_roots[{name!r}] must be a non-empty string path"
@@ -108,7 +201,7 @@ def _load_yaml_roots(config_path: Path) -> dict[str, Path]:
             raise StorageConfigError(
                 f"storage_roots[{name!r}] must be an absolute path, got {value!r}"
             )
-        roots[str(name)] = base
+        roots[name] = base
     return roots
 
 
@@ -144,10 +237,17 @@ def load_storage_config(
             )
         roots[DEFAULT_STORAGE_ROOT] = base
 
-    if DEFAULT_STORAGE_ROOT not in roots:
+    if not roots:
         raise StorageConfigError(
             "no storage root configured; set the "
             f"{STORAGE_ROOT_ENV} environment variable or create "
             f"{DEFAULT_CONFIG_RELPATH} with a storage_roots.{DEFAULT_STORAGE_ROOT} entry"
         )
-    return StorageConfig(roots=roots)
+    config = StorageConfig(roots=roots)
+    if DEFAULT_STORAGE_ROOT not in config.roots:
+        raise StorageConfigError(
+            "no primary storage root configured; set the "
+            f"{STORAGE_ROOT_ENV} environment variable or define "
+            f"storage_roots.{DEFAULT_STORAGE_ROOT}"
+        )
+    return config

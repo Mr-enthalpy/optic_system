@@ -57,7 +57,7 @@ class FullFramePSFSurveyManifest:
     def from_dict(cls, data: dict[str, Any]) -> FullFramePSFSurveyManifest:
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(data, "full_frame_psf_survey")
+        read_schema_version(data, "full_frame_psf_survey", legacy_mode=True)
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise FullFramePSFSurveyError("frame_shape must contain [H, W]")

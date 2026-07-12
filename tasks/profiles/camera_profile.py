@@ -181,7 +181,7 @@ class CameraProfile:
     def from_dict(cls, d: dict[str, Any]) -> CameraProfile:
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(d, "camera_profile")
+        read_schema_version(d, "camera_profile", legacy_mode=True)
         profile_family = _require_str(d, "profile_family")
         illumination = CameraProfileIllumination.from_dict(
             _require_dict(d, "illumination")
