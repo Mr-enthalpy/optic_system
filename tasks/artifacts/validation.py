@@ -124,6 +124,27 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
         )
     try:
         return validator(artifact_path)
+    except _InvalidArtifact as exc:
+        return _result(
+            canonical_type,
+            ValidityOutcome.INVALID,
+            reason_codes=(exc.code,),
+            errors=(exc.message,),
+        )
+    except _UnreadableArtifact as exc:
+        return _result(
+            canonical_type,
+            ValidityOutcome.UNREADABLE,
+            reason_codes=(exc.code,),
+            errors=(exc.message,),
+        )
+    except LegacyUnversionedArtifactError:
+        return _result(
+            canonical_type,
+            ValidityOutcome.LEGACY_UNVERSIONED,
+            reason_codes=("legacy_unversioned",),
+            errors=("serialized artifact lacks explicit schema_version",),
+        )
     except OSError:
         return _result(
             canonical_type,
@@ -131,11 +152,11 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
             reason_codes=("location_unreadable",),
             errors=("artifact location could not be read",),
         )
-    except Exception as exc:  # noqa: BLE001 - validation must fail closed.
+    except Exception as exc:  # noqa: BLE001 - do not misclassify validator defects as data defects.
         return _result(
             canonical_type,
-            ValidityOutcome.INVALID,
-            reason_codes=("validator_exception",),
+            ValidityOutcome.UNSUPPORTED,
+            reason_codes=("validator_failed",),
             errors=(f"validator raised {type(exc).__name__}",),
         )
 
@@ -179,14 +200,8 @@ def _validate_json_artifact(
         return schema_result
     schema_version = schema_result
     try:
-        artifact = loader(data)
-        validate = getattr(artifact, "validate", None)
-        if not callable(validate):
-            raise _InvalidArtifact(
-                "validator_not_implemented",
-                "serialized artifact has no validate() contract",
-            )
-        validate()
+        _validate_strict_serialized_mapping(data, artifact_type)
+        _load_and_validate_serialized_artifact(data, loader)
     except _InvalidArtifact as exc:
         return _result(
             artifact_type,
@@ -194,19 +209,6 @@ def _validate_json_artifact(
             schema_version=schema_version,
             reason_codes=(exc.code,),
             errors=(exc.message,),
-        )
-    except Exception as exc:  # noqa: BLE001 - loader error is structural invalidity.
-        return _result(
-            artifact_type,
-            ValidityOutcome.INVALID,
-            schema_version=schema_version,
-            reason_codes=("serialized_contract_rejected",),
-            errors=(
-                _safe_validation_message(
-                    exc,
-                    f"serialized artifact was rejected by {type(exc).__name__}",
-                ),
-            ),
         )
     return _result(
         artifact_type,
@@ -274,13 +276,583 @@ def _validate_serialized_mapping(
         )
 
 
+def _load_and_validate_serialized_artifact(
+    data: dict[str, Any],
+    loader: Callable[[dict[str, Any]], Any],
+) -> Any:
+    """Load one already type-checked mapping and run its explicit contract.
+
+    Compatibility loaders remain available to normal task code.  Strict
+    validation reaches them only after raw JSON fields have been checked, and
+    it promotes only known artifact-contract exceptions to ``_InvalidArtifact``.
+    An unexpected exception is deliberately allowed to reach ``check_validity``
+    where it becomes ``unsupported/validator_failed`` rather than a persistent
+    claim that the data itself is invalid.
+    """
+    try:
+        artifact = loader(data)
+        validate = getattr(artifact, "validate", None)
+        if not callable(validate):
+            raise _InvalidArtifact(
+                "validator_not_implemented",
+                "serialized artifact has no validate() contract",
+            )
+        validate()
+        return artifact
+    except _InvalidArtifact:
+        raise
+    except Exception as exc:  # noqa: BLE001 - classification is intentionally narrow.
+        if _is_explicit_contract_error(exc):
+            raise _InvalidArtifact(
+                "serialized_contract_rejected",
+                _safe_validation_message(
+                    exc,
+                    f"serialized artifact was rejected by {type(exc).__name__}",
+                ),
+            ) from exc
+        raise
+
+
+def _is_explicit_contract_error(exc: Exception) -> bool:
+    """Return whether *exc* came from a current artifact contract.
+
+    Importing lazily keeps the validation module independent of task import
+    order.  These error types are intentionally specific: a generic
+    ``ValueError``, ``TypeError``, or programming error must not mark data as
+    structurally invalid.
+    """
+    from tasks.profiles.camera_profile import ProfileError
+    from tasks.psf.analyze_diffraction_support import DiffractionSupportAnalysisError
+    from tasks.psf.profile_requirements import PSFArtifactError
+    from tasks.psf.sensor_energy_center import SensorEnergyCenterError
+
+    return isinstance(
+        exc,
+        (
+            ProfileError,
+            SensorEnergyCenterError,
+            DiffractionSupportAnalysisError,
+            PSFArtifactError,
+        ),
+    )
+
+
+def _validate_strict_serialized_mapping(
+    data: Mapping[str, Any],
+    artifact_type: str,
+) -> None:
+    """Reject coercive serialized values before compatibility deserialization.
+
+    Existing ``from_dict`` methods intentionally retain limited compatibility
+    behavior for task loading.  Structural validation instead verifies the raw
+    JSON representation first, so values such as ``2.9`` for an integer field
+    cannot silently become ``2`` and numeric IDs cannot silently become text.
+    """
+    validator = _STRICT_SERIALIZED_VALIDATORS.get(artifact_type)
+    if validator is None:
+        raise _InvalidArtifact(
+            "validator_not_implemented",
+            "strict serialized validator is not registered",
+        )
+    validator(data)
+
+
+def _strict_error(field: str, expected: str) -> None:
+    raise _InvalidArtifact(
+        "serialized_type_invalid",
+        f"{field} must be {expected} in the serialized artifact",
+    )
+
+
+def _strict_required(data: Mapping[str, Any], field: str) -> Any:
+    if field not in data:
+        raise _InvalidArtifact(
+            "serialized_field_missing",
+            f"{field} is required in the serialized artifact",
+        )
+    return data[field]
+
+
+def _strict_mapping(value: Any, field: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        _strict_error(field, "a mapping")
+    return value
+
+
+def _strict_required_mapping(data: Mapping[str, Any], field: str) -> Mapping[str, Any]:
+    return _strict_mapping(_strict_required(data, field), field)
+
+
+def _strict_list(value: Any, field: str) -> list[Any]:
+    if not isinstance(value, list):
+        _strict_error(field, "a JSON array")
+    return value
+
+
+def _strict_required_list(data: Mapping[str, Any], field: str) -> list[Any]:
+    return _strict_list(_strict_required(data, field), field)
+
+
+def _strict_string(value: Any, field: str, *, nullable: bool = False) -> None:
+    if value is None and nullable:
+        return
+    if not isinstance(value, str) or not value.strip():
+        _strict_error(field, "a non-empty string" + (" or null" if nullable else ""))
+
+
+def _strict_required_string(data: Mapping[str, Any], field: str) -> None:
+    _strict_string(_strict_required(data, field), field)
+
+
+def _strict_optional_string(data: Mapping[str, Any], field: str) -> None:
+    if field in data:
+        _strict_string(data[field], field, nullable=True)
+
+
+def _strict_integer(value: Any, field: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        _strict_error(field, "an integer")
+
+
+def _strict_number(value: Any, field: str, *, nullable: bool = False) -> None:
+    if value is None and nullable:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        _strict_error(field, "a JSON number" + (" or null" if nullable else ""))
+
+
+def _strict_optional_number(data: Mapping[str, Any], field: str) -> None:
+    if field in data:
+        _strict_number(data[field], field, nullable=True)
+
+
+def _strict_pair(value: Any, field: str, *, integers: bool = False, nullable: bool = False) -> None:
+    if value is None and nullable:
+        return
+    values = _strict_list(value, field)
+    if len(values) != 2:
+        _strict_error(field, "a two-element JSON array")
+    for index, item in enumerate(values):
+        if integers:
+            _strict_integer(item, f"{field}[{index}]")
+        else:
+            _strict_number(item, f"{field}[{index}]")
+
+
+def _strict_quad(value: Any, field: str, *, nullable: bool = False) -> None:
+    if value is None and nullable:
+        return
+    values = _strict_list(value, field)
+    if len(values) != 4:
+        _strict_error(field, "a four-element JSON array")
+    for index, item in enumerate(values):
+        _strict_integer(item, f"{field}[{index}]")
+
+
+def _strict_number_list(data: Mapping[str, Any], field: str, *, required: bool = True) -> None:
+    if not required and field not in data:
+        return
+    for index, item in enumerate(_strict_required_list(data, field)):
+        _strict_number(item, f"{field}[{index}]")
+
+
+def _strict_string_list(data: Mapping[str, Any], field: str, *, required: bool = True) -> None:
+    if not required and field not in data:
+        return
+    for index, item in enumerate(_strict_required_list(data, field)):
+        _strict_string(item, f"{field}[{index}]")
+
+
+def _strict_pair_list(
+    data: Mapping[str, Any],
+    field: str,
+    *,
+    integers: bool = False,
+    required: bool = True,
+) -> None:
+    if not required and field not in data:
+        return
+    for index, item in enumerate(_strict_required_list(data, field)):
+        _strict_pair(item, f"{field}[{index}]", integers=integers)
+
+
+def _strict_mapping_field(data: Mapping[str, Any], field: str, *, required: bool = True) -> Mapping[str, Any] | None:
+    if not required and field not in data:
+        return None
+    return _strict_required_mapping(data, field)
+
+
+def _validate_serialized_camera_profile(data: Mapping[str, Any]) -> None:
+    for field in ("camera_profile_id", "profile_family"):
+        _strict_required_string(data, field)
+    illumination = _strict_required_mapping(data, "illumination")
+    _strict_required_string(illumination, "mode")
+    for field in ("tls_setpoint_nm", "effective_wavelength_nm"):
+        _strict_optional_number(illumination, field)
+    if "wavelengths_nm" in illumination:
+        for index, value in enumerate(_strict_list(illumination["wavelengths_nm"], "illumination.wavelengths_nm")):
+            _strict_number(value, f"illumination.wavelengths_nm[{index}]")
+    _strict_optional_string(illumination, "source")
+    _strict_required_mapping(data, "lcd_state")
+    _strict_string_list(data, "valid_for")
+    for field in ("source_raw_capture_file", "created_at", "software_version", "depends_on_pupil_profile_id"):
+        _strict_optional_string(data, field)
+    if "depends_on" in data:
+        depends_on = _strict_mapping(data["depends_on"], "depends_on")
+        if "pupil_profile_id" in depends_on:
+            _strict_string(depends_on["pupil_profile_id"], "depends_on.pupil_profile_id")
+    _strict_camera_settings_container(data.get("camera"), "camera")
+    _strict_camera_settings_container(data.get("per_wavelength"), "per_wavelength", direct=True)
+    _strict_optional_camera_scalar_fields(data, "")
+    if "extra" in data:
+        _strict_mapping(data["extra"], "extra")
+
+
+def _strict_camera_settings_container(
+    value: Any,
+    field: str,
+    *,
+    direct: bool = False,
+) -> None:
+    if value is None:
+        return
+    container = _strict_mapping(value, field)
+    if direct:
+        per_wavelength = container
+    else:
+        _strict_optional_camera_scalar_fields(container, f"{field}.")
+        per_wavelength = container.get("per_wavelength")
+    if per_wavelength is None:
+        return
+    settings_map = _strict_mapping(per_wavelength, f"{field}.per_wavelength" if not direct else field)
+    for key, settings in settings_map.items():
+        _strict_string(key, f"{field} key")
+        setting_map = _strict_mapping(settings, f"{field}[{key!r}]")
+        _strict_number(_strict_required(setting_map, "exposure_us"), f"{field}[{key!r}].exposure_us")
+        _strict_optional_camera_scalar_fields(setting_map, f"{field}[{key!r}].")
+
+
+def _strict_optional_camera_scalar_fields(data: Mapping[str, Any], prefix: str) -> None:
+    for field in (
+        "exposure_us",
+        "gain_db",
+        "peak_pixel",
+        "saturation_margin",
+        "full_frame_peak_pixel",
+    ):
+        if field in data:
+            _strict_number(data[field], f"{prefix}{field}", nullable=True)
+    for field in ("frames_per_capture", "full_frame_saturated_pixel_count"):
+        if field in data and data[field] is not None:
+            _strict_integer(data[field], f"{prefix}{field}")
+    if "peak_pixel_domain" in data:
+        _strict_string(data["peak_pixel_domain"], f"{prefix}peak_pixel_domain", nullable=True)
+
+
+def _validate_serialized_pupil_profile(data: Mapping[str, Any]) -> None:
+    for field in ("pupil_profile_id", "lcd_coordinate_convention"):
+        _strict_required_string(data, field)
+    for field in ("lcd_display_index", "subpixel_axis"):
+        _strict_integer(_strict_required(data, field), field)
+    _strict_pair(_strict_required(data, "lcd_physical_center"), "lcd_physical_center")
+    if "lcd_physical_radius" in data:
+        _strict_number(data["lcd_physical_radius"], "lcd_physical_radius", nullable=True)
+    for field in ("aperture_window", "recommended_roi"):
+        if field in data:
+            _strict_quad(data[field], field, nullable=True)
+    if "camera_psf_center" in data:
+        _strict_pair(data["camera_psf_center"], "camera_psf_center", nullable=True)
+    for field in ("fit_quality", "extra"):
+        if field in data:
+            _strict_mapping(data[field], field)
+    for field in ("source_raw_capture_file", "created_at", "software_version"):
+        _strict_optional_string(data, field)
+
+
+def _validate_serialized_sensor_energy_center_profile(data: Mapping[str, Any]) -> None:
+    for field in ("center_profile_id", "source_survey_h5", "coordinate_frame", "estimator_name"):
+        _strict_required_string(data, field)
+    for field in ("camera_frame_extent", "bg_policy", "corr_policy", "aggregation_policy"):
+        _strict_required_mapping(data, field)
+    _strict_pair(_strict_required(data, "center_xy"), "center_xy")
+    _strict_pair(_strict_required(data, "global_center_std_xy"), "global_center_std_xy")
+    _strict_number(_strict_required(data, "max_center_deviation_px"), "max_center_deviation_px")
+    _strict_pair_list(data, "per_entry_center_xy")
+    _strict_string_list(data, "per_entry_mask_ids")
+    _strict_number_list(data, "per_entry_wavelengths_nm")
+    _strict_number_list(data, "per_entry_background_value", required=False)
+    _strict_number_list(data, "per_entry_total_corr_energy", required=False)
+    if "per_entry_fallback_used" in data:
+        for index, value in enumerate(_strict_list(data["per_entry_fallback_used"], "per_entry_fallback_used")):
+            if not isinstance(value, bool):
+                _strict_error(f"per_entry_fallback_used[{index}]", "a boolean")
+    for field in ("per_wavelength_mean_center_xy", "per_wavelength_center_std_xy"):
+        mapping = _strict_required_mapping(data, field)
+        for key, value in mapping.items():
+            _strict_string(key, f"{field} key")
+            _strict_pair(value, f"{field}[{key!r}]")
+    if "camera_frame_shape" in data:
+        _strict_pair(data["camera_frame_shape"], "camera_frame_shape", integers=True, nullable=True)
+    _strict_optional_string(data, "notes")
+
+
+def _validate_serialized_peak_layout_profile(data: Mapping[str, Any]) -> None:
+    for field in ("peak_layout_id", "source_survey_h5", "coordinate_frame"):
+        _strict_required_string(data, field)
+    _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
+    _strict_required_mapping(data, "camera_frame_extent")
+    _strict_string_list(data, "peak_ids")
+    _strict_pair_list(data, "center_xy")
+    _strict_pair_list(data, "patch_shape_hw", integers=True)
+    _strict_pair_list(data, "patch_origin_xy", integers=True)
+    _strict_number_list(data, "stability_score")
+    _strict_pair_list(data, "amplitude_range")
+    for index, item in enumerate(_strict_required_list(data, "local_background_stats")):
+        stats = _strict_mapping(item, f"local_background_stats[{index}]")
+        for key, value in stats.items():
+            _strict_string(key, f"local_background_stats[{index}] key")
+            _strict_number(value, f"local_background_stats[{index}][{key!r}]")
+    _strict_number_list(data, "survey_wavelengths_nm")
+    _strict_string_list(data, "survey_mask_ids")
+    _strict_number_list(data, "valid_wavelengths_nm")
+    _strict_string_list(data, "valid_mask_ids")
+    validity_scope = _strict_required_mapping(data, "validity_scope")
+    for key, value in validity_scope.items():
+        _strict_string(key, "validity_scope key")
+        _strict_string(value, f"validity_scope[{key!r}]")
+    _strict_required_mapping(data, "detection_policy")
+    for field in ("notes", "center_profile_id"):
+        _strict_optional_string(data, field)
+    if "energy_center_xy" in data:
+        _strict_pair(data["energy_center_xy"], "energy_center_xy", nullable=True)
+    if "center_xy_rel" in data:
+        value = data["center_xy_rel"]
+        if value is not None:
+            _strict_pair_list({"center_xy_rel": value}, "center_xy_rel")
+
+
+def _validate_serialized_full_frame_psf_survey(data: Mapping[str, Any]) -> None:
+    for field in ("survey_id", "source_raw_capture_h5", "illumination_mode", "full_frame_role"):
+        _strict_required_string(data, field)
+    for field in ("pupil_profile_id", "camera_profile_id", "notes"):
+        _strict_optional_string(data, field)
+    _strict_number_list(data, "entry_wavelengths_nm")
+    _strict_string_list(data, "entry_illumination_json")
+    _strict_string_list(data, "entry_mask_ids")
+    _strict_number_list(data, "unique_wavelengths_nm")
+    _strict_string_list(data, "unique_mask_ids")
+    _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
+    _strict_required_mapping(data, "camera_frame_extent")
+    _strict_required_mapping(data, "survey_policy")
+
+
+def _validate_serialized_peak_support_analysis_report(data: Mapping[str, Any]) -> None:
+    for field in ("report_id", "source_survey_h5", "coordinate_frame"):
+        _strict_required_string(data, field)
+    _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
+    for field in (
+        "camera_frame_extent",
+        "bg_policy",
+        "corr_policy",
+        "radial_policy",
+        "component_policy",
+    ):
+        _strict_required_mapping(data, field)
+    _strict_number_list(data, "tau_values")
+    _strict_number_list(data, "support_radii")
+    _strict_string_list(data, "entry_mask_ids")
+    _strict_number_list(data, "entry_wavelengths_nm")
+    _strict_optional_string(data, "notes")
+    if "valid_pixel_domain" in data and data["valid_pixel_domain"] is not None:
+        _strict_mapping(data["valid_pixel_domain"], "valid_pixel_domain")
+
+
+def _validate_serialized_peak_patch_psf_dictionary(data: Mapping[str, Any]) -> None:
+    for field in (
+        "dictionary_id",
+        "source_raw_capture_h5",
+        "peak_layout_profile",
+        "illumination_mode",
+        "peak_layout_coordinate_frame",
+        "applied_background_policy",
+        "applied_normalization_policy",
+    ):
+        _strict_required_string(data, field)
+    for field in ("pupil_profile_id", "camera_profile_id", "notes"):
+        _strict_optional_string(data, field)
+    _strict_number_list(data, "entry_wavelengths_nm")
+    _strict_string_list(data, "entry_mask_ids")
+    _strict_number_list(data, "unique_wavelengths_nm")
+    _strict_string_list(data, "unique_mask_ids")
+    _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
+    _strict_required_mapping(data, "camera_frame_extent")
+    _strict_required_mapping(data, "peak_layout_camera_frame_extent")
+    _strict_string_list(data, "peak_ids")
+    _strict_pair_list(data, "patch_shape_hw", integers=True)
+    _strict_pair_list(data, "patch_origin_xy", integers=True)
+
+
+_STRICT_SERIALIZED_VALIDATORS: dict[str, Callable[[Mapping[str, Any]], None]] = {
+    "camera_profile": _validate_serialized_camera_profile,
+    "pupil_profile": _validate_serialized_pupil_profile,
+    "sensor_energy_center_profile": _validate_serialized_sensor_energy_center_profile,
+    "peak_layout_profile": _validate_serialized_peak_layout_profile,
+    "full_frame_psf_survey": _validate_serialized_full_frame_psf_survey,
+    "peak_support_analysis_report": _validate_serialized_peak_support_analysis_report,
+    "peak_patch_psf_dictionary": _validate_serialized_peak_patch_psf_dictionary,
+}
+
+
 def _class_loader(module_name: str, class_name: str) -> Callable[[dict[str, Any]], Any]:
     def _load(data: dict[str, Any]) -> Any:
         module = importlib.import_module(module_name)
         cls = getattr(module, class_name)
-        return cls.from_dict(data)
+        return cls.from_dict(data, legacy_mode=False)
 
     return _load
+
+
+_MANIFEST_LOADERS: dict[str, Callable[[dict[str, Any]], Any]] = {
+    "camera_profile": _class_loader("tasks.profiles.camera_profile", "CameraProfile"),
+    "pupil_profile": _class_loader("tasks.profiles.pupil_profile", "PupilProfile"),
+    "sensor_energy_center_profile": _class_loader(
+        "tasks.psf.sensor_energy_center",
+        "SensorEnergyCenterProfile",
+    ),
+    "peak_layout_profile": _class_loader(
+        "tasks.psf.derive_peak_layout_profile",
+        "PeakLayoutProfileManifest",
+    ),
+    "full_frame_psf_survey": _class_loader(
+        "tasks.psf.build_full_frame_psf_survey",
+        "FullFramePSFSurveyManifest",
+    ),
+    "peak_support_analysis_report": _class_loader(
+        "tasks.psf.analyze_diffraction_support",
+        "PeakSupportAnalysisManifest",
+    ),
+    "peak_patch_psf_dictionary": _class_loader(
+        "tasks.psf.build_peak_patch_psf_dictionary",
+        "PeakPatchPSFDictionaryManifest",
+    ),
+}
+
+
+_EMBEDDED_HDF_MANIFESTS: dict[str, tuple[str, bool]] = {
+    "full_frame_psf_survey": ("full_frame_survey/manifest_json", True),
+    "peak_support_analysis_report": ("metadata/manifest_json", False),
+    "peak_patch_psf_dictionary": ("peak_patch_dictionary/manifest_json", True),
+}
+
+
+def read_validated_manifest_mapping(
+    artifact_type: str,
+    path: str | Path,
+    *,
+    require_json: bool = False,
+) -> tuple[dict[str, Any], int] | ValidityResult:
+    """Read and strictly validate an artifact manifest mapping for local comparison.
+
+    JSON artifacts are read directly.  For the measured HDF5 products, the
+    function reads the artifact's canonical embedded manifest.  It has no
+    catalog behavior and never infers the artifact type from the location.
+    ``require_json`` is used for a ``manifest_sidecar`` so that a second HDF5
+    file cannot masquerade as a sidecar manifest.
+    """
+    if not isinstance(artifact_type, str) or not artifact_type.strip():
+        return _result(
+            str(artifact_type),
+            ValidityOutcome.UNSUPPORTED,
+            reason_codes=("unknown_artifact_type",),
+            errors=("artifact_type must be a non-empty canonical string",),
+        )
+    canonical_type = artifact_type.strip()
+    loader = _MANIFEST_LOADERS.get(canonical_type)
+    if loader is None:
+        return _result(
+            canonical_type,
+            ValidityOutcome.UNSUPPORTED,
+            reason_codes=("embedded_manifest_not_supported",),
+            errors=("artifact type has no manifest mapping contract",),
+        )
+    manifest_path = Path(path)
+    if not manifest_path.exists():
+        return _result(
+            canonical_type,
+            ValidityOutcome.UNREADABLE,
+            reason_codes=("location_missing",),
+            errors=("artifact location does not exist",),
+        )
+
+    try:
+        if _is_hdf5_payload(manifest_path):
+            if require_json:
+                raise _InvalidArtifact(
+                    "manifest_sidecar_not_json",
+                    "manifest_sidecar must be a JSON manifest payload",
+                )
+            embedded = _EMBEDDED_HDF_MANIFESTS.get(canonical_type)
+            if embedded is None:
+                return _result(
+                    canonical_type,
+                    ValidityOutcome.UNSUPPORTED,
+                    reason_codes=("embedded_manifest_not_supported",),
+                    errors=("artifact type has no embedded manifest contract",),
+                )
+            embedded_path, root_type_required = embedded
+            with h5py.File(manifest_path, "r") as h5:
+                _validate_root_artifact_type(
+                    h5,
+                    canonical_type,
+                    required=root_type_required,
+                )
+                data = _read_hdf_json_mapping(h5, embedded_path)
+                schema_result = _validate_serialized_mapping(data, canonical_type)
+                if isinstance(schema_result, ValidityResult):
+                    return schema_result
+                schema_version = schema_result
+                _validate_optional_root_schema_version(
+                    h5,
+                    canonical_type,
+                    expected=schema_version,
+                )
+        else:
+            data = _read_json_file(manifest_path)
+            schema_result = _validate_serialized_mapping(data, canonical_type)
+            if isinstance(schema_result, ValidityResult):
+                return schema_result
+            schema_version = schema_result
+        _validate_strict_serialized_mapping(data, canonical_type)
+        _load_and_validate_serialized_artifact(data, loader)
+        return data, schema_version
+    except _InvalidArtifact as exc:
+        return _result(
+            canonical_type,
+            ValidityOutcome.INVALID,
+            reason_codes=(exc.code,),
+            errors=(exc.message,),
+        )
+    except _UnreadableArtifact as exc:
+        return _result(
+            canonical_type,
+            ValidityOutcome.UNREADABLE,
+            reason_codes=(exc.code,),
+            errors=(exc.message,),
+        )
+    except OSError:
+        return _result(
+            canonical_type,
+            ValidityOutcome.UNREADABLE,
+            reason_codes=("location_unreadable",),
+            errors=("artifact location could not be read",),
+        )
+    except Exception as exc:  # noqa: BLE001 - retain validator/data distinction.
+        return _result(
+            canonical_type,
+            ValidityOutcome.UNSUPPORTED,
+            reason_codes=("validator_failed",),
+            errors=(f"validator raised {type(exc).__name__}",),
+        )
 
 
 def _validate_camera_profile(path: Path) -> ValidityResult:
@@ -462,30 +1034,13 @@ def _validate_hdf_manifest_artifact(
             if isinstance(schema_result, ValidityResult):
                 return schema_result
             schema_version = schema_result
+            _validate_strict_serialized_mapping(data, artifact_type)
             _validate_optional_root_schema_version(
                 h5,
                 artifact_type,
                 expected=schema_version,
             )
-            try:
-                manifest = loader(data)
-                validate = getattr(manifest, "validate", None)
-                if not callable(validate):
-                    raise _InvalidArtifact(
-                        "validator_not_implemented",
-                        "embedded manifest has no validate() contract",
-                    )
-                validate()
-            except _InvalidArtifact:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                raise _InvalidArtifact(
-                    "manifest_contract_rejected",
-                    _safe_validation_message(
-                        exc,
-                        f"embedded manifest was rejected by {type(exc).__name__}",
-                    ),
-                ) from exc
+            manifest = _load_and_validate_serialized_artifact(data, loader)
             hdf_validator(h5, manifest)
             return _result(
                 artifact_type,
@@ -841,6 +1396,148 @@ def _validate_raw_capture_h5(h5: h5py.File) -> None:
         )
 
 
+def _source_plan_index_contract(h5: h5py.File) -> tuple[list[str], list[float]]:
+    """Read the source capture-plan identity table used by derived HDF5 data."""
+    plan = _read_hdf_json_mapping(h5, "source/plan_json")
+    masks = plan.get("masks")
+    wavelengths = plan.get("wavelengths")
+    if not isinstance(masks, list) or not masks:
+        raise _InvalidArtifact(
+            "source_plan_invalid",
+            "source plan must declare a non-empty masks array",
+        )
+    if not isinstance(wavelengths, list) or not wavelengths:
+        raise _InvalidArtifact(
+            "source_plan_invalid",
+            "source plan must declare a non-empty wavelengths array",
+        )
+
+    mask_ids: list[str] = []
+    for index, entry in enumerate(masks):
+        if not isinstance(entry, Mapping):
+            raise _InvalidArtifact(
+                "source_plan_invalid",
+                "source plan mask entries must be mappings",
+            )
+        mask_id = entry.get("mask_id")
+        if not isinstance(mask_id, str) or not mask_id.strip():
+            raise _InvalidArtifact(
+                "source_plan_invalid",
+                f"source plan masks[{index}].mask_id must be a non-empty string",
+            )
+        mask_ids.append(mask_id)
+
+    wavelength_values: list[float] = []
+    for index, entry in enumerate(wavelengths):
+        if not isinstance(entry, Mapping):
+            raise _InvalidArtifact(
+                "source_plan_invalid",
+                "source plan wavelength entries must be mappings",
+            )
+        illumination = entry.get("illumination")
+        if not isinstance(illumination, Mapping):
+            raise _InvalidArtifact(
+                "source_plan_invalid",
+                f"source plan wavelengths[{index}].illumination must be a mapping",
+            )
+        value = illumination.get("effective_wavelength_nm")
+        if value is None:
+            value = illumination.get("wavelength_label_nm")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise _InvalidArtifact(
+                "source_plan_invalid",
+                f"source plan wavelengths[{index}] lacks a numeric effective wavelength",
+            )
+        wavelength = float(value)
+        if not math.isfinite(wavelength):
+            raise _InvalidArtifact(
+                "source_plan_invalid",
+                f"source plan wavelengths[{index}] has a non-finite effective wavelength",
+            )
+        wavelength_values.append(wavelength)
+
+    _validate_optional_mask_table_against_source_plan(h5, mask_ids)
+    return mask_ids, wavelength_values
+
+
+def _validate_optional_mask_table_against_source_plan(
+    h5: h5py.File,
+    source_mask_ids: list[str],
+) -> None:
+    """Require an emitted mask table to agree with source-plan mask identity."""
+    if "mask_table" not in h5:
+        return
+    group = h5.get("mask_table")
+    if not isinstance(group, h5py.Group):
+        raise _InvalidArtifact("mask_table_invalid", "mask_table must be a group")
+    table_ids = _read_text_array(
+        _require_dataset(h5, "mask_table/mask_ids"),
+        name="mask_table/mask_ids",
+    )
+    if table_ids != source_mask_ids:
+        raise _InvalidArtifact(
+            "source_plan_metadata_mismatch",
+            "mask_table mask_ids do not match source plan mask IDs",
+        )
+
+
+def _read_integer_index_vector(
+    h5: h5py.File,
+    path: str,
+    *,
+    entry_count: int,
+) -> np.ndarray:
+    """Read an index vector without coercing non-integer HDF5 data."""
+    dataset = _require_dataset(h5, path)
+    _require_vector_length(dataset, entry_count, name=path)
+    if not np.issubdtype(dataset.dtype, np.integer):
+        raise _InvalidArtifact(
+            "index_dtype_invalid",
+            f"{path} must use an integer dtype",
+        )
+    return np.asarray(dataset[()], dtype=np.int64)
+
+
+def _read_vlen_integer_index_rows(
+    h5: h5py.File,
+    path: str,
+    *,
+    entry_count: int,
+) -> list[np.ndarray]:
+    """Read one integer capture-index vector per entry without coercion."""
+    dataset = _require_dataset(h5, path)
+    _require_vector_length(dataset, entry_count, name=path)
+    base_dtype = h5py.check_dtype(vlen=dataset.dtype)
+    if base_dtype is None or not np.issubdtype(base_dtype, np.integer):
+        raise _InvalidArtifact(
+            "index_dtype_invalid",
+            f"{path} must use a variable-length integer dtype",
+        )
+    rows: list[np.ndarray] = []
+    for index, raw in enumerate(dataset[()]):
+        values = np.asarray(raw, dtype=np.int64)
+        if values.ndim != 1 or values.size == 0:
+            raise _InvalidArtifact(
+                "capture_indices_invalid",
+                f"{path}[{index}] must contain at least one capture index",
+            )
+        rows.append(values)
+    return rows
+
+
+def _validate_capture_index_in_bounds(
+    capture_index: int,
+    *,
+    planned_capture_count: int,
+) -> None:
+    """Check a derived entry's source capture index without assuming capture order."""
+    if capture_index < 0 or capture_index >= planned_capture_count:
+        raise _InvalidArtifact(
+            "capture_index_out_of_bounds",
+            "entry capture index is outside the source capture plan",
+        )
+
+
 def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> None:
     group = h5.get("full_frame_survey")
     if not isinstance(group, h5py.Group):
@@ -889,13 +1586,21 @@ def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> Non
             "manifest_metadata_mismatch",
             "survey frame extent does not match embedded manifest",
         )
+    entry_mask_ids = _read_text_array(
+        h5["full_frame_survey/entry_mask_ids"],
+        name="entry_mask_ids",
+    )
     _require_manifest_sequence_match(
-        _read_text_array(h5["full_frame_survey/entry_mask_ids"], name="entry_mask_ids"),
+        entry_mask_ids,
         manifest.entry_mask_ids,
         name="entry_mask_ids",
     )
+    entry_wavelengths = np.asarray(
+        h5["full_frame_survey/entry_wavelength_nm"][()],
+        dtype=np.float64,
+    )
     _require_numeric_sequence_match(
-        np.asarray(h5["full_frame_survey/entry_wavelength_nm"][()]),
+        entry_wavelengths,
         manifest.entry_wavelengths_nm,
         name="entry_wavelength_nm",
     )
@@ -926,17 +1631,55 @@ def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> Non
             "manifest_metadata_mismatch",
             "survey_policy_json does not match embedded manifest",
         )
-    for path in (
+    source_mask_ids, source_wavelengths = _source_plan_index_contract(h5)
+    mask_indices = _read_integer_index_vector(
+        h5,
         "full_frame_survey/mask_index",
+        entry_count=entry_count,
+    )
+    wavelength_indices = _read_integer_index_vector(
+        h5,
         "full_frame_survey/wavelength_index",
+        entry_count=entry_count,
+    )
+    capture_indices = _read_integer_index_vector(
+        h5,
         "full_frame_survey/capture_indices",
-    ):
-        values = np.asarray(_require_dataset(h5, path)[()], dtype=np.int64)
-        if np.any(values < 0):
+        entry_count=entry_count,
+    )
+    for index in range(entry_count):
+        mask_index = int(mask_indices[index])
+        wavelength_index = int(wavelength_indices[index])
+        capture_index = int(capture_indices[index])
+        if mask_index < 0 or mask_index >= len(source_mask_ids):
             raise _InvalidArtifact(
-                "entry_index_out_of_bounds",
-                f"{path} contains a negative index",
+                "mask_index_out_of_bounds",
+                "survey mask_index is outside the source capture plan",
             )
+        if wavelength_index < 0 or wavelength_index >= len(source_wavelengths):
+            raise _InvalidArtifact(
+                "wavelength_index_out_of_bounds",
+                "survey wavelength_index is outside the source capture plan",
+            )
+        if entry_mask_ids[index] != source_mask_ids[mask_index]:
+            raise _InvalidArtifact(
+                "entry_mask_id_mismatch",
+                "survey entry_mask_ids do not match source plan mask IDs",
+            )
+        if not math.isclose(
+            float(entry_wavelengths[index]),
+            source_wavelengths[wavelength_index],
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            raise _InvalidArtifact(
+                "entry_wavelength_mismatch",
+                "survey entry wavelengths do not match source plan wavelengths",
+            )
+        _validate_capture_index_in_bounds(
+            capture_index,
+            planned_capture_count=len(source_mask_ids) * len(source_wavelengths),
+        )
     if "survey_id" in h5.attrs and decode_h5_string(h5.attrs["survey_id"]) != manifest.survey_id:
         raise _InvalidArtifact(
             "manifest_metadata_mismatch",
@@ -1119,16 +1862,21 @@ def _validate_peak_patch_psf_dictionary_payload(h5: h5py.File, manifest: Any) ->
         _require_vector_length(
             _require_dataset(h5, required), entry_count, name=required
         )
+    entry_mask_ids = _read_text_array(
+        h5["peak_patch_dictionary/entry_mask_ids"],
+        name="entry_mask_ids",
+    )
     _require_manifest_sequence_match(
-        _read_text_array(
-            h5["peak_patch_dictionary/entry_mask_ids"],
-            name="entry_mask_ids",
-        ),
+        entry_mask_ids,
         manifest.entry_mask_ids,
         name="entry_mask_ids",
     )
-    _require_numeric_sequence_match(
+    entry_wavelengths = np.asarray(
         h5["peak_patch_dictionary/entry_wavelength_nm"][()],
+        dtype=np.float64,
+    )
+    _require_numeric_sequence_match(
+        entry_wavelengths,
         manifest.entry_wavelengths_nm,
         name="entry_wavelength_nm",
     )
@@ -1215,6 +1963,49 @@ def _validate_peak_patch_psf_dictionary_payload(h5: h5py.File, manifest: Any) ->
             "manifest_metadata_mismatch",
             "normalization_policy_json does not match embedded manifest",
         )
+    source_mask_ids, source_wavelengths = _source_plan_index_contract(h5)
+    mask_indices = _read_integer_index_vector(
+        h5,
+        "peak_patch_dictionary/entry_mask_index",
+        entry_count=entry_count,
+    )
+    capture_index_rows = _read_vlen_integer_index_rows(
+        h5,
+        "peak_patch_dictionary/entry_capture_indices",
+        entry_count=entry_count,
+    )
+    for index in range(entry_count):
+        mask_index = int(mask_indices[index])
+        if mask_index < 0 or mask_index >= len(source_mask_ids):
+            raise _InvalidArtifact(
+                "mask_index_out_of_bounds",
+                "dictionary entry_mask_index is outside the source capture plan",
+            )
+        if entry_mask_ids[index] != source_mask_ids[mask_index]:
+            raise _InvalidArtifact(
+                "entry_mask_id_mismatch",
+                "dictionary entry_mask_ids do not match source plan mask IDs",
+            )
+        matching_wavelength_indices = [
+            wavelength_index
+            for wavelength_index, source_wavelength in enumerate(source_wavelengths)
+            if math.isclose(
+                float(entry_wavelengths[index]),
+                source_wavelength,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+        ]
+        if not matching_wavelength_indices:
+            raise _InvalidArtifact(
+                "entry_wavelength_mismatch",
+                "dictionary entry wavelengths do not match the source capture plan",
+            )
+        for capture_index in capture_index_rows[index]:
+            _validate_capture_index_in_bounds(
+                int(capture_index),
+                planned_capture_count=len(source_mask_ids) * len(source_wavelengths),
+            )
     if "dictionary_id" in h5.attrs and decode_h5_string(
         h5.attrs["dictionary_id"]
     ) != manifest.dictionary_id:
@@ -1292,4 +2083,5 @@ __all__ = [
     "ValidityOutcome",
     "ValidityResult",
     "check_validity",
+    "read_validated_manifest_mapping",
 ]

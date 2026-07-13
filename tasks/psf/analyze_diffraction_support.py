@@ -74,13 +74,18 @@ class PeakSupportAnalysisManifest:
     valid_pixel_domain: dict[str, Any] | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PeakSupportAnalysisManifest":
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        legacy_mode: bool = True,
+    ) -> "PeakSupportAnalysisManifest":
         from tasks.artifact_versioning import read_schema_version
 
         read_schema_version(
             data,
             "peak_support_analysis_report",
-            legacy_mode=True,
+            legacy_mode=legacy_mode,
         )
         return cls(
             report_id=str(data["report_id"]),

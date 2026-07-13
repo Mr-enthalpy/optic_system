@@ -54,10 +54,15 @@ class PeakLayoutProfileManifest:
     center_xy_rel: list[list[float]] | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PeakLayoutProfileManifest:
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        legacy_mode: bool = True,
+    ) -> PeakLayoutProfileManifest:
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(data, "peak_layout_profile", legacy_mode=True)
+        read_schema_version(data, "peak_layout_profile", legacy_mode=legacy_mode)
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise PeakLayoutProfileError("frame_shape must contain [H, W]")

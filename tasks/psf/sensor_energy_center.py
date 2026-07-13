@@ -52,13 +52,18 @@ class SensorEnergyCenterProfile:
     notes: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SensorEnergyCenterProfile":
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        legacy_mode: bool = True,
+    ) -> "SensorEnergyCenterProfile":
         from tasks.artifact_versioning import read_schema_version
 
         read_schema_version(
             data,
             "sensor_energy_center_profile",
-            legacy_mode=True,
+            legacy_mode=legacy_mode,
         )
         return cls(
             center_profile_id=_require_str(data, "center_profile_id"),

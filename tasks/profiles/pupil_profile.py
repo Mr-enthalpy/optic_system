@@ -26,10 +26,15 @@ class PupilProfile:
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> PupilProfile:
+    def from_dict(
+        cls,
+        d: dict[str, Any],
+        *,
+        legacy_mode: bool = True,
+    ) -> PupilProfile:
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(d, "pupil_profile", legacy_mode=True)
+        read_schema_version(d, "pupil_profile", legacy_mode=legacy_mode)
         profile = cls(
             pupil_profile_id=_require_str(d, "pupil_profile_id"),
             lcd_coordinate_convention=_require_str(d, "lcd_coordinate_convention"),

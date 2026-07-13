@@ -64,6 +64,14 @@ type from a filename or media type. A bundle with inventory but without an
 explicit primary payload is `unsupported` for full artifact validation, not
 silently treated as valid.
 
+When `manifest_sidecar` is declared, integrity verification alone is not
+sufficient. The sidecar must parse as the declared artifact type and schema,
+and it must canonically equal the primary payload's manifest: the direct JSON
+manifest for JSON-primary artifacts or the canonical embedded manifest for the
+supported HDF5 products. A differing artifact ID, schema version, or metadata
+is an `invalid` `manifest_sidecar_mismatch`, even when both payload digests
+match their inventory records.
+
 Bundle JSON writes use a temporary file, flush/close, and `os.replace`. The
 validator does not register an artifact, choose a current generation, promote
 trust, supersede a predecessor, or write catalog events.
@@ -85,6 +93,14 @@ scientifically unreviewed, and an unsupported representation is not evidence
 that it is corrupt. JSON manifest validation checks only the JSON contract;
 HDF5 validation checks embedded manifests plus the HDF5 datasets/metadata that
 belong to that artifact type.
+
+Only explicit artifact-contract violations produce `invalid`. An unexpected
+validator failure, missing optional validator dependency, or unhandled validator
+case is `unsupported` with reason code `validator_failed`, so a validator defect
+cannot be persisted later as an invalid-data decision. Strict validation checks
+the raw JSON field types before running compatibility loaders; compatibility
+coercions remain a task-loading concern, not a way to make malformed current
+artifacts structurally valid.
 
 Storage roots are intentionally external to the repository: `StorageConfig`
 rejects a root inside the repository and a root that contains the repository.

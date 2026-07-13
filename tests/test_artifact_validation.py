@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import pytest
 
+import tasks.artifacts.validation as artifact_validation
 from tasks.artifact_versioning import schema_compat
 from tasks.artifacts.validation import (
     VALIDATOR_REGISTRY,
@@ -202,6 +203,32 @@ def _write_text_array(group: h5py.Group, name: str, values: list[str]) -> None:
     )
 
 
+def _source_plan_json() -> str:
+    return json.dumps(
+        {
+            "plan_id": "validation_plan_v1",
+            "wavelengths": [
+                {
+                    "settle_ms": 0,
+                    "illumination": {
+                        "mode": "monochromatic",
+                        "effective_wavelength_nm": 550.0,
+                        "tls_setpoint_nm": 550.0,
+                        "wavelength_label_nm": 550.0,
+                    },
+                }
+            ],
+            "masks": [{"mask_id": "mask_1"}],
+        },
+        sort_keys=True,
+    )
+
+
+def _write_derived_source_plan(h5: h5py.File) -> None:
+    source = h5.require_group("source")
+    _write_scalar_text(source, "plan_json", _source_plan_json())
+
+
 def _write_raw_capture(path: Path) -> None:
     shape = (2, 3)
     with h5py.File(path, "w") as h5:
@@ -230,7 +257,7 @@ def _write_raw_capture(path: Path) -> None:
         _write_scalar_text(
             capture,
             "plan_json",
-            json.dumps({"wavelengths": [{}], "masks": [{}]}),
+            _source_plan_json(),
         )
         _write_scalar_text(
             capture,
@@ -267,6 +294,7 @@ def _write_survey_h5(path: Path) -> FullFramePSFSurveyManifest:
         )
         _write_scalar_text(group, "survey_policy_json", json.dumps(manifest.survey_policy))
         _write_scalar_text(group, "manifest_json", manifest.to_json())
+        _write_derived_source_plan(h5)
     return manifest
 
 
@@ -353,6 +381,7 @@ def _write_dictionary_h5(path: Path) -> PeakPatchPSFDictionaryManifest:
             json.dumps({"applied": manifest.applied_normalization_policy}),
         )
         _write_scalar_text(group, "manifest_json", manifest.to_json())
+        _write_derived_source_plan(h5)
     return manifest
 
 
@@ -375,6 +404,28 @@ def test_validation_outcomes_distinguish_unsupported_and_invalid(
     mismatched = check_validity("camera_profile", path)
     assert mismatched.outcome is ValidityOutcome.INVALID
     assert mismatched.reason_codes == ("artifact_type_mismatch",)
+
+
+def test_unexpected_validator_failure_is_unsupported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "pupil.json"
+    _pupil_profile().to_json(path)
+
+    def _broken_loader(_data: dict[str, object]) -> object:
+        raise RuntimeError("validator bug")
+
+    monkeypatch.setattr(
+        artifact_validation,
+        "_class_loader",
+        lambda *_args: _broken_loader,
+    )
+
+    result = check_validity("pupil_profile", path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("validator_failed",)
 
 
 def test_validation_reports_legacy_and_unreadable_locations(tmp_path: Path) -> None:
@@ -408,6 +459,31 @@ def test_json_artifact_validators_accept_complete_structures(tmp_path: Path) -> 
         result = check_validity(artifact_type, path)
         assert result.outcome is ValidityOutcome.VALID
         assert result.schema_version == schema_compat(artifact_type).current
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda data: data.__setitem__("frame_shape", [2.9, 3.7]),
+        lambda data: data.__setitem__("peak_ids", [123]),
+        lambda data: data.__setitem__("patch_shape_hw", [[1.9, 2.8]]),
+        lambda data: data.__setitem__("patch_origin_xy", [[0.7, 0]]),
+        lambda data: data.__setitem__("stability_score", ["0.75"]),
+    ],
+)
+def test_strict_validation_rejects_coercive_peak_layout_fields(
+    tmp_path: Path,
+    mutate,
+) -> None:
+    data = _layout_manifest().to_dict()
+    mutate(data)
+    path = tmp_path / "layout.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = check_validity("peak_layout_profile", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("serialized_type_invalid",)
 
 
 def test_json_manifest_validate_methods_reject_structural_contradictions() -> None:
@@ -484,6 +560,54 @@ def test_survey_validator_rejects_hdf5_manifest_disagreement(tmp_path: Path) -> 
     assert result.reason_codes == ("manifest_metadata_mismatch",)
 
 
+@pytest.mark.parametrize(
+    ("dataset", "reason_code"),
+    [
+        ("full_frame_survey/mask_index", "mask_index_out_of_bounds"),
+        ("full_frame_survey/wavelength_index", "wavelength_index_out_of_bounds"),
+        ("full_frame_survey/capture_indices", "capture_index_out_of_bounds"),
+    ],
+)
+def test_survey_validator_rejects_source_plan_index_overflow(
+    tmp_path: Path,
+    dataset: str,
+    reason_code: str,
+) -> None:
+    path = tmp_path / "survey.h5"
+    _write_survey_h5(path)
+    with h5py.File(path, "r+") as h5:
+        h5[dataset][0] = 9
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == (reason_code,)
+
+
+def test_survey_validator_rejects_source_plan_identity_mismatch(tmp_path: Path) -> None:
+    path = tmp_path / "survey.h5"
+    _write_survey_h5(path)
+    with h5py.File(path, "r+") as h5:
+        h5["source/plan_json"][()] = json.dumps(
+            {
+                "wavelengths": [
+                    {
+                        "illumination": {
+                            "mode": "monochromatic",
+                            "effective_wavelength_nm": 550.0,
+                        }
+                    }
+                ],
+                "masks": [{"mask_id": "other_mask"}],
+            }
+        )
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("entry_mask_id_mismatch",)
+
+
 def test_support_validator_rejects_incomplete_component_table(tmp_path: Path) -> None:
     path = tmp_path / "support.h5"
     _write_support_report_h5(path)
@@ -508,3 +632,71 @@ def test_dictionary_validator_rejects_wrong_root_artifact_type(tmp_path: Path) -
 
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == ("artifact_type_mismatch",)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason_code"),
+    [
+        (
+            lambda h5: h5["peak_patch_dictionary/entry_mask_index"].__setitem__(0, 9),
+            "mask_index_out_of_bounds",
+        ),
+        (
+            lambda h5: h5["peak_patch_dictionary/entry_capture_indices"].__setitem__(
+                0,
+                np.asarray([9], dtype=np.int64),
+            ),
+            "capture_index_out_of_bounds",
+        ),
+    ],
+)
+def test_dictionary_validator_rejects_source_plan_index_overflow(
+    tmp_path: Path,
+    mutation,
+    reason_code: str,
+) -> None:
+    path = tmp_path / "dictionary.h5"
+    _write_dictionary_h5(path)
+    with h5py.File(path, "r+") as h5:
+        mutation(h5)
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == (reason_code,)
+
+
+@pytest.mark.parametrize(
+    ("source_mask_id", "source_wavelength_nm", "reason_code"),
+    [
+        ("other_mask", 550.0, "entry_mask_id_mismatch"),
+        ("mask_1", 560.0, "entry_wavelength_mismatch"),
+    ],
+)
+def test_dictionary_validator_rejects_source_plan_entry_identity_mismatch(
+    tmp_path: Path,
+    source_mask_id: str,
+    source_wavelength_nm: float,
+    reason_code: str,
+) -> None:
+    path = tmp_path / "dictionary.h5"
+    _write_dictionary_h5(path)
+    with h5py.File(path, "r+") as h5:
+        h5["source/plan_json"][()] = json.dumps(
+            {
+                "wavelengths": [
+                    {
+                        "illumination": {
+                            "mode": "monochromatic",
+                            "effective_wavelength_nm": source_wavelength_nm,
+                        }
+                    }
+                ],
+                "masks": [{"mask_id": source_mask_id}],
+            }
+        )
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == (reason_code,)

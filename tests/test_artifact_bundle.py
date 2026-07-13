@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import h5py
+import numpy as np
 import pytest
 
 from tasks.artifact_versioning import schema_compat
@@ -16,6 +19,10 @@ from tasks.artifacts.bundle import (
 )
 from tasks.artifacts.validation import ValidityOutcome
 from tasks.profiles import PupilProfile
+from tasks.psf.build_full_frame_psf_survey import FullFramePSFSurveyManifest
+
+
+_STRING_DTYPE = h5py.string_dtype(encoding="utf-8")
 
 
 def _pupil_profile() -> PupilProfile:
@@ -50,6 +57,131 @@ def _bundle_for_profile(tmp_path: Path) -> tuple[ArtifactBundleManifest, Path, P
     return bundle, generation, data_path
 
 
+def _extent(shape: tuple[int, int]) -> dict[str, object]:
+    height, width = shape
+    return {
+        "mode": "full_sensor",
+        "origin_xy": [0, 0],
+        "shape_hw": [height, width],
+        "sensor_shape_hw": [height, width],
+    }
+
+
+def _write_text_array(group: h5py.Group, name: str, values: list[str]) -> None:
+    group.create_dataset(
+        name,
+        data=np.asarray(values, dtype=object),
+        dtype=_STRING_DTYPE,
+    )
+
+
+def _survey_manifest() -> FullFramePSFSurveyManifest:
+    shape = (2, 3)
+    return FullFramePSFSurveyManifest(
+        survey_id="bundle_survey_v1",
+        source_raw_capture_h5="raw_capture.h5",
+        pupil_profile_id=None,
+        camera_profile_id=None,
+        illumination_mode="monochromatic",
+        entry_wavelengths_nm=[550.0],
+        entry_illumination_json=['{"mode":"monochromatic"}'],
+        entry_mask_ids=["mask_1"],
+        unique_wavelengths_nm=[550.0],
+        unique_mask_ids=["mask_1"],
+        frame_shape=shape,
+        camera_frame_extent=_extent(shape),
+        survey_policy={"background": "none", "normalization": "none"},
+        full_frame_role="scout",
+    )
+
+
+def _write_survey_h5(path: Path, manifest: FullFramePSFSurveyManifest) -> None:
+    with h5py.File(path, "w") as h5:
+        h5.attrs["artifact_type"] = "full_frame_psf_survey"
+        h5.attrs["schema_version"] = schema_compat("full_frame_psf_survey").current
+        h5.attrs["survey_id"] = manifest.survey_id
+        group = h5.require_group("full_frame_survey")
+        group.create_dataset("frames_avg", data=np.zeros((1, 2, 3), dtype=np.float32))
+        _write_text_array(group, "entry_mask_ids", manifest.entry_mask_ids)
+        group.create_dataset(
+            "entry_wavelength_nm",
+            data=np.asarray(manifest.entry_wavelengths_nm, dtype=np.float64),
+        )
+        _write_text_array(group, "entry_illumination_json", manifest.entry_illumination_json)
+        _write_text_array(group, "unique_mask_ids", manifest.unique_mask_ids)
+        group.create_dataset(
+            "unique_wavelength_nm",
+            data=np.asarray(manifest.unique_wavelengths_nm, dtype=np.float64),
+        )
+        group.create_dataset("mask_index", data=np.asarray([0], dtype=np.int64))
+        group.create_dataset("wavelength_index", data=np.asarray([0], dtype=np.int64))
+        group.create_dataset("capture_indices", data=np.asarray([0], dtype=np.int64))
+        group.create_dataset("frame_shape", data=np.asarray(manifest.frame_shape, dtype=np.int64))
+        group.create_dataset(
+            "camera_frame_extent_json",
+            data=json.dumps(manifest.camera_frame_extent, sort_keys=True),
+            dtype=_STRING_DTYPE,
+        )
+        group.create_dataset(
+            "survey_policy_json",
+            data=json.dumps(manifest.survey_policy, sort_keys=True),
+            dtype=_STRING_DTYPE,
+        )
+        group.create_dataset("manifest_json", data=manifest.to_json(), dtype=_STRING_DTYPE)
+        source = h5.require_group("source")
+        source.create_dataset(
+            "plan_json",
+            data=json.dumps(
+                {
+                    "plan_id": "bundle_plan_v1",
+                    "wavelengths": [
+                        {
+                            "illumination": {
+                                "mode": "monochromatic",
+                                "effective_wavelength_nm": 550.0,
+                                "tls_setpoint_nm": 550.0,
+                            }
+                        }
+                    ],
+                    "masks": [{"mask_id": "mask_1"}],
+                },
+                sort_keys=True,
+            ),
+            dtype=_STRING_DTYPE,
+        )
+
+
+def _bundle_for_survey(
+    tmp_path: Path,
+    *,
+    sidecar_data: dict[str, object] | None = None,
+) -> tuple[ArtifactBundleManifest, Path, FullFramePSFSurveyManifest]:
+    generation = tmp_path / "survey_generation"
+    generation.mkdir()
+    manifest = _survey_manifest()
+    data_path = generation / "survey.h5"
+    _write_survey_h5(data_path, manifest)
+    sidecar_path = generation / "survey.manifest.json"
+    sidecar_path.write_text(
+        json.dumps(sidecar_data or manifest.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    bundle = ArtifactBundleManifest(
+        artifact_id=manifest.survey_id,
+        artifact_type="full_frame_psf_survey",
+        schema_version=schema_compat("full_frame_psf_survey").current,
+        payloads={
+            "data": inspect_payload(data_path, "application/x-hdf5", rel_path="survey.h5"),
+            "manifest_sidecar": inspect_payload(
+                sidecar_path,
+                "application/json",
+                rel_path="survey.manifest.json",
+            ),
+        },
+    )
+    return bundle, generation, manifest
+
+
 def test_bundle_json_roundtrip_and_local_payload_validation(tmp_path: Path) -> None:
     bundle, generation, _ = _bundle_for_profile(tmp_path)
     manifest_path = generation / "bundle.manifest.json"
@@ -61,6 +193,40 @@ def test_bundle_json_roundtrip_and_local_payload_validation(tmp_path: Path) -> N
     assert loaded.to_dict() == bundle.to_dict()
     assert result.outcome is ValidityOutcome.VALID
     assert result.schema_version == bundle.schema_version
+
+
+def test_bundle_validates_matching_hdf5_embedded_manifest_sidecar(tmp_path: Path) -> None:
+    bundle, generation, _ = _bundle_for_survey(tmp_path)
+
+    result = validate_bundle(bundle, generation)
+
+    assert result.outcome is ValidityOutcome.VALID
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda data: data.__setitem__("survey_id", "other_survey"),
+        lambda data: data.__setitem__("artifact_type", "peak_patch_psf_dictionary"),
+        lambda data: data.__setitem__("schema_version", 99),
+        lambda data: data.__setitem__(
+            "survey_policy",
+            {"background": "changed", "normalization": "none"},
+        ),
+    ],
+)
+def test_bundle_rejects_manifest_sidecar_hdf5_disagreement(
+    tmp_path: Path,
+    mutate,
+) -> None:
+    sidecar_data = _survey_manifest().to_dict()
+    mutate(sidecar_data)
+    bundle, generation, _ = _bundle_for_survey(tmp_path, sidecar_data=sidecar_data)
+
+    result = validate_bundle(bundle, generation)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("manifest_sidecar_mismatch",)
 
 
 def test_payload_inspection_uses_canonical_streaming_digest(tmp_path: Path) -> None:

@@ -20,7 +20,12 @@ from typing import Any
 
 from tasks.artifact_versioning import SchemaCompatibilityError, read_schema_version
 
-from .validation import ValidityOutcome, ValidityResult, check_validity
+from .validation import (
+    ValidityOutcome,
+    ValidityResult,
+    check_validity,
+    read_validated_manifest_mapping,
+)
 
 
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -368,7 +373,109 @@ def validate_bundle(
                 "primary payload schema_version does not match the bundle manifest",
             )
         return payload_result
+    if not payload_result.ok:
+        return payload_result
+
+    manifest_sidecar = resolved_payloads.get("manifest_sidecar")
+    if manifest_sidecar is not None:
+        sidecar_result = _validate_manifest_sidecar_consistency(
+            bundle,
+            primary_payload=primary,
+            sidecar_payload=manifest_sidecar,
+        )
+        if sidecar_result is not None:
+            return sidecar_result
     return payload_result
+
+
+def _validate_manifest_sidecar_consistency(
+    bundle: ArtifactBundleManifest,
+    *,
+    primary_payload: Path,
+    sidecar_payload: Path,
+) -> ValidityResult | None:
+    """Require a declared JSON manifest sidecar to equal the primary manifest.
+
+    Payload hashes prove that files have not changed since inventory creation;
+    they do not prove that two individually intact files describe the same
+    generation.  This comparison closes that gap for artifacts with canonical
+    embedded HDF5 manifests and for JSON-primary artifacts.
+    """
+    primary = read_validated_manifest_mapping(bundle.artifact_type, primary_payload)
+    if isinstance(primary, ValidityResult):
+        if primary.outcome is ValidityOutcome.UNREADABLE:
+            return _bundle_result(
+                bundle.artifact_type,
+                ValidityOutcome.UNREADABLE,
+                bundle.schema_version,
+                "primary_manifest_unreadable",
+                "primary payload manifest could not be read for sidecar comparison",
+            )
+        if primary.outcome is ValidityOutcome.UNSUPPORTED:
+            return _bundle_result(
+                bundle.artifact_type,
+                ValidityOutcome.UNSUPPORTED,
+                bundle.schema_version,
+                "manifest_sidecar_unsupported",
+                "primary payload has no canonical manifest for sidecar comparison",
+            )
+        return _bundle_result(
+            bundle.artifact_type,
+            ValidityOutcome.INVALID,
+            bundle.schema_version,
+            "manifest_sidecar_mismatch",
+            "primary payload manifest is not structurally valid for sidecar comparison",
+        )
+
+    sidecar = read_validated_manifest_mapping(
+        bundle.artifact_type,
+        sidecar_payload,
+        require_json=True,
+    )
+    if isinstance(sidecar, ValidityResult):
+        if sidecar.outcome is ValidityOutcome.UNREADABLE:
+            return _bundle_result(
+                bundle.artifact_type,
+                ValidityOutcome.UNREADABLE,
+                bundle.schema_version,
+                "manifest_sidecar_unreadable",
+                "manifest_sidecar could not be parsed",
+            )
+        return _bundle_result(
+            bundle.artifact_type,
+            ValidityOutcome.INVALID,
+            bundle.schema_version,
+            "manifest_sidecar_mismatch",
+            "manifest_sidecar does not satisfy the primary artifact manifest contract",
+        )
+
+    primary_mapping, primary_schema_version = primary
+    sidecar_mapping, sidecar_schema_version = sidecar
+    if (
+        primary_schema_version != bundle.schema_version
+        or sidecar_schema_version != bundle.schema_version
+        or _canonical_manifest_mapping(primary_mapping)
+        != _canonical_manifest_mapping(sidecar_mapping)
+    ):
+        return _bundle_result(
+            bundle.artifact_type,
+            ValidityOutcome.INVALID,
+            bundle.schema_version,
+            "manifest_sidecar_mismatch",
+            "manifest_sidecar does not match the primary payload embedded manifest",
+        )
+    return None
+
+
+def _canonical_manifest_mapping(data: Mapping[str, Any]) -> str:
+    """Return stable JSON for exact generation-manifest comparison."""
+    return json.dumps(
+        data,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=True,
+    )
 
 
 def _load_bundle_for_validation(

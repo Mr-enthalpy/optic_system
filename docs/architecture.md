@@ -274,7 +274,11 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   `legacy_unversioned` means explicit schema metadata is absent; and `unreadable`
   covers unavailable or unparsable local payloads. Unsupported is not evidence
   that data is invalid, and neither readability nor structural validity is a
-  scientific-trust decision.
+  scientific-trust decision. An unexpected validator exception is reported as
+  `unsupported` with `validator_failed`, not as a claim that the artifact data is
+  invalid. Strict validation checks serialized field types before invoking
+  compatibility loaders, so coercive legacy parsing cannot repair a malformed
+  current artifact during validation.
 - `ValidityResult` intentionally does not retain the input path. A future
   catalog owns `(storage_root, rel_path)` separately, so machine-specific
   absolute paths cannot leak into tracked catalog records.
@@ -288,8 +292,10 @@ Artifact bundle foundation (`tasks/artifacts/bundle.py`):
 - Bundle records reject absolute and parent-traversal payload paths. Local
   validation resolves every payload under the supplied generation directory,
   verifies existence, size, and streaming SHA-256, then dispatches the explicit
-  `data` payload role to the declared artifact validator. Bundle JSON writes
-  use temporary-file replacement.
+  `data` payload role to the declared artifact validator. When a bundle declares
+  `manifest_sidecar`, validation also strictly parses it and requires an exact
+  canonical match with the primary JSON manifest or HDF5 embedded manifest.
+  Bundle JSON writes use temporary-file replacement.
 - These primitives do not register artifacts, select a current generation,
   promote trust, supersede data, or migrate existing task outputs. They are the
   local integrity boundary required before a catalog can be introduced.

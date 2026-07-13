@@ -312,9 +312,11 @@ Detailed operational rules for the profile-driven calibration chain live in
 
 * Do not treat path existence as validity.
 * Do not treat unsupported validation as invalid data.
+* Do not classify an unexpected validator failure as invalid artifact data.
 * Do not infer artifact type from filenames.
 * Do not place absolute paths in tracked artifact records.
 * Do not allow bundle payloads to escape their generation directory.
+* Do not accept a declared manifest sidecar unless it matches the primary manifest.
 * Do not equate structural validity with scientific trust.
 * Do not automatically import legacy thesis artifacts.
 
