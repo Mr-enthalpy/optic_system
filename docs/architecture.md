@@ -281,7 +281,12 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   compatibility loaders, so coercive legacy parsing cannot repair a malformed
   current artifact during validation. A parsed JSON scalar or array root is
   `invalid`, while bytes or syntax that cannot be parsed are `unreadable`.
-  Strict JSON numbers are finite; non-standard `NaN` and infinity tokens are
+  Strict JSON numbers are finite. The survey, center, support, layout, and
+  dictionary artifacts emit schema v2, where broadband wavelengths serialize
+  as standard JSON `null`. Their schema-v1 readers retain one narrow historical
+  compatibility rule: `NaN` is accepted only in the documented wavelength
+  arrays and is immediately normalized to the same internal broadband sentinel.
+  V2 `NaN`, all infinities, and non-finite values in every other field are
   rejected.
 - Current `raw_capture` schema v3 validation requires the root identity
   attributes and every fixed raw, mask, illumination, TLS, camera, LCD,
@@ -307,6 +312,15 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   HDF5 numeric wavelength arrays use a stable `NaN` sentinel for those entries.
   JSON manifests encode the same broadband entries as `null` and never emit
   non-standard JSON `NaN` tokens.
+- Raw v3 validates every TLS metadata vector against the plan wavelength count,
+  including `tls/status_json`, before indexing completed rows. Referenced TLS
+  status entries must contain readable JSON.
+- Structural validation uses a non-coercive camera-frame-extent parser for
+  schema-v2 manifests and raw v3 row metadata. Serialized coordinate pairs must
+  be two-element integer arrays, booleans/strings/non-integer floats are
+  rejected, extent modes use the closed vocabulary, and unknown extent fields
+  are invalid. Historical schema-v1 manifest reads retain their prior
+  compatibility normalization.
 - Current `SensorEnergyCenterProfile` JSON requires background value, corrected
   energy, and fallback-used arrays for every entry. Background and energy
   values must be finite, corrected energy must be nonnegative, and fallback
@@ -336,9 +350,11 @@ Artifact bundle foundation (`tasks/artifacts/bundle.py`):
   validator. `manifest_sidecar` must declare `application/json`. When a bundle
   declares that sidecar, validation also strictly parses it and requires an
   exact canonical match with the primary JSON manifest or HDF5 embedded
-  manifest. Different payload roles must use distinct canonical relative paths,
-  so `data` and `manifest_sidecar` cannot claim the same file. Bundle JSON
-  writes use temporary-file replacement.
+  manifest. Different payload roles must use distinct canonical relative paths.
+  Validation also compares normalized resolved paths and physical file identity,
+  so case aliases, symlink aliases, and hard links cannot let `data` and
+  `manifest_sidecar` claim the same file. Bundle JSON writes use temporary-file
+  replacement.
 - Bundle `artifact_id` is an immutable generation identity and need not equal a
   payload-native ID such as `survey_id`. Native IDs remain inside the validated
   payload manifest; future catalog records will define their relationship

@@ -31,11 +31,11 @@ class NewerSchemaVersionError(SchemaCompatibilityError):
 CURRENT_SCHEMA_VERSIONS: dict[str, int] = {
     "camera_profile": 1,
     "pupil_profile": 1,
-    "peak_layout_profile": 1,
-    "full_frame_psf_survey": 1,
-    "peak_patch_psf_dictionary": 1,
-    "sensor_energy_center_profile": 1,
-    "peak_support_analysis_report": 1,
+    "peak_layout_profile": 2,
+    "full_frame_psf_survey": 2,
+    "peak_patch_psf_dictionary": 2,
+    "sensor_energy_center_profile": 2,
+    "peak_support_analysis_report": 2,
     "raw_capture": 3,
 }
 

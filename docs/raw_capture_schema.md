@@ -157,3 +157,10 @@ This v3 writer contract is exception-safe when `finalize()` runs. It does not
 provide a crash-durable transaction between row completion and processing-flag
 updates, and it does not implement resume. Crash recovery and explicit
 finalized/in-progress state remain a later durability task.
+
+All `/tls` vectors, including `tls/status_json`, must have exactly
+`N_wavelength` entries. A TLS status referenced by a completed capture must be
+readable JSON. Raw-v3 `camera/frame_extent_json` rows are validated without
+coercion: coordinate arrays contain exactly two JSON integers, booleans,
+strings, and non-integer floats are rejected, and unknown extent fields are not
+accepted.

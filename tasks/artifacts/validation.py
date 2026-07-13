@@ -31,6 +31,7 @@ from tasks.artifact_versioning import (
 from .coordinate_frame import (
     camera_frame_extent_from_dict,
     camera_frame_extent_to_dict,
+    strict_camera_frame_extent_from_mapping,
     validate_coordinate_frame_extent,
 )
 from .json_io import decode_h5_string
@@ -215,7 +216,16 @@ def _validate_json_artifact(
         return schema_result
     schema_version = schema_result
     try:
-        _validate_strict_serialized_mapping(data, artifact_type)
+        data = _normalize_artifact_manifest_json(
+            data,
+            artifact_type=artifact_type,
+            schema_version=schema_version,
+        )
+        _validate_strict_serialized_mapping(
+            data,
+            artifact_type,
+            schema_version=schema_version,
+        )
         _load_and_validate_serialized_artifact(data, loader)
     except _InvalidArtifact as exc:
         return _result(
@@ -243,7 +253,7 @@ def _read_json_file(path: Path) -> dict[str, Any]:
     except OSError as exc:
         raise _UnreadableArtifact("location_unreadable", "artifact location could not be read") from exc
     try:
-        data = _json_loads_strict(text)
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise _UnreadableArtifact("json_unreadable", "artifact JSON could not be parsed") from exc
     if not isinstance(data, dict):
@@ -252,6 +262,74 @@ def _read_json_file(path: Path) -> dict[str, Any]:
             "artifact JSON root must be a mapping",
         )
     return data
+
+
+_V1_BROADBAND_WAVELENGTH_FIELDS: dict[str, tuple[str, ...]] = {
+    "full_frame_psf_survey": (
+        "entry_wavelengths_nm",
+        "unique_wavelengths_nm",
+    ),
+    "sensor_energy_center_profile": ("per_entry_wavelengths_nm",),
+    "peak_support_analysis_report": ("entry_wavelengths_nm",),
+    "peak_layout_profile": (
+        "survey_wavelengths_nm",
+        "valid_wavelengths_nm",
+    ),
+    "peak_patch_psf_dictionary": (
+        "entry_wavelengths_nm",
+        "unique_wavelengths_nm",
+    ),
+}
+
+_V1_COMPAT_CAMERA_EXTENT_FIELDS: dict[str, tuple[str, ...]] = {
+    "full_frame_psf_survey": ("camera_frame_extent",),
+    "sensor_energy_center_profile": ("camera_frame_extent",),
+    "peak_support_analysis_report": ("camera_frame_extent",),
+    "peak_layout_profile": ("camera_frame_extent",),
+    "peak_patch_psf_dictionary": (
+        "camera_frame_extent",
+        "peak_layout_camera_frame_extent",
+    ),
+}
+
+
+def _normalize_artifact_manifest_json(
+    data: dict[str, Any],
+    *,
+    artifact_type: str,
+    schema_version: int,
+) -> dict[str, Any]:
+    """Normalize approved schema-v1 broadband NaN values, then reject others."""
+    normalized = dict(data)
+    if schema_version == 1:
+        for field in _V1_BROADBAND_WAVELENGTH_FIELDS.get(artifact_type, ()):
+            values = normalized.get(field)
+            if isinstance(values, list):
+                normalized[field] = [
+                    None if _is_nan_number(value) else value for value in values
+                ]
+    _reject_remaining_nonfinite_json(normalized)
+    return normalized
+
+
+def _reject_remaining_nonfinite_json(value: Any, *, field: str = "$") -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _reject_remaining_nonfinite_json(item, field=f"{field}.{key}")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_remaining_nonfinite_json(item, field=f"{field}[{index}]")
+        return
+    if isinstance(value, float) and not math.isfinite(value):
+        raise _InvalidArtifact(
+            "json_number_nonfinite",
+            f"non-standard non-finite JSON number is not allowed at {field}",
+        )
+
+
+def _is_nan_number(value: Any) -> bool:
+    return isinstance(value, float) and math.isnan(value)
 
 
 def _json_loads_strict(text: str) -> Any:
@@ -381,6 +459,8 @@ def _is_explicit_contract_error(exc: Exception) -> bool:
 def _validate_strict_serialized_mapping(
     data: Mapping[str, Any],
     artifact_type: str,
+    *,
+    schema_version: int,
 ) -> None:
     """Reject coercive serialized values before compatibility deserialization.
 
@@ -395,7 +475,28 @@ def _validate_strict_serialized_mapping(
             "validator_not_implemented",
             "strict serialized validator is not registered",
         )
-    validator(data)
+    validator_data = data
+    if schema_version == 1:
+        validator_data = _v1_strict_validation_mapping(data, artifact_type)
+    validator(validator_data)
+
+
+def _v1_strict_validation_mapping(
+    data: Mapping[str, Any],
+    artifact_type: str,
+) -> Mapping[str, Any]:
+    """Adapt legacy-coercive extent fields only for the strict type pass."""
+    adapted = dict(data)
+    for field in _V1_COMPAT_CAMERA_EXTENT_FIELDS.get(artifact_type, ()):
+        value = adapted.get(field)
+        if isinstance(value, Mapping):
+            try:
+                adapted[field] = camera_frame_extent_to_dict(
+                    camera_frame_extent_from_dict(value)
+                )
+            except (TypeError, ValueError):
+                pass
+    return adapted
 
 
 def _strict_error(field: str, expected: str) -> None:
@@ -422,6 +523,17 @@ def _strict_mapping(value: Any, field: str) -> Mapping[str, Any]:
 
 def _strict_required_mapping(data: Mapping[str, Any], field: str) -> Mapping[str, Any]:
     return _strict_mapping(_strict_required(data, field), field)
+
+
+def _strict_camera_frame_extent_field(
+    data: Mapping[str, Any],
+    field: str,
+) -> None:
+    mapping = _strict_required_mapping(data, field)
+    try:
+        strict_camera_frame_extent_from_mapping(mapping, field_name=field)
+    except ValueError as exc:
+        raise _InvalidArtifact("serialized_type_invalid", str(exc)) from exc
 
 
 def _strict_list(value: Any, field: str) -> list[Any]:
@@ -631,7 +743,8 @@ def _validate_serialized_pupil_profile(data: Mapping[str, Any]) -> None:
 def _validate_serialized_sensor_energy_center_profile(data: Mapping[str, Any]) -> None:
     for field in ("center_profile_id", "source_survey_h5", "coordinate_frame", "estimator_name"):
         _strict_required_string(data, field)
-    for field in ("camera_frame_extent", "bg_policy", "corr_policy", "aggregation_policy"):
+    _strict_camera_frame_extent_field(data, "camera_frame_extent")
+    for field in ("bg_policy", "corr_policy", "aggregation_policy"):
         _strict_required_mapping(data, field)
     _strict_pair(_strict_required(data, "center_xy"), "center_xy")
     _strict_pair(_strict_required(data, "global_center_std_xy"), "global_center_std_xy")
@@ -660,7 +773,7 @@ def _validate_serialized_peak_layout_profile(data: Mapping[str, Any]) -> None:
     for field in ("peak_layout_id", "source_survey_h5", "coordinate_frame"):
         _strict_required_string(data, field)
     _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
-    _strict_required_mapping(data, "camera_frame_extent")
+    _strict_camera_frame_extent_field(data, "camera_frame_extent")
     _strict_string_list(data, "peak_ids")
     _strict_pair_list(data, "center_xy")
     _strict_pair_list(data, "patch_shape_hw", integers=True)
@@ -702,7 +815,7 @@ def _validate_serialized_full_frame_psf_survey(data: Mapping[str, Any]) -> None:
     _strict_wavelength_list(data, "unique_wavelengths_nm")
     _strict_string_list(data, "unique_mask_ids")
     _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
-    _strict_required_mapping(data, "camera_frame_extent")
+    _strict_camera_frame_extent_field(data, "camera_frame_extent")
     _strict_required_mapping(data, "survey_policy")
 
 
@@ -710,8 +823,8 @@ def _validate_serialized_peak_support_analysis_report(data: Mapping[str, Any]) -
     for field in ("report_id", "source_survey_h5", "coordinate_frame"):
         _strict_required_string(data, field)
     _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
+    _strict_camera_frame_extent_field(data, "camera_frame_extent")
     for field in (
-        "camera_frame_extent",
         "bg_policy",
         "corr_policy",
         "radial_policy",
@@ -745,8 +858,8 @@ def _validate_serialized_peak_patch_psf_dictionary(data: Mapping[str, Any]) -> N
     _strict_wavelength_list(data, "unique_wavelengths_nm")
     _strict_string_list(data, "unique_mask_ids")
     _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
-    _strict_required_mapping(data, "camera_frame_extent")
-    _strict_required_mapping(data, "peak_layout_camera_frame_extent")
+    _strict_camera_frame_extent_field(data, "camera_frame_extent")
+    _strict_camera_frame_extent_field(data, "peak_layout_camera_frame_extent")
     _strict_string_list(data, "peak_ids")
     _strict_pair_list(data, "patch_shape_hw", integers=True)
     _strict_pair_list(data, "patch_origin_xy", integers=True)
@@ -866,7 +979,7 @@ def read_validated_manifest_mapping(
                     canonical_type,
                     required=root_type_required,
                 )
-                data = _read_hdf_json_mapping(h5, embedded_path)
+                data = _read_hdf_artifact_manifest_mapping(h5, embedded_path)
                 schema_result = _validate_serialized_mapping(data, canonical_type)
                 if isinstance(schema_result, ValidityResult):
                     return schema_result
@@ -882,7 +995,16 @@ def read_validated_manifest_mapping(
             if isinstance(schema_result, ValidityResult):
                 return schema_result
             schema_version = schema_result
-        _validate_strict_serialized_mapping(data, canonical_type)
+        data = _normalize_artifact_manifest_json(
+            data,
+            artifact_type=canonical_type,
+            schema_version=schema_version,
+        )
+        _validate_strict_serialized_mapping(
+            data,
+            canonical_type,
+            schema_version=schema_version,
+        )
         _load_and_validate_serialized_artifact(data, loader)
         return data, schema_version
     except _InvalidArtifact as exc:
@@ -1070,6 +1192,23 @@ def _validate_peak_support_analysis_report_h5(path: Path) -> ValidityResult:
     )
 
 
+def _validate_peak_support_analysis_report_json(path: Path) -> ValidityResult:
+    return _validate_json_artifact(
+        path,
+        artifact_type="peak_support_analysis_report",
+        loader=_class_loader(
+            "tasks.psf.analyze_diffraction_support",
+            "PeakSupportAnalysisManifest",
+        ),
+    )
+
+
+def _validate_peak_support_analysis_report(path: Path) -> ValidityResult:
+    if _is_hdf5_payload(path):
+        return _validate_peak_support_analysis_report_h5(path)
+    return _validate_peak_support_analysis_report_json(path)
+
+
 def _validate_peak_patch_psf_dictionary_h5(path: Path) -> ValidityResult:
     artifact_type = "peak_patch_psf_dictionary"
     return _validate_hdf_manifest_artifact(
@@ -1104,7 +1243,7 @@ def _validate_hdf_manifest_artifact(
     artifact_type: str,
     manifest_path: str,
     loader: Callable[[dict[str, Any]], Any],
-    hdf_validator: Callable[[h5py.File, Any], None],
+    hdf_validator: Callable[[h5py.File, Any, int], None],
     root_artifact_type_required: bool = True,
 ) -> ValidityResult:
     try:
@@ -1114,19 +1253,28 @@ def _validate_hdf_manifest_artifact(
                 artifact_type,
                 required=root_artifact_type_required,
             )
-            data = _read_hdf_json_mapping(h5, manifest_path)
+            data = _read_hdf_artifact_manifest_mapping(h5, manifest_path)
             schema_result = _validate_serialized_mapping(data, artifact_type)
             if isinstance(schema_result, ValidityResult):
                 return schema_result
             schema_version = schema_result
-            _validate_strict_serialized_mapping(data, artifact_type)
+            data = _normalize_artifact_manifest_json(
+                data,
+                artifact_type=artifact_type,
+                schema_version=schema_version,
+            )
+            _validate_strict_serialized_mapping(
+                data,
+                artifact_type,
+                schema_version=schema_version,
+            )
             _validate_optional_root_schema_version(
                 h5,
                 artifact_type,
                 expected=schema_version,
             )
             manifest = _load_and_validate_serialized_artifact(data, loader)
-            hdf_validator(h5, manifest)
+            hdf_validator(h5, manifest, schema_version)
             return _result(
                 artifact_type,
                 ValidityOutcome.VALID,
@@ -1265,6 +1413,32 @@ def _read_hdf_json_mapping(h5: h5py.File, dataset_path: str) -> dict[str, Any]:
     text = _read_hdf_text(h5[dataset_path])
     try:
         data = _json_loads_strict(text)
+    except json.JSONDecodeError as exc:
+        raise _UnreadableArtifact(
+            "manifest_unreadable",
+            "embedded manifest JSON could not be parsed",
+        ) from exc
+    if not isinstance(data, dict):
+        raise _InvalidArtifact(
+            "manifest_root_invalid",
+            "embedded manifest JSON root must be a mapping",
+        )
+    return data
+
+
+def _read_hdf_artifact_manifest_mapping(
+    h5: h5py.File,
+    dataset_path: str,
+) -> dict[str, Any]:
+    """Read a versioned manifest before applying schema-specific NaN policy."""
+    if dataset_path not in h5:
+        raise _InvalidArtifact(
+            "missing_required_path",
+            "required embedded manifest dataset is missing",
+        )
+    text = _read_hdf_text(h5[dataset_path])
+    try:
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise _UnreadableArtifact(
             "manifest_unreadable",
@@ -1714,8 +1888,14 @@ def _validate_raw_capture_v3(h5: h5py.File) -> None:
     )
     for path in ("tls/grating", "tls/settle_ms", "tls/timestamp_ns"):
         _read_integer_vector(h5, path, length=wavelength_count)
+    tls_status_dataset = _require_dataset(h5, "tls/status_json")
+    _require_vector_length(
+        tls_status_dataset,
+        wavelength_count,
+        name="tls/status_json",
+    )
     tls_statuses = _read_text_array(
-        _require_dataset(h5, "tls/status_json"),
+        tls_status_dataset,
         name="tls/status_json",
     )
 
@@ -1826,6 +2006,10 @@ def _validate_raw_capture_v3(h5: h5py.File) -> None:
             else "acquired_frame"
         )
         try:
+            strict_camera_frame_extent_from_mapping(
+                extent_data,
+                field_name="completed capture frame extent",
+            )
             validate_coordinate_frame_extent(
                 coordinate_frame,
                 extent_data,
@@ -2681,7 +2865,11 @@ def _validate_capture_index_in_bounds(
         )
 
 
-def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> None:
+def _validate_full_frame_psf_survey_payload(
+    h5: h5py.File,
+    manifest: Any,
+    schema_version: int,
+) -> None:
     group = h5.get("full_frame_survey")
     if not isinstance(group, h5py.Group):
         raise _InvalidArtifact("missing_required_path", "full_frame_survey group is missing")
@@ -2716,6 +2904,11 @@ def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> Non
         )
     extent = _read_hdf_json_mapping(h5, "full_frame_survey/camera_frame_extent_json")
     try:
+        if schema_version >= 2:
+            strict_camera_frame_extent_from_mapping(
+                extent,
+                field_name="full_frame_survey.camera_frame_extent",
+            )
         validate_coordinate_frame_extent(
             "sensor_full_frame",
             extent,
@@ -2846,7 +3039,11 @@ def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> Non
         )
 
 
-def _validate_peak_support_analysis_payload(h5: h5py.File, manifest: Any) -> None:
+def _validate_peak_support_analysis_payload(
+    h5: h5py.File,
+    manifest: Any,
+    _schema_version: int,
+) -> None:
     support = h5.get("support_analysis")
     if not isinstance(support, h5py.Group):
         raise _InvalidArtifact("missing_required_path", "support_analysis group is missing")
@@ -3020,7 +3217,11 @@ def _validate_component_table(
             )
 
 
-def _validate_peak_patch_psf_dictionary_payload(h5: h5py.File, manifest: Any) -> None:
+def _validate_peak_patch_psf_dictionary_payload(
+    h5: h5py.File,
+    manifest: Any,
+    schema_version: int,
+) -> None:
     group = h5.get("peak_patch_dictionary")
     if not isinstance(group, h5py.Group):
         raise _InvalidArtifact(
@@ -3138,6 +3339,18 @@ def _validate_peak_patch_psf_dictionary_payload(h5: h5py.File, manifest: Any) ->
         h5,
         "peak_patch_dictionary/peak_layout_camera_frame_extent_json",
     )
+    if schema_version >= 2:
+        try:
+            strict_camera_frame_extent_from_mapping(
+                dictionary_extent,
+                field_name="peak_patch_dictionary.camera_frame_extent",
+            )
+            strict_camera_frame_extent_from_mapping(
+                layout_extent,
+                field_name="peak_patch_dictionary.peak_layout_camera_frame_extent",
+            )
+        except ValueError as exc:
+            raise _InvalidArtifact("frame_extent_invalid", str(exc)) from exc
     if _canonical_mapping(dictionary_extent) != _canonical_mapping(manifest.camera_frame_extent):
         raise _InvalidArtifact(
             "manifest_metadata_mismatch",
@@ -3274,7 +3487,7 @@ VALIDATOR_REGISTRY: dict[str, ArtifactValidator] = {
     "sensor_energy_center_profile": _validate_sensor_energy_center_profile,
     "peak_layout_profile": _validate_peak_layout_profile,
     "full_frame_psf_survey": _validate_full_frame_psf_survey,
-    "peak_support_analysis_report": _validate_peak_support_analysis_report_h5,
+    "peak_support_analysis_report": _validate_peak_support_analysis_report,
     "peak_patch_psf_dictionary": _validate_peak_patch_psf_dictionary,
     "raw_capture": _validate_raw_capture,
 }

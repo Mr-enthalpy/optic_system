@@ -8,6 +8,11 @@ import h5py
 
 
 SUPPORTED_COORDINATE_FRAMES = {"sensor_full_frame", "acquired_frame"}
+SUPPORTED_CAMERA_FRAME_EXTENT_MODES = {
+    "full_sensor",
+    "acquired_frame",
+    "unknown",
+}
 CAMERA_FRAME_EXTENT_DATASET_PRIORITY = (
     "frame_extent_json",
     "acquired_frame_extent_json",
@@ -255,10 +260,80 @@ def validate_coordinate_frame_extent(
     return extent
 
 
+def strict_camera_frame_extent_from_mapping(
+    data: Mapping[str, Any],
+    *,
+    field_name: str = "camera_frame_extent",
+) -> CameraFrameExtent:
+    """Parse a serialized camera extent without compatibility coercion.
+
+    This entry point is for structural validators. Task compatibility loaders
+    continue to use :func:`camera_frame_extent_from_dict`.
+    """
+    if not isinstance(data, Mapping):
+        raise ValueError(f"{field_name} must be a mapping")
+    allowed_fields = {
+        "mode",
+        "origin_xy",
+        "shape_hw",
+        "sensor_shape_hw",
+        "source",
+    }
+    if any(not isinstance(key, str) for key in data):
+        raise ValueError(f"{field_name} field names must be strings")
+    unknown_fields = set(data) - allowed_fields
+    if unknown_fields:
+        raise ValueError(
+            f"{field_name} contains unknown fields: {sorted(unknown_fields)}"
+        )
+    for required in ("mode", "origin_xy", "shape_hw"):
+        if required not in data:
+            raise ValueError(f"{field_name}.{required} is required")
+
+    mode = data["mode"]
+    if not isinstance(mode, str) or mode not in SUPPORTED_CAMERA_FRAME_EXTENT_MODES:
+        raise ValueError(
+            f"{field_name}.mode must be one of "
+            f"{sorted(SUPPORTED_CAMERA_FRAME_EXTENT_MODES)}"
+        )
+    origin_xy = _strict_int_pair(data["origin_xy"], f"{field_name}.origin_xy")
+    shape_hw = _strict_int_pair(data["shape_hw"], f"{field_name}.shape_hw")
+    sensor_shape_value = data.get("sensor_shape_hw")
+    sensor_shape_hw = (
+        _strict_int_pair(
+            sensor_shape_value,
+            f"{field_name}.sensor_shape_hw",
+        )
+        if sensor_shape_value is not None
+        else None
+    )
+    source = data.get("source")
+    if source is not None and (
+        not isinstance(source, str) or not source.strip()
+    ):
+        raise ValueError(f"{field_name}.source must be a non-empty string or null")
+    return CameraFrameExtent(
+        mode=mode,
+        origin_xy=origin_xy,
+        shape_hw=shape_hw,
+        sensor_shape_hw=sensor_shape_hw,
+        source=source.strip() if isinstance(source, str) else None,
+    )
+
+
 def _int_pair(value: Any, name: str) -> tuple[int, int]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ValueError(f"{name} must contain two integers")
     return (int(value[0]), int(value[1]))
+
+
+def _strict_int_pair(value: Any, name: str) -> tuple[int, int]:
+    if not isinstance(value, list) or len(value) != 2:
+        raise ValueError(f"{name} must be a two-element JSON array")
+    for index, item in enumerate(value):
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValueError(f"{name}[{index}] must be an integer")
+    return (value[0], value[1])
 
 
 def _positive_int_pair(value: Any, name: str) -> tuple[int, int]:

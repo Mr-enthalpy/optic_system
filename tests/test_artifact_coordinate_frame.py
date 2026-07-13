@@ -11,7 +11,9 @@ from tasks.artifacts.coordinate_frame import (
     camera_frame_extent_from_dict,
     read_camera_frame_extent_from_group,
     resolve_coordinate_frame,
+    strict_camera_frame_extent_from_mapping,
     validate_coordinate_frame_descriptor,
+    validate_coordinate_frame_extent,
 )
 
 
@@ -48,6 +50,44 @@ def test_validates_matching_descriptor():
     expected = CoordinateFrameDescriptor("sensor_full_frame", extent, (10, 20))
 
     validate_coordinate_frame_descriptor(actual, expected)
+
+
+def test_validates_frame_extent_shape_and_sensor_bounds() -> None:
+    extent = validate_coordinate_frame_extent(
+        "acquired_frame",
+        {
+            "mode": "acquired_frame",
+            "origin_xy": [2, 3],
+            "shape_hw": [4, 5],
+            "sensor_shape_hw": [10, 12],
+        },
+        (4, 5),
+    )
+
+    assert extent.origin_xy == (2, 3)
+    with pytest.raises(ValueError, match="outside sensor_shape_hw"):
+        validate_coordinate_frame_extent(
+            "acquired_frame",
+            {
+                "mode": "acquired_frame",
+                "origin_xy": [10, 9],
+                "shape_hw": [4, 5],
+                "sensor_shape_hw": [10, 12],
+            },
+            (4, 5),
+        )
+
+
+def test_strict_frame_extent_rejects_coercive_pairs() -> None:
+    with pytest.raises(ValueError, match=r"origin_xy\[0\] must be an integer"):
+        strict_camera_frame_extent_from_mapping(
+            {
+                "mode": "full_sensor",
+                "origin_xy": ["0", False],
+                "shape_hw": [2, 3],
+                "sensor_shape_hw": [2, 3],
+            }
+        )
 
 
 def test_rejects_mismatched_extent():

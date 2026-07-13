@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import h5py
@@ -318,6 +319,57 @@ def test_bundle_rejects_payload_roles_that_share_one_path(tmp_path: Path) -> Non
             schema_version=bundle.schema_version,
             payloads={"data": data, "manifest_sidecar": data},
         )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows case-alias behavior")
+def test_bundle_rejects_case_alias_to_same_payload_on_windows(tmp_path: Path) -> None:
+    bundle, generation, data_path = _bundle_for_profile(tmp_path)
+    data = bundle.payloads["data"]
+    case_alias = inspect_payload(
+        data_path,
+        "application/json",
+        rel_path="PROFILE.JSON",
+    )
+    aliased_bundle = ArtifactBundleManifest(
+        artifact_id=bundle.artifact_id,
+        artifact_type=bundle.artifact_type,
+        schema_version=bundle.schema_version,
+        payloads={"data": data, "manifest_sidecar": case_alias},
+    )
+
+    result = validate_bundle(aliased_bundle, generation)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("payload_role_alias",)
+
+
+def test_bundle_rejects_hard_link_alias_between_payload_roles(
+    tmp_path: Path,
+) -> None:
+    bundle, generation, data_path = _bundle_for_profile(tmp_path)
+    sidecar_path = generation / "profile-sidecar.json"
+    try:
+        os.link(data_path, sidecar_path)
+    except OSError as exc:
+        pytest.skip(f"hard links unavailable: {exc}")
+    aliased_bundle = ArtifactBundleManifest(
+        artifact_id=bundle.artifact_id,
+        artifact_type=bundle.artifact_type,
+        schema_version=bundle.schema_version,
+        payloads={
+            "data": bundle.payloads["data"],
+            "manifest_sidecar": inspect_payload(
+                sidecar_path,
+                "application/json",
+                rel_path="profile-sidecar.json",
+            ),
+        },
+    )
+
+    result = validate_bundle(aliased_bundle, generation)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("payload_role_alias",)
 
 
 @pytest.mark.parametrize(

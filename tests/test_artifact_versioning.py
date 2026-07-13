@@ -55,6 +55,24 @@ def test_raw_capture_schema_v3_keeps_v2_read_compatibility():
     assert read_schema_version({"schema_version": 2}, "raw_capture") == 2
 
 
+@pytest.mark.parametrize(
+    "artifact_type",
+    [
+        "full_frame_psf_survey",
+        "sensor_energy_center_profile",
+        "peak_support_analysis_report",
+        "peak_layout_profile",
+        "peak_patch_psf_dictionary",
+    ],
+)
+def test_strict_json_artifacts_emit_v2_and_read_v1(artifact_type: str) -> None:
+    compat = schema_compat(artifact_type)
+
+    assert compat.current == 2
+    assert compat.min_readable == 1
+    assert read_schema_version({"schema_version": 1}, artifact_type) == 1
+
+
 def test_unknown_artifact_type_rejected():
     with pytest.raises(SchemaCompatibilityError, match="unknown"):
         schema_compat("nope")

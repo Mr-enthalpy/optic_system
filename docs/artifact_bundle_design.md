@@ -32,7 +32,7 @@ representation:
   "bundle_schema_version": 1,
   "artifact_id": "survey_20260712_001",
   "artifact_type": "full_frame_psf_survey",
-  "schema_version": 1,
+  "schema_version": 2,
   "payloads": {
     "data": {
       "rel_path": "survey.h5",
@@ -56,7 +56,9 @@ type, size, and canonical `sha256:<64 lowercase hexadecimal characters>`.
 Payload paths cannot be absolute or contain parent traversal, and local
 validation repeats containment after resolving the candidate path under the
 generation directory. Payload roles must also use distinct canonical relative
-paths; an alleged `manifest_sidecar` cannot point to the same file as `data`.
+paths. Validation checks normalized resolved paths and `Path.samefile()`, so an
+alleged `manifest_sidecar` cannot point to the same physical file as `data`
+through case differences, symlink aliases, or hard links.
 
 `bundle_schema_version` versions this inventory envelope. The separate
 `schema_version` field is the schema version of the bundled artifact and must
@@ -142,8 +144,12 @@ flags, or fully initialized mask/LCD metadata. Broadband pass-through remains a
 valid illumination identity:
 `effective_wavelength_nm = null`, `tls_setpoint_nm = 0`, and no wavelength
 label. HDF5 survey/dictionary numeric arrays use the documented `NaN` sentinel;
-JSON manifests encode the same broadband wavelength as `null`. Strict JSON
-validation rejects non-standard `NaN` and infinity tokens in every other field.
+schema-v2 JSON manifests encode the same broadband wavelength as `null`.
+Schema-v1 readers accept historical `NaN` only in approved wavelength arrays
+and normalize it before validation and sidecar comparison. Schema-v2 `NaN`, all
+infinities, and non-finite values in every other field are invalid.
+Schema-v2 manifest and raw-v3 row validation also parse camera frame extents
+without integer/string/bool coercion and reject unknown extent fields.
 For support reports, the embedded `component_policy.analysis_mode` and
 `component_table_written` fields must also agree with whether the HDF5
 `components` group exists.

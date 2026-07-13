@@ -208,6 +208,35 @@ def _support_manifest(shape: tuple[int, int] = (2, 3)) -> PeakSupportAnalysisMan
     )
 
 
+_BROADBAND_WAVELENGTH_FIELDS = {
+    "full_frame_psf_survey": ("entry_wavelengths_nm", "unique_wavelengths_nm"),
+    "sensor_energy_center_profile": ("per_entry_wavelengths_nm",),
+    "peak_support_analysis_report": ("entry_wavelengths_nm",),
+    "peak_layout_profile": ("survey_wavelengths_nm", "valid_wavelengths_nm"),
+    "peak_patch_psf_dictionary": ("entry_wavelengths_nm", "unique_wavelengths_nm"),
+}
+
+
+def _artifact_for_type(artifact_type: str):
+    return {
+        "full_frame_psf_survey": _survey_manifest,
+        "sensor_energy_center_profile": _sensor_center_profile,
+        "peak_support_analysis_report": _support_manifest,
+        "peak_layout_profile": _layout_manifest,
+        "peak_patch_psf_dictionary": _dictionary_manifest,
+    }[artifact_type]()
+
+
+def _versioned_manifest_for_type(artifact_type: str) -> dict[str, object]:
+    artifact = _artifact_for_type(artifact_type)
+    data = artifact.to_dict()
+    for field in _BROADBAND_WAVELENGTH_FIELDS[artifact_type]:
+        values = data[field]
+        assert isinstance(values, list)
+        data[field] = [float("nan")] * len(values)
+    return data
+
+
 def _write_scalar_text(group: h5py.Group, name: str, text: str) -> None:
     group.create_dataset(name, data=text, dtype=_STRING_DTYPE)
 
@@ -323,6 +352,16 @@ def _write_multi_raw_capture(path: Path, *, capture_count: int = 4) -> None:
                 frames_avg=np.zeros((2, 3), dtype=np.float32),
                 camera_meta={},
             )
+
+
+def _replace_tls_status_json(path: Path, values: list[str]) -> None:
+    with h5py.File(path, "r+") as h5:
+        del h5["tls/status_json"]
+        h5["tls"].create_dataset(
+            "status_json",
+            data=np.asarray(values, dtype=object),
+            dtype=_STRING_DTYPE,
+        )
 
 
 def _write_historical_v2_raw_capture(path: Path) -> None:
@@ -627,6 +666,54 @@ def test_nonstandard_json_numeric_constants_are_invalid(
     assert result.reason_codes == ("json_number_nonfinite",)
 
 
+@pytest.mark.parametrize("artifact_type", sorted(_BROADBAND_WAVELENGTH_FIELDS))
+def test_schema_v1_broadband_nan_manifests_remain_valid(
+    tmp_path: Path,
+    artifact_type: str,
+) -> None:
+    data = _versioned_manifest_for_type(artifact_type)
+    data["schema_version"] = 1
+    path = tmp_path / f"{artifact_type}.v1.json"
+    path.write_text(json.dumps(data, allow_nan=True), encoding="utf-8")
+
+    result = check_validity(artifact_type, path)
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert result.schema_version == 1
+
+
+@pytest.mark.parametrize("artifact_type", sorted(_BROADBAND_WAVELENGTH_FIELDS))
+def test_schema_v2_rejects_nonstandard_broadband_nan_json(
+    tmp_path: Path,
+    artifact_type: str,
+) -> None:
+    data = _versioned_manifest_for_type(artifact_type)
+    data["schema_version"] = 2
+    path = tmp_path / f"{artifact_type}.v2.json"
+    path.write_text(json.dumps(data, allow_nan=True), encoding="utf-8")
+
+    result = check_validity(artifact_type, path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("json_number_nonfinite",)
+
+
+@pytest.mark.parametrize("artifact_type", sorted(_BROADBAND_WAVELENGTH_FIELDS))
+def test_schema_v2_serializes_broadband_wavelength_as_null(
+    artifact_type: str,
+) -> None:
+    artifact = _artifact_for_type(artifact_type)
+    for field in _BROADBAND_WAVELENGTH_FIELDS[artifact_type]:
+        values = getattr(artifact, field)
+        setattr(artifact, field, [float("nan")] * len(values))
+    data = artifact.to_dict()
+
+    text = json.dumps(data, allow_nan=False)
+
+    assert data["schema_version"] == 2
+    assert "NaN" not in text
+
+
 @pytest.mark.parametrize("field", ["exposure_us", "gain_db"])
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
 def test_camera_profile_rejects_nonfinite_settings_before_serialization(
@@ -742,6 +829,66 @@ def test_strict_validation_rejects_coercive_peak_layout_fields(
     assert result.reason_codes == ("serialized_type_invalid",)
 
 
+@pytest.mark.parametrize(
+    "camera_frame_extent",
+    [
+        {
+            "mode": "full_sensor",
+            "origin_xy": ["0", False],
+            "shape_hw": [2, 3],
+            "sensor_shape_hw": [2, 3],
+        },
+        {
+            "mode": "full_sensor",
+            "origin_xy": [0, 0],
+            "shape_hw": [2.9, 3.7],
+            "sensor_shape_hw": [2, 3],
+        },
+        {
+            "mode": "full_sensor",
+            "origin_xy": [0, 0],
+            "shape_hw": [2, 3],
+            "sensor_shape_hw": [2, 3],
+            "unexpected": 1,
+        },
+    ],
+)
+def test_schema_v2_rejects_coercive_camera_frame_extent_fields(
+    tmp_path: Path,
+    camera_frame_extent: dict[str, object],
+) -> None:
+    data = _survey_manifest().to_dict()
+    data["camera_frame_extent"] = camera_frame_extent
+    path = tmp_path / "survey.json"
+    path.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("serialized_type_invalid",)
+
+
+def test_schema_v1_retains_compatibility_camera_extent_coercion(
+    tmp_path: Path,
+) -> None:
+    data = _survey_manifest().to_dict()
+    data["schema_version"] = 1
+    data["camera_frame_extent"] = {
+        "mode": "full_sensor",
+        "origin_xy": ["0", False],
+        "shape_hw": [2.9, 3.7],
+        "sensor_shape_hw": [2.9, 3.7],
+        "historical_extra": "ignored by the v1 loader",
+    }
+    path = tmp_path / "survey.v1.json"
+    path.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert result.schema_version == 1
+
+
 def test_json_manifest_validate_methods_reject_structural_contradictions() -> None:
     center = _sensor_center_profile()
     center.center_xy = (float("nan"), 0.0)
@@ -805,6 +952,51 @@ def test_hdf5_artifact_validators_accept_minimal_structures(
 
     assert result.outcome is ValidityOutcome.VALID
     assert result.schema_version == schema_compat(artifact_type).current
+
+
+def test_schema_v2_survey_hdf_rejects_coercive_payload_extent(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "survey_coercive_extent_v2.h5"
+    _write_survey_h5(path)
+    extent = {
+        "mode": "full_sensor",
+        "origin_xy": ["0", False],
+        "shape_hw": [2.9, 3.7],
+        "sensor_shape_hw": [2, 3],
+    }
+    with h5py.File(path, "r+") as h5:
+        h5["full_frame_survey/camera_frame_extent_json"][()] = json.dumps(extent)
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("frame_extent_invalid",)
+
+
+def test_schema_v1_survey_hdf_retains_compatibility_payload_extent(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "survey_coercive_extent_v1.h5"
+    manifest = _write_survey_h5(path)
+    manifest_data = manifest.to_dict()
+    manifest_data["schema_version"] = 1
+    extent = {
+        "mode": "full_sensor",
+        "origin_xy": ["0", False],
+        "shape_hw": [2.9, 3.7],
+        "sensor_shape_hw": [2.9, 3.7],
+        "historical_extra": "ignored by the v1 loader",
+    }
+    with h5py.File(path, "r+") as h5:
+        h5.attrs["schema_version"] = 1
+        h5["full_frame_survey/manifest_json"][()] = json.dumps(manifest_data)
+        h5["full_frame_survey/camera_frame_extent_json"][()] = json.dumps(extent)
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert result.schema_version == 1
 
 
 def test_raw_capture_validator_rejects_invalid_completed_index(tmp_path: Path) -> None:
@@ -910,6 +1102,65 @@ def test_raw_capture_validator_accepts_incomplete_capture_with_complete_schema(
     result = check_validity("raw_capture", path)
 
     assert result.outcome is ValidityOutcome.VALID
+
+
+def test_raw_capture_validator_rejects_tls_status_length_without_committed_rows(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "raw_tls_status_empty.h5"
+    _write_multi_raw_capture(path, capture_count=0)
+    _replace_tls_status_json(path, [])
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("entry_count_mismatch",)
+
+
+def test_raw_capture_validator_rejects_tls_status_length_with_committed_row(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "raw_tls_status_short.h5"
+    _write_multi_raw_capture(path, capture_count=1)
+    _replace_tls_status_json(path, ["{}"])
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("entry_count_mismatch",)
+
+
+def test_raw_capture_validator_rejects_unreadable_tls_status_entry(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "raw_tls_status_invalid_json.h5"
+    _write_multi_raw_capture(path, capture_count=1)
+    _replace_tls_status_json(path, ["{", "{}"])
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.UNREADABLE
+    assert result.reason_codes == ("tls_status_unreadable",)
+
+
+def test_raw_capture_v3_rejects_coercive_frame_extent_json(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "raw_coercive_frame_extent.h5"
+    _write_raw_capture(path)
+    extent = {
+        "mode": "full_sensor",
+        "origin_xy": ["0", False],
+        "shape_hw": [2.9, 3.7],
+        "sensor_shape_hw": [2, 3],
+    }
+    with h5py.File(path, "r+") as h5:
+        h5["camera/frame_extent_json"][0] = json.dumps(extent)
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("frame_extent_invalid",)
 
 
 def test_raw_capture_validator_binds_last_completed_index_to_committed_row(
@@ -1208,6 +1459,29 @@ def test_broadband_survey_uses_nan_sentinel_and_validates_against_source_identit
     result = check_validity("full_frame_psf_survey", path)
 
     assert result.outcome is ValidityOutcome.VALID
+
+
+def test_schema_v1_broadband_hdf_embedded_manifest_remains_valid(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "broadband_survey_v1.h5"
+    manifest = _write_broadband_survey_h5(path)
+    data = manifest.to_dict()
+    data["schema_version"] = 1
+    data["entry_wavelengths_nm"] = [float("nan"), float("nan")]
+    data["unique_wavelengths_nm"] = [float("nan")]
+    with h5py.File(path, "r+") as h5:
+        h5.attrs["schema_version"] = 1
+        h5["full_frame_survey/manifest_json"][()] = json.dumps(
+            data,
+            sort_keys=True,
+            allow_nan=True,
+        )
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert result.schema_version == 1
 
 
 def test_broadband_dictionary_json_uses_null_and_validates(tmp_path: Path) -> None:

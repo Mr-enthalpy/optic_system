@@ -321,6 +321,8 @@ def validate_bundle(
         )
     root = generation.resolve()
     resolved_payloads: dict[str, Path] = {}
+    normalized_path_roles: dict[str, str] = {}
+    physical_payloads: list[tuple[str, Path]] = []
     for name, payload in bundle.payloads.items():
         try:
             candidate = _resolve_payload(root, payload.rel_path)
@@ -332,6 +334,17 @@ def validate_bundle(
                 "payload_path_escape",
                 "bundle payload path escapes its generation directory",
             )
+        resolved_key = os.path.normcase(os.path.normpath(str(candidate)))
+        aliased_role = normalized_path_roles.get(resolved_key)
+        if aliased_role is not None:
+            return _bundle_result(
+                artifact_type,
+                ValidityOutcome.INVALID,
+                bundle.schema_version,
+                "payload_role_alias",
+                f"payload roles {aliased_role!r} and {name!r} resolve to the same file",
+            )
+        normalized_path_roles[resolved_key] = name
         if not candidate.is_file():
             return _bundle_result(
                 artifact_type,
@@ -340,6 +353,20 @@ def validate_bundle(
                 "payload_missing",
                 f"payload {name!r} is missing or is not a regular file",
             )
+        for other_role, other_path in physical_payloads:
+            try:
+                same_file = candidate.samefile(other_path)
+            except OSError:
+                same_file = False
+            if same_file:
+                return _bundle_result(
+                    artifact_type,
+                    ValidityOutcome.INVALID,
+                    bundle.schema_version,
+                    "payload_role_alias",
+                    f"payload roles {other_role!r} and {name!r} reference the same physical file",
+                )
+        physical_payloads.append((name, candidate))
         try:
             size_bytes = candidate.stat().st_size
         except OSError:
