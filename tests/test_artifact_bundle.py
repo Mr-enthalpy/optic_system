@@ -9,6 +9,7 @@ import pytest
 
 from tasks.artifact_versioning import schema_compat
 from tasks.artifacts.bundle import (
+    ARTIFACT_BUNDLE_SCHEMA_VERSION,
     ArtifactBundleError,
     ArtifactBundleManifest,
     ArtifactLocation,
@@ -202,6 +203,7 @@ def test_bundle_json_roundtrip_and_local_payload_validation(tmp_path: Path) -> N
     result = validate_bundle(loaded, generation)
 
     assert loaded.to_dict() == bundle.to_dict()
+    assert loaded.bundle_schema_version == ARTIFACT_BUNDLE_SCHEMA_VERSION
     assert result.outcome is ValidityOutcome.VALID
     assert result.schema_version == bundle.schema_version
 
@@ -303,6 +305,19 @@ def test_bundle_generation_id_need_not_equal_payload_native_id(tmp_path: Path) -
     result = validate_bundle(bundle, generation)
 
     assert result.outcome is ValidityOutcome.VALID
+
+
+def test_bundle_rejects_payload_roles_that_share_one_path(tmp_path: Path) -> None:
+    bundle, _, _ = _bundle_for_profile(tmp_path)
+    data = bundle.payloads["data"]
+
+    with pytest.raises(ArtifactBundleError, match="unique across roles"):
+        ArtifactBundleManifest(
+            artifact_id=bundle.artifact_id,
+            artifact_type=bundle.artifact_type,
+            schema_version=bundle.schema_version,
+            payloads={"data": data, "manifest_sidecar": data},
+        )
 
 
 @pytest.mark.parametrize(
@@ -433,6 +448,7 @@ def test_bundle_with_newer_artifact_schema_is_unsupported(tmp_path: Path) -> Non
     manifest_path.write_text(
         json.dumps(
             {
+                "bundle_schema_version": ARTIFACT_BUNDLE_SCHEMA_VERSION,
                 "artifact_id": "future_pupil_generation",
                 "artifact_type": "pupil_profile",
                 "schema_version": schema_compat("pupil_profile").current + 1,
@@ -453,3 +469,44 @@ def test_bundle_with_newer_artifact_schema_is_unsupported(tmp_path: Path) -> Non
 
     assert result.outcome is ValidityOutcome.UNSUPPORTED
     assert result.reason_codes == ("schema_newer_than_supported",)
+
+
+def test_bundle_with_newer_envelope_schema_is_unsupported(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "bundle.manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "bundle_schema_version": ARTIFACT_BUNDLE_SCHEMA_VERSION + 1,
+                "artifact_id": "future_bundle_generation",
+                "artifact_type": "pupil_profile",
+                "schema_version": schema_compat("pupil_profile").current,
+                "payloads": {
+                    "data": {
+                        "rel_path": "profile.json",
+                        "media_type": "application/json",
+                        "size_bytes": 0,
+                        "sha256": "sha256:" + "0" * 64,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = validate_bundle(manifest_path, tmp_path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("bundle_schema_newer_than_supported",)
+
+
+def test_bundle_requires_explicit_envelope_schema_version(tmp_path: Path) -> None:
+    bundle, generation, _ = _bundle_for_profile(tmp_path)
+    data = bundle.to_dict()
+    del data["bundle_schema_version"]
+    manifest_path = generation / "bundle.manifest.json"
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = validate_bundle(manifest_path, generation)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("bundle_schema_version_invalid",)

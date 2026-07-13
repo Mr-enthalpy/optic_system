@@ -244,8 +244,8 @@ class TestRawCaptureWriter:
         writer = RawCaptureWriter(tmp_h5_path, sample_plan)
         with writer:
             for ci in range(sample_plan.n_captures):
-                wi = ci % sample_plan.n_wavelengths
-                mi = ci // sample_plan.n_wavelengths
+                wi = ci // sample_plan.n_masks
+                mi = ci % sample_plan.n_masks
                 writer.append_capture(
                     capture_index=ci,
                     wavelength_index=wi,
@@ -261,6 +261,44 @@ class TestRawCaptureWriter:
             pf = json.loads(_h5_str(f["capture/processing_flags_json"]))
             assert pf["capture_complete"] is True
             assert pf["run_succeeded"] is True
+
+    def test_rejects_duplicate_committed_capture(
+        self, sample_plan: CapturePlan, tmp_h5_path: Path
+    ) -> None:
+        writer = RawCaptureWriter(tmp_h5_path, sample_plan)
+        with writer:
+            writer.append_capture(
+                capture_index=0,
+                wavelength_index=0,
+                mask_index=0,
+                frames=np.array([]),
+                frames_avg=np.ones((2, 3), dtype=np.float32),
+                camera_meta={},
+            )
+            with pytest.raises(RawCaptureWriteError, match="already been committed"):
+                writer.append_capture(
+                    capture_index=0,
+                    wavelength_index=0,
+                    mask_index=0,
+                    frames=np.array([]),
+                    frames_avg=np.ones((2, 3), dtype=np.float32),
+                    camera_meta={},
+                )
+
+    def test_rejects_capture_index_that_disagrees_with_plan_schedule(
+        self, sample_plan: CapturePlan, tmp_h5_path: Path
+    ) -> None:
+        writer = RawCaptureWriter(tmp_h5_path, sample_plan)
+        with writer:
+            with pytest.raises(RawCaptureWriteError, match="Cartesian schedule"):
+                writer.append_capture(
+                    capture_index=1,
+                    wavelength_index=0,
+                    mask_index=0,
+                    frames=np.array([]),
+                    frames_avg=np.ones((2, 3), dtype=np.float32),
+                    camera_meta={},
+                )
 
     def test_failure_records_partial_data(
         self, sample_plan: CapturePlan, tmp_h5_path: Path

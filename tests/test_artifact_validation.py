@@ -280,6 +280,51 @@ def _write_raw_capture(path: Path) -> None:
         )
 
 
+def _multi_capture_plan() -> CapturePlan:
+    return CapturePlan.from_dict(
+        {
+            "plan_id": "multi_capture_validation_plan_v1",
+            "wavelengths": [
+                {
+                    "illumination": {
+                        "mode": "monochromatic",
+                        "effective_wavelength_nm": wavelength,
+                        "tls_setpoint_nm": wavelength,
+                        "wavelength_label_nm": wavelength,
+                    }
+                }
+                for wavelength in (500.0, 600.0)
+            ],
+            "masks": [{"mask_id": "mask_1"}, {"mask_id": "mask_2"}],
+            "camera": {"frames_per_capture": 1},
+            "store_burst": False,
+        }
+    )
+
+
+def _write_multi_raw_capture(path: Path, *, capture_count: int = 4) -> None:
+    plan = _multi_capture_plan()
+    with RawCaptureWriter(path, plan) as writer:
+        writer.write_lcd_metadata({"subpixel_axis": 1})
+        writer.write_physical_masks(
+            [
+                np.ones((2, 3), dtype=np.uint8),
+                np.ones((2, 3), dtype=np.uint8),
+            ]
+        )
+        for capture_index in range(capture_count):
+            wavelength_index = capture_index // plan.n_masks
+            mask_index = capture_index % plan.n_masks
+            writer.append_capture(
+                capture_index=capture_index,
+                wavelength_index=wavelength_index,
+                mask_index=mask_index,
+                frames=None,
+                frames_avg=np.zeros((2, 3), dtype=np.float32),
+                camera_meta={},
+            )
+
+
 def _write_historical_v2_raw_capture(path: Path) -> None:
     """Create a pre-v3 writer fixture without fabricating a new v2 contract."""
     _write_raw_capture(path)
@@ -613,6 +658,66 @@ def test_json_artifact_validators_accept_complete_structures(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize(
+    "field",
+    [
+        "per_entry_background_value",
+        "per_entry_total_corr_energy",
+        "per_entry_fallback_used",
+    ],
+)
+def test_sensor_center_strict_validation_requires_diagnostic_arrays(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    data = _sensor_center_profile().to_dict()
+    del data[field]
+    path = tmp_path / "sensor_energy_center_profile.json"
+    path.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
+
+    result = check_validity("sensor_energy_center_profile", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("serialized_field_missing",)
+    with pytest.raises(SensorEnergyCenterError, match=field):
+        SensorEnergyCenterProfile.from_dict(data, legacy_mode=False)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("per_entry_background_value", float("nan"), "must be finite"),
+        ("per_entry_total_corr_energy", float("inf"), "must be finite"),
+        ("per_entry_total_corr_energy", -1.0, "must be nonnegative"),
+        ("per_entry_fallback_used", 1, "must be boolean"),
+    ],
+)
+def test_sensor_center_validate_rejects_invalid_diagnostic_values(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    profile = _sensor_center_profile()
+    setattr(profile, field, [value])
+
+    with pytest.raises(SensorEnergyCenterError, match=message):
+        profile.validate()
+
+
+def test_sensor_center_strict_validation_rejects_negative_corrected_energy(
+    tmp_path: Path,
+) -> None:
+    data = _sensor_center_profile().to_dict()
+    data["per_entry_total_corr_energy"] = [-1.0]
+    path = tmp_path / "sensor_energy_center_profile.json"
+    path.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
+
+    result = check_validity("sensor_energy_center_profile", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("serialized_contract_rejected",)
+
+
+@pytest.mark.parametrize(
     "mutate",
     [
         lambda data: data.__setitem__("frame_shape", [2.9, 3.7]),
@@ -860,6 +965,64 @@ def test_raw_capture_validator_binds_last_completed_index_to_committed_row(
 
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == ("processing_flags_mismatch",)
+
+
+def test_raw_capture_validator_rejects_duplicate_capture_index(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "duplicate_capture_index.h5"
+    _write_multi_raw_capture(path)
+    with h5py.File(path, "r+") as h5:
+        h5["capture/capture_index"][1] = 0
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("capture_index_duplicate",)
+
+
+def test_raw_capture_validator_rejects_duplicate_partial_combination(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "duplicate_partial_combination.h5"
+    _write_multi_raw_capture(path, capture_count=2)
+    with h5py.File(path, "r+") as h5:
+        h5["capture/mask_index"][1] = 0
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("capture_combination_duplicate",)
+
+
+def test_raw_capture_validator_rejects_full_bitmap_with_missing_combination(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "missing_complete_combination.h5"
+    _write_multi_raw_capture(path)
+    with h5py.File(path, "r+") as h5:
+        h5["capture/wavelength_index"][3] = 0
+        h5["capture/mask_index"][3] = 0
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("capture_schedule_incomplete",)
+
+
+def test_raw_capture_validator_rejects_capture_index_schedule_mismatch(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "capture_schedule_mismatch.h5"
+    _write_multi_raw_capture(path)
+    with h5py.File(path, "r+") as h5:
+        h5["capture/capture_index"][0] = 1
+        h5["capture/capture_index"][1] = 0
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("capture_schedule_mismatch",)
 
 
 def test_raw_writer_failed_append_does_not_commit_partial_row(

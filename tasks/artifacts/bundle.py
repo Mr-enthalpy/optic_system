@@ -38,6 +38,7 @@ _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HASH_CHUNK_BYTES = 1024 * 1024
 _JSON_MEDIA_TYPE = "application/json"
 _HDF5_MEDIA_TYPE = "application/x-hdf5"
+ARTIFACT_BUNDLE_SCHEMA_VERSION = 1
 
 
 class ArtifactBundleError(ValueError):
@@ -137,6 +138,7 @@ class ArtifactBundleManifest:
     artifact_type: str
     schema_version: int
     payloads: Mapping[str, ArtifactPayload]
+    bundle_schema_version: int = ARTIFACT_BUNDLE_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         self.validate()
@@ -152,6 +154,15 @@ class ArtifactBundleManifest:
             raise ArtifactBundleError("artifact_id must be a non-empty string")
         if not isinstance(self.artifact_type, str) or not self.artifact_type.strip():
             raise ArtifactBundleError("artifact_type must be a non-empty string")
+        if isinstance(self.bundle_schema_version, bool) or not isinstance(
+            self.bundle_schema_version,
+            int,
+        ):
+            raise ArtifactBundleError("bundle_schema_version must be an integer")
+        if self.bundle_schema_version != ARTIFACT_BUNDLE_SCHEMA_VERSION:
+            raise ArtifactBundleError(
+                "bundle_schema_version is not supported by this reader"
+            )
         if isinstance(self.schema_version, bool) or not isinstance(
             self.schema_version,
             int,
@@ -168,6 +179,7 @@ class ArtifactBundleManifest:
             ) from exc
         if not isinstance(self.payloads, Mapping) or not self.payloads:
             raise ArtifactBundleError("payloads must be a non-empty mapping")
+        payload_paths: dict[str, str] = {}
         for name, payload in self.payloads.items():
             if not isinstance(name, str) or not name.strip():
                 raise ArtifactBundleError("payload names must be non-empty strings")
@@ -176,10 +188,18 @@ class ArtifactBundleManifest:
                     f"payload {name!r} must be an ArtifactPayload record"
                 )
             payload.validate()
+            other_role = payload_paths.get(payload.rel_path)
+            if other_role is not None:
+                raise ArtifactBundleError(
+                    "payload rel_path values must be unique across roles: "
+                    f"{other_role!r} and {name!r} both reference {payload.rel_path!r}"
+                )
+            payload_paths[payload.rel_path] = name
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the artifact schema and its stable payload inventory."""
         return {
+            "bundle_schema_version": self.bundle_schema_version,
             "artifact_id": self.artifact_id,
             "artifact_type": self.artifact_type,
             "schema_version": self.schema_version,
@@ -214,6 +234,7 @@ class ArtifactBundleManifest:
                 raise ArtifactBundleError("payload names must be non-empty strings")
             payloads[name] = ArtifactPayload.from_dict(value)
         return cls(
+            bundle_schema_version=_required_int(data, "bundle_schema_version"),
             artifact_id=_required_string(data, "artifact_id"),
             artifact_type=_required_string(data, "artifact_type"),
             schema_version=_required_int(data, "schema_version"),
@@ -616,6 +637,35 @@ def _load_bundle_for_validation(
             "bundle manifest JSON could not be parsed",
         )
     artifact_type = raw.get("artifact_type") if isinstance(raw, Mapping) else "artifact_bundle"
+    if isinstance(raw, Mapping):
+        bundle_schema_version = raw.get("bundle_schema_version")
+        if isinstance(bundle_schema_version, bool) or not isinstance(
+            bundle_schema_version,
+            int,
+        ):
+            return _bundle_result(
+                artifact_type if isinstance(artifact_type, str) else "artifact_bundle",
+                ValidityOutcome.INVALID,
+                None,
+                "bundle_schema_version_invalid",
+                "bundle_schema_version must be an explicit integer",
+            )
+        if bundle_schema_version > ARTIFACT_BUNDLE_SCHEMA_VERSION:
+            return _bundle_result(
+                artifact_type if isinstance(artifact_type, str) else "artifact_bundle",
+                ValidityOutcome.UNSUPPORTED,
+                None,
+                "bundle_schema_newer_than_supported",
+                "bundle manifest envelope requires a newer reader",
+            )
+        if bundle_schema_version != ARTIFACT_BUNDLE_SCHEMA_VERSION:
+            return _bundle_result(
+                artifact_type if isinstance(artifact_type, str) else "artifact_bundle",
+                ValidityOutcome.INVALID,
+                None,
+                "bundle_schema_version_invalid",
+                "bundle_schema_version is not supported",
+            )
     if isinstance(raw, Mapping) and isinstance(artifact_type, str):
         schema_version = raw.get("schema_version")
         if isinstance(schema_version, int) and not isinstance(schema_version, bool):
@@ -739,6 +789,7 @@ def _write_text_atomic(path: Path, text: str) -> None:
 
 
 __all__ = [
+    "ARTIFACT_BUNDLE_SCHEMA_VERSION",
     "ArtifactBundleError",
     "ArtifactBundleManifest",
     "ArtifactLocation",

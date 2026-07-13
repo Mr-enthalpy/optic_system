@@ -639,12 +639,13 @@ def _validate_serialized_sensor_energy_center_profile(data: Mapping[str, Any]) -
     _strict_pair_list(data, "per_entry_center_xy")
     _strict_string_list(data, "per_entry_mask_ids")
     _strict_wavelength_list(data, "per_entry_wavelengths_nm")
-    _strict_number_list(data, "per_entry_background_value", required=False)
-    _strict_number_list(data, "per_entry_total_corr_energy", required=False)
-    if "per_entry_fallback_used" in data:
-        for index, value in enumerate(_strict_list(data["per_entry_fallback_used"], "per_entry_fallback_used")):
-            if not isinstance(value, bool):
-                _strict_error(f"per_entry_fallback_used[{index}]", "a boolean")
+    _strict_number_list(data, "per_entry_background_value")
+    _strict_number_list(data, "per_entry_total_corr_energy")
+    for index, value in enumerate(
+        _strict_required_list(data, "per_entry_fallback_used")
+    ):
+        if type(value) is not bool:
+            _strict_error(f"per_entry_fallback_used[{index}]", "a boolean")
     for field in ("per_wavelength_mean_center_xy", "per_wavelength_center_std_xy"):
         mapping = _strict_required_mapping(data, field)
         for key, value in mapping.items():
@@ -1771,6 +1772,14 @@ def _validate_raw_capture_v3(h5: h5py.File) -> None:
         "capture/burst_count",
         length=planned_count,
     )
+    capture_schedule_complete = _validate_raw_capture_schedule(
+        completed=completed,
+        capture_indices=capture_indices,
+        wavelength_indices=wavelength_indices,
+        mask_indices=mask_indices,
+        wavelength_count=wavelength_count,
+        mask_count=mask_count,
+    )
     camera_statuses = _read_text_array(
         _require_dataset(h5, "camera/status_json"),
         name="camera/status_json",
@@ -1790,21 +1799,6 @@ def _validate_raw_capture_v3(h5: h5py.File) -> None:
     _read_hdf_json_mapping(h5, "capture/runtime_policy_json")
 
     for row in np.flatnonzero(completed):
-        if capture_indices[row] < 0 or capture_indices[row] >= planned_count:
-            raise _InvalidArtifact(
-                "capture_index_out_of_bounds",
-                "completed capture has an invalid capture index",
-            )
-        if wavelength_indices[row] < 0 or wavelength_indices[row] >= wavelength_count:
-            raise _InvalidArtifact(
-                "wavelength_index_out_of_bounds",
-                "completed capture has an invalid wavelength index",
-            )
-        if mask_indices[row] < 0 or mask_indices[row] >= mask_count:
-            raise _InvalidArtifact(
-                "mask_index_out_of_bounds",
-                "completed capture has an invalid mask index",
-            )
         if not has_mask_array[int(mask_indices[row])]:
             raise _InvalidArtifact(
                 "mask_payload_missing",
@@ -1879,7 +1873,84 @@ def _validate_raw_capture_v3(h5: h5py.File) -> None:
         completed=completed,
         capture_indices=capture_indices,
         planned_count=planned_count,
+        capture_schedule_complete=capture_schedule_complete,
     )
+
+
+def _validate_raw_capture_schedule(
+    *,
+    completed: np.ndarray,
+    capture_indices: np.ndarray,
+    wavelength_indices: np.ndarray,
+    mask_indices: np.ndarray,
+    wavelength_count: int,
+    mask_count: int,
+) -> bool:
+    """Validate committed rows against the wavelength-major Cartesian plan."""
+    planned_count = wavelength_count * mask_count
+    completed_rows = [int(row) for row in np.flatnonzero(completed)]
+    for row in completed_rows:
+        if capture_indices[row] < 0 or capture_indices[row] >= planned_count:
+            raise _InvalidArtifact(
+                "capture_index_out_of_bounds",
+                "completed capture has an invalid capture index",
+            )
+        if wavelength_indices[row] < 0 or wavelength_indices[row] >= wavelength_count:
+            raise _InvalidArtifact(
+                "wavelength_index_out_of_bounds",
+                "completed capture has an invalid wavelength index",
+            )
+        if mask_indices[row] < 0 or mask_indices[row] >= mask_count:
+            raise _InvalidArtifact(
+                "mask_index_out_of_bounds",
+                "completed capture has an invalid mask index",
+            )
+
+    committed_capture_indices = [
+        int(capture_indices[row]) for row in completed_rows
+    ]
+    if len(set(committed_capture_indices)) != len(committed_capture_indices):
+        raise _InvalidArtifact(
+            "capture_index_duplicate",
+            "completed capture_index values must be unique",
+        )
+
+    committed_combinations = [
+        (int(wavelength_indices[row]), int(mask_indices[row]))
+        for row in completed_rows
+    ]
+    expected_capture_indices = set(range(planned_count))
+    expected_combinations = {
+        (wavelength_index, mask_index)
+        for wavelength_index in range(wavelength_count)
+        for mask_index in range(mask_count)
+    }
+    all_rows_committed = bool(np.all(completed))
+    if all_rows_committed and (
+        set(committed_capture_indices) != expected_capture_indices
+        or set(committed_combinations) != expected_combinations
+    ):
+        raise _InvalidArtifact(
+            "capture_schedule_incomplete",
+            "completed capture rows do not cover the full capture-plan Cartesian schedule",
+        )
+    if len(set(committed_combinations)) != len(committed_combinations):
+        raise _InvalidArtifact(
+            "capture_combination_duplicate",
+            "completed wavelength_index and mask_index combinations must be unique",
+        )
+    for capture_index, (wavelength_index, mask_index) in zip(
+        committed_capture_indices,
+        committed_combinations,
+        strict=True,
+    ):
+        expected_capture_index = wavelength_index * mask_count + mask_index
+        if capture_index != expected_capture_index:
+            raise _InvalidArtifact(
+                "capture_schedule_mismatch",
+                "capture_index does not match wavelength-major capture-plan ordering",
+            )
+    return all_rows_committed
 
 
 def _validate_raw_burst_frames(
@@ -2224,6 +2295,7 @@ def _validate_raw_processing_flags(
     completed: np.ndarray,
     capture_indices: np.ndarray,
     planned_count: int,
+    capture_schedule_complete: bool,
 ) -> None:
     for field in (
         "scientific_calibration_valid",
@@ -2274,10 +2346,10 @@ def _validate_raw_processing_flags(
             "processing_flags_mismatch",
             "processing flags planned capture count does not match raw frame rows",
         )
-    if flags["capture_complete"] != bool(np.all(completed)):
+    if flags["capture_complete"] != capture_schedule_complete:
         raise _InvalidArtifact(
             "processing_flags_mismatch",
-            "processing flags capture_complete state does not match capture/completed",
+            "processing flags capture_complete state does not match the validated capture schedule",
         )
     error = flags["error"]
     if flags["run_succeeded"] != (error is None):

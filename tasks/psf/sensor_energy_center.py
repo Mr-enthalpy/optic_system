@@ -87,25 +87,28 @@ class SensorEnergyCenterProfile:
             ),
             per_entry_background_value=[
                 float(x)
-                for x in data.get(
+                for x in _per_entry_list(
+                    data,
                     "per_entry_background_value",
-                    [float("nan")] * len(data.get("per_entry_center_xy", [])),
+                    legacy_mode=legacy_mode,
+                    default=[float("nan")] * len(data.get("per_entry_center_xy", [])),
                 )
             ],
             per_entry_total_corr_energy=[
                 float(x)
-                for x in data.get(
+                for x in _per_entry_list(
+                    data,
                     "per_entry_total_corr_energy",
-                    [float("nan")] * len(data.get("per_entry_center_xy", [])),
+                    legacy_mode=legacy_mode,
+                    default=[float("nan")] * len(data.get("per_entry_center_xy", [])),
                 )
             ],
-            per_entry_fallback_used=[
-                bool(x)
-                for x in data.get(
-                    "per_entry_fallback_used",
-                    [False] * len(data.get("per_entry_center_xy", [])),
-                )
-            ],
+            per_entry_fallback_used=_fallback_bool_list(
+                data,
+                "per_entry_fallback_used",
+                legacy_mode=legacy_mode,
+                default=[False] * len(data.get("per_entry_center_xy", [])),
+            ),
             per_wavelength_mean_center_xy={
                 str(k): _float_pair(v, f"per_wavelength_mean_center_xy[{k!r}]")
                 for k, v in _require_dict(data, "per_wavelength_mean_center_xy").items()
@@ -214,6 +217,22 @@ class SensorEnergyCenterProfile:
             )
         for index, center in enumerate(self.per_entry_center_xy):
             _finite_pair(center, f"per_entry_center_xy[{index}]")
+        for index, background in enumerate(self.per_entry_background_value):
+            _finite_number(
+                background,
+                f"per_entry_background_value[{index}]",
+            )
+        for index, energy in enumerate(self.per_entry_total_corr_energy):
+            _finite_number(
+                energy,
+                f"per_entry_total_corr_energy[{index}]",
+                nonnegative=True,
+            )
+        for index, fallback_used in enumerate(self.per_entry_fallback_used):
+            if type(fallback_used) is not bool:
+                raise SensorEnergyCenterError(
+                    f"per_entry_fallback_used[{index}] must be boolean"
+                )
 
         if set(self.per_wavelength_mean_center_xy) != set(
             self.per_wavelength_center_std_xy
@@ -545,6 +564,39 @@ def _require_list(data: dict[str, Any], key: str) -> list[Any]:
     if not isinstance(value, list):
         raise SensorEnergyCenterError(f"{key} must be a list")
     return value
+
+
+def _per_entry_list(
+    data: dict[str, Any],
+    key: str,
+    *,
+    legacy_mode: bool,
+    default: list[Any],
+) -> list[Any]:
+    if legacy_mode and key not in data:
+        return default
+    return _require_list(data, key)
+
+
+def _fallback_bool_list(
+    data: dict[str, Any],
+    key: str,
+    *,
+    legacy_mode: bool,
+    default: list[bool],
+) -> list[bool]:
+    values = _per_entry_list(
+        data,
+        key,
+        legacy_mode=legacy_mode,
+        default=default,
+    )
+    if legacy_mode:
+        return [bool(value) for value in values]
+    for index, value in enumerate(values):
+        if type(value) is not bool:
+            raise SensorEnergyCenterError(f"{key}[{index}] must be boolean")
+    return list(values)
 
 
 def _float_pair(value: Any, name: str) -> tuple[float, float]:

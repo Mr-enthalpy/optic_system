@@ -130,6 +130,8 @@ class RawCaptureWriter:
         self._storage_policy = storage_policy or RawFrameStoragePolicy()
         self._file: h5py.File | None = None
         self._n_written: int = 0
+        self._committed_capture_indices: set[int] = set()
+        self._committed_capture_combinations: set[tuple[int, int]] = set()
         self._mask_arrays_written: bool = False
         self._closed: bool = False
         self._created_at_ns: int = _now_ns()
@@ -372,6 +374,25 @@ class RawCaptureWriter:
             upper_bound=self._plan.n_masks,
             name="mask_index",
         )
+        expected_capture_index = (
+            wavelength_index * self._plan.n_masks + mask_index
+        )
+        if capture_index != expected_capture_index:
+            raise RawCaptureWriteError(
+                "capture_index does not match the capture-plan Cartesian schedule: "
+                f"expected {expected_capture_index} for wavelength_index="
+                f"{wavelength_index}, mask_index={mask_index}, got {capture_index}"
+            )
+        combination = (wavelength_index, mask_index)
+        if capture_index in self._committed_capture_indices:
+            raise RawCaptureWriteError(
+                f"capture_index {capture_index} has already been committed"
+            )
+        if combination in self._committed_capture_combinations:
+            raise RawCaptureWriteError(
+                "capture-plan combination has already been committed: "
+                f"wavelength_index={wavelength_index}, mask_index={mask_index}"
+            )
         if not isinstance(camera_meta, dict):
             raise RawCaptureWriteError("camera_meta must be a mapping")
         if tls_status is not None and not isinstance(tls_status, dict):
@@ -521,6 +542,8 @@ class RawCaptureWriter:
         wl_grp["status_json"][wavelength_index] = tls_status_json
 
         cap_grp["completed"][row] = True
+        self._committed_capture_indices.add(capture_index)
+        self._committed_capture_combinations.add(combination)
         self._n_written += 1
 
     def finalize(
@@ -536,7 +559,14 @@ class RawCaptureWriter:
         )
         completed_rows = np.flatnonzero(completed_bitmap)
         captures_written = int(completed_rows.size)
-        capture_complete = bool(np.all(completed_bitmap))
+        capture_complete = _capture_schedule_is_complete(
+            completed_bitmap,
+            np.asarray(self._file["capture/capture_index"][()], dtype=np.int64),
+            np.asarray(self._file["capture/wavelength_index"][()], dtype=np.int64),
+            np.asarray(self._file["capture/mask_index"][()], dtype=np.int64),
+            n_wavelengths=self._plan.n_wavelengths,
+            n_masks=self._plan.n_masks,
+        )
         run_succeeded = error is None
         if captures_written:
             last_row = int(completed_rows[-1])
@@ -621,6 +651,42 @@ def _validated_index(value: Any, *, upper_bound: int, name: str) -> int:
             f"{name} must be in [0, {upper_bound}), got {index}"
         )
     return index
+
+
+def _capture_schedule_is_complete(
+    completed: np.ndarray,
+    capture_indices: np.ndarray,
+    wavelength_indices: np.ndarray,
+    mask_indices: np.ndarray,
+    *,
+    n_wavelengths: int,
+    n_masks: int,
+) -> bool:
+    """Return whether committed rows exactly cover the capture-plan schedule."""
+    planned_count = n_wavelengths * n_masks
+    if completed.shape != (planned_count,) or not bool(np.all(completed)):
+        return False
+    rows = np.flatnonzero(completed)
+    actual_capture_indices = {int(capture_indices[row]) for row in rows}
+    actual_combinations = {
+        (int(wavelength_indices[row]), int(mask_indices[row])) for row in rows
+    }
+    expected_capture_indices = set(range(planned_count))
+    expected_combinations = {
+        (wavelength_index, mask_index)
+        for wavelength_index in range(n_wavelengths)
+        for mask_index in range(n_masks)
+    }
+    if (
+        actual_capture_indices != expected_capture_indices
+        or actual_combinations != expected_combinations
+    ):
+        return False
+    return all(
+        int(capture_indices[row])
+        == int(wavelength_indices[row]) * n_masks + int(mask_indices[row])
+        for row in rows
+    )
 
 
 def _ensure_open(file: h5py.File | None) -> h5py.File:

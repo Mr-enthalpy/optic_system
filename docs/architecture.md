@@ -287,13 +287,18 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   attributes and every fixed raw, mask, illumination, TLS, camera, LCD,
   profile, and capture metadata field, including finalized written/planned
   capture counts. `RawCaptureWriter` writes all frame and row metadata before
-  setting `capture/completed[row]`, so that bitmap is the row commit marker.
-  Processing flags separately record `capture_complete` (all rows committed)
-  and `run_succeeded` (the enclosing run ended without an error). Partial runs
-  and a fully captured run followed by a task error therefore remain
-  structurally representable. `last_completed_capture_index` must equal the
-  capture index stored on the final committed row. Partial runs do not omit
-  schema fields. Historical v2
+  setting `capture/completed[row]`. Committed rows must use unique capture
+  indices and unique `(wavelength_index, mask_index)` pairs, with
+  `capture_index = wavelength_index * n_masks + mask_index`.
+  `capture_complete` is true only when those rows exactly cover the plan's
+  wavelength-major Cartesian schedule; `run_succeeded` independently records
+  whether the enclosing run ended without an error. Partial runs and a fully
+  captured run followed by a task error therefore remain structurally
+  representable. `last_completed_capture_index` must equal the capture index
+  stored on the final committed row. This is exception-safe finalization, not
+  crash durability: the writer does not flush row and processing-flag state as
+  one durable transaction, and this PR does not add resume semantics. Partial
+  runs do not omit schema fields. Historical v2
   captures remain readable against their original,
   narrower structural contract: v2 does not require the later root
   `artifact_type`, finalized capture-count flags, or fully initialized
@@ -302,6 +307,12 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   HDF5 numeric wavelength arrays use a stable `NaN` sentinel for those entries.
   JSON manifests encode the same broadband entries as `null` and never emit
   non-standard JSON `NaN` tokens.
+- Current `SensorEnergyCenterProfile` JSON requires background value, corrected
+  energy, and fallback-used arrays for every entry. Background and energy
+  values must be finite, corrected energy must be nonnegative, and fallback
+  markers must be booleans. Compatibility loading may represent missing legacy
+  diagnostics, but strict structural validation cannot promote that legacy
+  representation as current schema data.
 - A support report's `component_policy` is part of payload structure:
   `component_table_written` must agree with `analysis_mode` and with the actual
   presence of the HDF5 `components` group.
@@ -315,6 +326,8 @@ Artifact bundle foundation (`tasks/artifacts/bundle.py`):
   directory. `ArtifactBundleManifest` inventories one artifact ID/type/schema
   and its `ArtifactPayload` files, each with a storage-relative path, media
   type, byte count, and canonical `sha256:<lowercase-hex>` digest.
+- `bundle_schema_version` versions the bundle envelope independently from the
+  payload artifact's `schema_version`.
 - Bundle records reject absolute and parent-traversal payload paths. Local
   validation resolves every payload under the supplied generation directory,
   verifies existence, size, and streaming SHA-256, then verifies declared
@@ -323,7 +336,9 @@ Artifact bundle foundation (`tasks/artifacts/bundle.py`):
   validator. `manifest_sidecar` must declare `application/json`. When a bundle
   declares that sidecar, validation also strictly parses it and requires an
   exact canonical match with the primary JSON manifest or HDF5 embedded
-  manifest. Bundle JSON writes use temporary-file replacement.
+  manifest. Different payload roles must use distinct canonical relative paths,
+  so `data` and `manifest_sidecar` cannot claim the same file. Bundle JSON
+  writes use temporary-file replacement.
 - Bundle `artifact_id` is an immutable generation identity and need not equal a
   payload-native ID such as `survey_id`. Native IDs remain inside the validated
   payload manifest; future catalog records will define their relationship

@@ -128,12 +128,21 @@ schema version 2 through its original compatibility contract.
 | `runtime_policy_json` | scalar | string | Full runtime policy as JSON |
 | `processing_flags_json` | scalar | string | Processing flags (scientific validity, training readiness) |
 
-Schema v3 uses `capture/completed[row]` as a commit marker: the writer sets it
-only after the frame and all row metadata have been written. Processing flags
-record `n_captures_written` and `n_captures_total`, which must agree with the
-capture bitmap and planned frame rows. They also separate:
+Schema v3 uses the wavelength-major schedule:
 
-- `capture_complete`: whether every planned row is committed;
+```text
+capture_index = wavelength_index * n_masks + mask_index
+```
+
+Completed rows must have unique capture indices and unique wavelength/mask
+combinations. A partial capture may contain any valid subset; a complete capture
+must exactly cover the full Cartesian product. The writer sets
+`capture/completed[row]` only after the frame and all row metadata have been
+written. Processing flags record `n_captures_written` and `n_captures_total`,
+which must agree with the capture bitmap and planned frame rows. They also
+separate:
+
+- `capture_complete`: whether committed rows exactly cover the planned schedule;
 - `run_succeeded`: whether finalization recorded no task error;
 - `error`: the task error string, or null when `run_succeeded` is true.
 - `last_completed_capture_index`: the capture index stored on the final row
@@ -143,3 +152,8 @@ A run may therefore have `capture_complete: true` and `run_succeeded: false`
 when all captures were committed before a later task failure. These fields, the
 root `artifact_type`, and complete initialized mask/LCD metadata are v3
 requirements; they are not retroactively imposed on schema v2 files.
+
+This v3 writer contract is exception-safe when `finalize()` runs. It does not
+provide a crash-durable transaction between row completion and processing-flag
+updates, and it does not implement resume. Crash recovery and explicit
+finalized/in-progress state remain a later durability task.

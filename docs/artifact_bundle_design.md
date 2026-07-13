@@ -29,6 +29,7 @@ representation:
 
 ```json
 {
+  "bundle_schema_version": 1,
   "artifact_id": "survey_20260712_001",
   "artifact_type": "full_frame_psf_survey",
   "schema_version": 1,
@@ -54,7 +55,13 @@ directory. `ArtifactPayload` records a relative payload path, declared media
 type, size, and canonical `sha256:<64 lowercase hexadecimal characters>`.
 Payload paths cannot be absolute or contain parent traversal, and local
 validation repeats containment after resolving the candidate path under the
-generation directory.
+generation directory. Payload roles must also use distinct canonical relative
+paths; an alleged `manifest_sidecar` cannot point to the same file as `data`.
+
+`bundle_schema_version` versions this inventory envelope. The separate
+`schema_version` field is the schema version of the bundled artifact and must
+agree with the primary payload. A newer bundle envelope is `unsupported`; a
+missing or malformed envelope version is `invalid`.
 
 `validate_bundle()` verifies payload presence, regular-file status, byte count,
 and streaming SHA-256. It also verifies the primary payload's declared media
@@ -120,9 +127,15 @@ and capture metadata surfaces, including finalized written/planned capture
 counts. An incomplete acquisition is represented by the `capture/completed`
 bitmap and matching processing flags, not by omitting v3 datasets. The writer
 sets each bitmap entry only after the frame and all row metadata have been
-written. `capture_complete` records whether every row is committed, while
+written. Every committed row must map the unique pair
+`(wavelength_index, mask_index)` to the canonical wavelength-major
+`capture_index = wavelength_index * n_masks + mask_index`.
+`capture_complete` records exact coverage of that Cartesian schedule, while
 `run_succeeded` records whether the enclosing run ended without an error; these
-are intentionally independent. Historical
+are intentionally independent. This contract is exception-safe when
+finalization runs, but it is not crash-durable: row state and processing flags
+are not flushed as one recoverable transaction, and resume remains deferred.
+Historical
 schema v2 remains structurally readable through its original narrower contract:
 it does not require the later root `artifact_type`, finalized capture-count
 flags, or fully initialized mask/LCD metadata. Broadband pass-through remains a
@@ -134,6 +147,12 @@ validation rejects non-standard `NaN` and infinity tokens in every other field.
 For support reports, the embedded `component_policy.analysis_mode` and
 `component_table_written` fields must also agree with whether the HDF5
 `components` group exists.
+
+Current-schema `SensorEnergyCenterProfile` manifests must explicitly include
+all per-entry background, corrected-energy, and fallback arrays. Their numeric
+diagnostics are finite, corrected energies are nonnegative, and fallback values
+are strict booleans. Compatibility defaults for legacy loading are not accepted
+by strict validation.
 
 A syntactically readable JSON scalar or array is structurally `invalid` when a
 mapping is required, not `unreadable`. A newer schema is `unsupported`, because
