@@ -133,7 +133,7 @@ def test_root_attrs_present(tmp_path: Path) -> None:
     path = _minimal_h5(tmp_path)
     with h5py.File(path, "r") as f:
         assert f.attrs["software_version"] == "optic_system"
-        assert f.attrs["raw_capture_schema_version"] == 2
+        assert f.attrs["raw_capture_schema_version"] == 3
         assert f.attrs["capture_role"] == "minimal_capture"
         assert "plan_id" in f.attrs
         assert "created_at_ns" in f.attrs

@@ -59,7 +59,7 @@ class TestRawCaptureWriter:
         with h5py.File(tmp_h5_path, "r") as f:
             assert f.attrs["plan_id"] == "test_plan_01"
             assert f.attrs["software_version"] == "optic_system"
-            assert int(f.attrs["raw_capture_schema_version"]) == 2
+            assert int(f.attrs["raw_capture_schema_version"]) == 3
             assert f.attrs["capture_role"] == "minimal_capture"
 
     def test_plan_json_stored(self, sample_plan: CapturePlan, tmp_h5_path: Path) -> None:
@@ -122,7 +122,7 @@ class TestRawCaptureWriter:
         with h5py.File(tmp_h5_path, "r") as f:
             pf = json.loads(_h5_str(f["capture/processing_flags_json"]))
             assert pf["scientific_calibration_valid"] is False
-            assert pf["raw_capture_schema_version"] == 2
+            assert pf["raw_capture_schema_version"] == 3
             assert pf["capture_role"] == "minimal_capture"
             assert "phase" not in pf
             assert pf["completed"] is False

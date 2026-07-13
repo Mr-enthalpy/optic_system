@@ -214,6 +214,83 @@ def test_bundle_validates_matching_hdf5_embedded_manifest_sidecar(tmp_path: Path
     assert result.outcome is ValidityOutcome.VALID
 
 
+def test_bundle_rejects_hdf5_primary_with_wrong_declared_media_type(
+    tmp_path: Path,
+) -> None:
+    bundle, generation, _ = _bundle_for_survey(tmp_path)
+    data = bundle.payloads["data"]
+    bundle = ArtifactBundleManifest(
+        artifact_id=bundle.artifact_id,
+        artifact_type=bundle.artifact_type,
+        schema_version=bundle.schema_version,
+        payloads={
+            **bundle.payloads,
+            "data": ArtifactPayload(
+                rel_path=data.rel_path,
+                media_type="text/plain",
+                size_bytes=data.size_bytes,
+                sha256=data.sha256,
+            ),
+        },
+    )
+
+    result = validate_bundle(bundle, generation)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("payload_media_type_mismatch",)
+
+
+def test_bundle_rejects_json_primary_with_wrong_declared_media_type(
+    tmp_path: Path,
+) -> None:
+    bundle, generation, _ = _bundle_for_profile(tmp_path)
+    data = bundle.payloads["data"]
+    bundle = ArtifactBundleManifest(
+        artifact_id=bundle.artifact_id,
+        artifact_type=bundle.artifact_type,
+        schema_version=bundle.schema_version,
+        payloads={
+            "data": ArtifactPayload(
+                rel_path=data.rel_path,
+                media_type="application/x-hdf5",
+                size_bytes=data.size_bytes,
+                sha256=data.sha256,
+            ),
+        },
+    )
+
+    result = validate_bundle(bundle, generation)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("payload_media_type_mismatch",)
+
+
+def test_bundle_rejects_manifest_sidecar_with_non_json_media_type(
+    tmp_path: Path,
+) -> None:
+    bundle, generation, _ = _bundle_for_survey(tmp_path)
+    sidecar = bundle.payloads["manifest_sidecar"]
+    bundle = ArtifactBundleManifest(
+        artifact_id=bundle.artifact_id,
+        artifact_type=bundle.artifact_type,
+        schema_version=bundle.schema_version,
+        payloads={
+            **bundle.payloads,
+            "manifest_sidecar": ArtifactPayload(
+                rel_path=sidecar.rel_path,
+                media_type="text/plain",
+                size_bytes=sidecar.size_bytes,
+                sha256=sidecar.sha256,
+            ),
+        },
+    )
+
+    result = validate_bundle(bundle, generation)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("payload_media_type_mismatch",)
+
+
 def test_bundle_generation_id_need_not_equal_payload_native_id(tmp_path: Path) -> None:
     bundle, generation, _ = _bundle_for_survey(tmp_path)
     bundle = ArtifactBundleManifest(

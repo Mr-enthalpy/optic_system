@@ -918,7 +918,6 @@ def _validate_raw_capture(path: Path) -> ValidityResult:
     artifact_type = "raw_capture"
     try:
         with h5py.File(path, "r") as h5:
-            _validate_root_artifact_type(h5, artifact_type, required=True)
             schema_version, outcome = _read_hdf_schema_version(
                 h5,
                 attribute="raw_capture_schema_version",
@@ -926,7 +925,19 @@ def _validate_raw_capture(path: Path) -> ValidityResult:
             )
             if outcome is not None:
                 return outcome
-            _validate_raw_capture_h5(h5)
+            if schema_version == 2:
+                # Historical v2 captures predate the root identity attribute
+                # and the finalized capture-count processing flags.
+                _validate_root_artifact_type(h5, artifact_type, required=False)
+                _validate_raw_capture_v2(h5)
+            elif schema_version == 3:
+                _validate_root_artifact_type(h5, artifact_type, required=True)
+                _validate_raw_capture_v3(h5)
+            else:  # pragma: no cover - read_schema_version bounds this branch.
+                raise _InvalidArtifact(
+                    "schema_incompatible",
+                    "raw capture schema version has no registered validator",
+                )
             return _result(
                 artifact_type,
                 ValidityOutcome.VALID,
@@ -1238,10 +1249,183 @@ def _read_int_pair_dataset(dataset: h5py.Dataset, *, name: str) -> tuple[int, in
     return (int(values[0]), int(values[1]))
 
 
-def _validate_raw_capture_h5(h5: h5py.File) -> None:
-    """Validate the complete current raw-capture schema v2 contract.
+def _validate_raw_capture_v2(h5: h5py.File) -> None:
+    """Validate the historical raw-capture v2 contract.
 
-    A capture can be incomplete, but it must still retain every v2 metadata
+    V2 is intentionally narrower than v3. It represents files produced by the
+    pre-v3 writer, where root ``artifact_type`` was not emitted, capture-count
+    processing flags did not exist, and mask/LCD metadata could be initialized
+    after file creation. Do not add v3 requirements here: versioned validation
+    must preserve the contract emitted by the historical writer.
+    """
+    required_paths = (
+        "raw/frames_avg",
+        "masks/masks_physical",
+        "masks/mask_id",
+        "masks/family_id",
+        "masks/family_params_json",
+        "masks/has_mask_array",
+        "illumination/illumination_json",
+        "illumination/tls_setpoint_nm",
+        "illumination/effective_wavelength_nm",
+        "camera/frame_extent_json",
+        "capture/capture_index",
+        "capture/wavelength_index",
+        "capture/mask_index",
+        "capture/burst_count",
+        "capture/completed",
+        "capture/plan_json",
+        "capture/processing_flags_json",
+    )
+    for required in required_paths:
+        _require_dataset(h5, required)
+
+    frames = _require_dataset(h5, "raw/frames_avg")
+    _require_rank(frames, 3, name="raw/frames_avg")
+    if frames.shape[1] <= 0 or frames.shape[2] <= 0:
+        raise _InvalidArtifact(
+            "frame_shape_invalid",
+            "raw/frames_avg spatial dimensions must be positive",
+        )
+    planned_count = int(frames.shape[0])
+
+    plan = _read_hdf_json_mapping(h5, "capture/plan_json")
+    wavelengths = plan.get("wavelengths")
+    masks = plan.get("masks")
+    if not isinstance(wavelengths, list) or not isinstance(masks, list):
+        raise _InvalidArtifact("plan_invalid", "capture plan lacks masks or wavelengths")
+    if planned_count != len(wavelengths) * len(masks):
+        raise _InvalidArtifact(
+            "planned_capture_count_mismatch",
+            "capture datasets do not match planned capture count",
+        )
+    if not wavelengths or not masks:
+        raise _InvalidArtifact(
+            "plan_invalid",
+            "capture plan masks and wavelengths must be non-empty",
+        )
+
+    masks_physical = _require_dataset(h5, "masks/masks_physical")
+    _require_rank(masks_physical, 3, name="masks/masks_physical")
+    mask_count = int(_require_dataset(h5, "masks/mask_id").shape[0])
+    if masks_physical.shape[0] != mask_count or mask_count != len(masks):
+        raise _InvalidArtifact(
+            "mask_count_mismatch",
+            "mask datasets do not match capture plan mask count",
+        )
+    for path in (
+        "masks/mask_id",
+        "masks/family_id",
+        "masks/family_params_json",
+        "masks/has_mask_array",
+    ):
+        _require_vector_length(_require_dataset(h5, path), mask_count, name=path)
+
+    wavelength_count = int(
+        _require_dataset(h5, "illumination/illumination_json").shape[0]
+    )
+    if wavelength_count != len(wavelengths):
+        raise _InvalidArtifact(
+            "wavelength_count_mismatch",
+            "illumination datasets do not match capture plan wavelength count",
+        )
+    for path in (
+        "illumination/illumination_json",
+        "illumination/tls_setpoint_nm",
+        "illumination/effective_wavelength_nm",
+    ):
+        _require_vector_length(
+            _require_dataset(h5, path), wavelength_count, name=path
+        )
+
+    capture_paths = (
+        "capture/capture_index",
+        "capture/wavelength_index",
+        "capture/mask_index",
+        "capture/burst_count",
+        "capture/completed",
+        "camera/frame_extent_json",
+    )
+    for capture_path in capture_paths:
+        _require_vector_length(
+            _require_dataset(h5, capture_path),
+            planned_count,
+            name=capture_path,
+        )
+
+    completed_dataset = _require_dataset(h5, "capture/completed")
+    if not np.issubdtype(completed_dataset.dtype, np.bool_):
+        raise _InvalidArtifact(
+            "completed_dtype_invalid",
+            "capture/completed must use boolean dtype",
+        )
+    completed = np.asarray(completed_dataset[()], dtype=bool)
+    capture_indices = np.asarray(h5["capture/capture_index"][()], dtype=np.int64)
+    wavelength_indices = np.asarray(h5["capture/wavelength_index"][()], dtype=np.int64)
+    mask_indices = np.asarray(h5["capture/mask_index"][()], dtype=np.int64)
+    for row in np.flatnonzero(completed):
+        if capture_indices[row] < 0 or capture_indices[row] >= planned_count:
+            raise _InvalidArtifact(
+                "capture_index_out_of_bounds",
+                "completed capture has an invalid capture index",
+            )
+        if wavelength_indices[row] < 0 or wavelength_indices[row] >= wavelength_count:
+            raise _InvalidArtifact(
+                "wavelength_index_out_of_bounds",
+                "completed capture has an invalid wavelength index",
+            )
+        if mask_indices[row] < 0 or mask_indices[row] >= mask_count:
+            raise _InvalidArtifact(
+                "mask_index_out_of_bounds",
+                "completed capture has an invalid mask index",
+            )
+
+    extents = _read_text_array(
+        h5["camera/frame_extent_json"],
+        name="camera/frame_extent_json",
+    )
+    frame_shape = (int(frames.shape[1]), int(frames.shape[2]))
+    for row in np.flatnonzero(completed):
+        try:
+            extent_data = json.loads(extents[int(row)])
+        except json.JSONDecodeError as exc:
+            raise _UnreadableArtifact(
+                "frame_extent_unreadable",
+                "completed capture frame extent JSON could not be parsed",
+            ) from exc
+        if not isinstance(extent_data, dict):
+            raise _InvalidArtifact(
+                "frame_extent_invalid",
+                "completed capture frame extent must be a mapping",
+            )
+        coordinate_frame = (
+            "sensor_full_frame"
+            if extent_data.get("mode") == "full_sensor"
+            else "acquired_frame"
+        )
+        try:
+            validate_coordinate_frame_extent(
+                coordinate_frame,
+                extent_data,
+                frame_shape,
+            )
+        except ValueError as exc:
+            raise _InvalidArtifact("frame_extent_invalid", str(exc)) from exc
+
+    flags = _read_hdf_json_mapping(h5, "capture/processing_flags_json")
+    if flags.get("raw_capture_schema_version") != int(
+        h5.attrs["raw_capture_schema_version"]
+    ):
+        raise _InvalidArtifact(
+            "processing_flags_mismatch",
+            "processing flags do not record the raw capture schema version",
+        )
+
+
+def _validate_raw_capture_v3(h5: h5py.File) -> None:
+    """Validate the complete current raw-capture schema v3 contract.
+
+    A capture can be incomplete, but it must still retain every v3 metadata
     surface.  The completed bitmap determines which per-capture values must be
     populated; missing schema fields are never used to represent an incomplete
     run.
@@ -2220,6 +2404,15 @@ def _same_optional_float(left: float | None, right: float | None) -> bool:
     return math.isclose(left, right, rel_tol=0.0, abs_tol=1e-9)
 
 
+def _same_wavelength(left: float, right: float) -> bool:
+    """Compare numeric wavelengths while preserving the broadband NaN sentinel."""
+    left_value = float(left)
+    right_value = float(right)
+    if math.isnan(left_value) or math.isnan(right_value):
+        return math.isnan(left_value) and math.isnan(right_value)
+    return math.isclose(left_value, right_value, rel_tol=0.0, abs_tol=1e-9)
+
+
 def _entry_wavelength_matches_illumination_identity(
     wavelength: float,
     identity: _IlluminationIdentity,
@@ -2613,7 +2806,7 @@ def _validate_component_table(
                 "component_metadata_mismatch",
                 "component mask_id does not match its source entry",
             )
-        if not math.isclose(
+        if not _same_wavelength(
             float(wavelengths[index]),
             float(entry_wavelengths_nm[int(entry_index)]),
         ):

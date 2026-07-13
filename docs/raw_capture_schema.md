@@ -1,7 +1,8 @@
 # Raw Capture HDF5 Schema
 
 Canonical schema as written by `RawCaptureWriter` (`tasks/raw_capture_h5.py`).
-Schema version: 2.
+Schema version: 3. The structural validator continues to read historical
+schema version 2 through its original compatibility contract.
 
 ## Deleted fields (do not reintroduce)
 
@@ -20,7 +21,8 @@ Schema version: 2.
 | `plan_id` | string | Capture plan identifier |
 | `created_at_ns` | int64 | Writer creation timestamp (monotonic ns) |
 | `software_version` | string | `"optic_system"` |
-| `raw_capture_schema_version` | int | Schema version (currently 2) |
+| `artifact_type` | string | `"raw_capture"` (required in schema v3) |
+| `raw_capture_schema_version` | int | Schema version (currently 3) |
 | `capture_role` | string | One of `minimal_capture`, `profile_capture`, `psf_capture`, `survey_capture` |
 | `hdf5_writer_version` | string | Writer version (`"1.0"`) |
 
@@ -125,3 +127,9 @@ Schema version: 2.
 | `runtime_mode` | scalar | string | Runtime mode (`hardware`, `no_hardware`, etc.) |
 | `runtime_policy_json` | scalar | string | Full runtime policy as JSON |
 | `processing_flags_json` | scalar | string | Processing flags (scientific validity, training readiness) |
+
+Schema v3 processing flags also record `n_captures_written` and
+`n_captures_total`, which must agree with the capture bitmap and planned frame
+rows. These fields, the root `artifact_type`, and complete initialized mask/LCD
+metadata are v3 requirements; they are not retroactively imposed on schema v2
+files.

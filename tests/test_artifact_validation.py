@@ -275,6 +275,29 @@ def _write_raw_capture(path: Path) -> None:
         )
 
 
+def _write_historical_v2_raw_capture(path: Path) -> None:
+    """Create a pre-v3 writer fixture without fabricating a new v2 contract."""
+    _write_raw_capture(path)
+    with h5py.File(path, "r+") as h5:
+        h5.attrs["raw_capture_schema_version"] = 2
+        del h5.attrs["artifact_type"]
+        flags_value = h5["capture/processing_flags_json"][()]
+        flags_text = flags_value.decode("utf-8") if isinstance(flags_value, bytes) else str(flags_value)
+        flags = json.loads(flags_text)
+        flags["raw_capture_schema_version"] = 2
+        del flags["n_captures_written"]
+        del flags["n_captures_total"]
+        h5["capture/processing_flags_json"][()] = json.dumps(flags, sort_keys=True)
+
+        # These metadata fields were initialized later by the v2 writer and
+        # therefore cannot be required by its compatibility validator.
+        h5["masks/mask_id"][0] = ""
+        h5["masks/family_id"][0] = ""
+        h5["masks/family_params_json"][0] = ""
+        h5["lcd/mapping_policy_json"][0] = ""
+        h5["lcd/metadata_json"][0] = ""
+
+
 def _write_survey_h5(path: Path) -> FullFramePSFSurveyManifest:
     manifest = _survey_manifest()
     with h5py.File(path, "w") as h5:
@@ -622,7 +645,7 @@ def test_raw_capture_validator_rejects_invalid_completed_index(tmp_path: Path) -
     assert result.reason_codes == ("mask_index_out_of_bounds",)
 
 
-def test_raw_capture_validator_requires_complete_v2_schema_contract(tmp_path: Path) -> None:
+def test_raw_capture_validator_requires_complete_v3_schema_contract(tmp_path: Path) -> None:
     path = tmp_path / "raw_capture.h5"
     _write_raw_capture(path)
     with h5py.File(path, "r+") as h5:
@@ -634,7 +657,7 @@ def test_raw_capture_validator_requires_complete_v2_schema_contract(tmp_path: Pa
     assert result.reason_codes == ("missing_required_path",)
 
 
-def test_raw_capture_validator_requires_current_root_artifact_type(tmp_path: Path) -> None:
+def test_raw_capture_validator_requires_v3_root_artifact_type(tmp_path: Path) -> None:
     path = tmp_path / "raw_capture.h5"
     _write_raw_capture(path)
     with h5py.File(path, "r+") as h5:
@@ -644,6 +667,16 @@ def test_raw_capture_validator_requires_current_root_artifact_type(tmp_path: Pat
 
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == ("artifact_type_missing",)
+
+
+def test_raw_capture_validator_accepts_historical_v2_contract(tmp_path: Path) -> None:
+    path = tmp_path / "historical_v2_raw_capture.h5"
+    _write_historical_v2_raw_capture(path)
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert result.schema_version == 2
 
 
 def test_raw_capture_validator_accepts_incomplete_capture_with_complete_schema(

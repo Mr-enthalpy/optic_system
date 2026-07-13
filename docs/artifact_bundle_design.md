@@ -57,7 +57,11 @@ validation repeats containment after resolving the candidate path under the
 generation directory.
 
 `validate_bundle()` verifies payload presence, regular-file status, byte count,
-and streaming SHA-256. When the explicit `data` payload role is present, it
+and streaming SHA-256. It also verifies the primary payload's declared media
+type against actual JSON or HDF5 bytes without using a filename suffix:
+JSON-primary artifacts must declare `application/json`, HDF5-primary artifacts
+must declare `application/x-hdf5`, and `manifest_sidecar` must declare
+`application/json`. When the explicit `data` payload role is present, it
 dispatches to `check_validity(bundle.artifact_type, data_path)` and requires the
 payload schema version to agree with the bundle. It does not infer an artifact
 type from a filename or media type. A bundle with inventory but without an
@@ -109,11 +113,15 @@ that it is corrupt. JSON manifest validation checks only the JSON contract;
 HDF5 validation checks embedded manifests plus the HDF5 datasets/metadata that
 belong to that artifact type.
 
-Current `raw_capture` schema v2 validation requires its root identity
+Current `raw_capture` schema v3 validation requires its root identity
 attributes and all fixed raw, masks, illumination, TLS, camera, LCD, profiles,
-and capture metadata surfaces. An incomplete acquisition is represented by the
-`capture/completed` bitmap and matching processing flags, not by omitting v2
-datasets. Broadband pass-through remains a valid illumination identity:
+and capture metadata surfaces, including finalized written/planned capture
+counts. An incomplete acquisition is represented by the `capture/completed`
+bitmap and matching processing flags, not by omitting v3 datasets. Historical
+schema v2 remains structurally readable through its original narrower contract:
+it does not require the later root `artifact_type`, finalized capture-count
+flags, or fully initialized mask/LCD metadata. Broadband pass-through remains a
+valid illumination identity:
 `effective_wavelength_nm = null`, `tls_setpoint_nm = 0`, and no wavelength
 label; downstream survey/dictionary metadata uses the documented `NaN`
 sentinel only where a numeric wavelength array is required.

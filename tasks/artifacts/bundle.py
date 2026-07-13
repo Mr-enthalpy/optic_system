@@ -18,6 +18,8 @@ from pathlib import Path, PureWindowsPath
 from types import MappingProxyType
 from typing import Any
 
+import h5py
+
 from tasks.artifact_versioning import SchemaCompatibilityError, read_schema_version
 
 from .validation import (
@@ -30,6 +32,8 @@ from .validation import (
 
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HASH_CHUNK_BYTES = 1024 * 1024
+_JSON_MEDIA_TYPE = "application/json"
+_HDF5_MEDIA_TYPE = "application/x-hdf5"
 
 
 class ArtifactBundleError(ValueError):
@@ -349,6 +353,18 @@ def validate_bundle(
             )
         resolved_payloads[name] = candidate
 
+    manifest_sidecar = resolved_payloads.get("manifest_sidecar")
+    if manifest_sidecar is not None:
+        sidecar_media_result = _validate_declared_payload_media_type(
+            bundle,
+            payload_name="manifest_sidecar",
+            payload=bundle.payloads["manifest_sidecar"],
+            path=manifest_sidecar,
+            required_media_type=_JSON_MEDIA_TYPE,
+        )
+        if sidecar_media_result is not None:
+            return sidecar_media_result
+
     if not isinstance(primary_payload_name, str) or not primary_payload_name.strip():
         return _bundle_result(
             artifact_type,
@@ -366,6 +382,14 @@ def validate_bundle(
             "primary_payload_not_declared",
             "bundle does not declare a primary payload for artifact validation",
         )
+    primary_media_result = _validate_declared_payload_media_type(
+        bundle,
+        payload_name=primary_payload_name,
+        payload=bundle.payloads[primary_payload_name],
+        path=primary,
+    )
+    if primary_media_result is not None:
+        return primary_media_result
     payload_result = check_validity(artifact_type, primary)
     if payload_result.schema_version != bundle.schema_version:
         if payload_result.ok:
@@ -380,7 +404,6 @@ def validate_bundle(
     if not payload_result.ok:
         return payload_result
 
-    manifest_sidecar = resolved_payloads.get("manifest_sidecar")
     if manifest_sidecar is not None:
         sidecar_result = _validate_manifest_sidecar_consistency(
             bundle,
@@ -390,6 +413,62 @@ def validate_bundle(
         if sidecar_result is not None:
             return sidecar_result
     return payload_result
+
+
+def _validate_declared_payload_media_type(
+    bundle: ArtifactBundleManifest,
+    *,
+    payload_name: str,
+    payload: ArtifactPayload,
+    path: Path,
+    required_media_type: str | None = None,
+) -> ValidityResult | None:
+    """Verify a declared canonical media type against payload bytes.
+
+    This uses the HDF5 signature and strict UTF-8 JSON parsing, never a filename
+    suffix. Media type remains inventory metadata only; artifact validation still
+    dispatches solely from ``bundle.artifact_type``.
+    """
+    if required_media_type is not None and payload.media_type != required_media_type:
+        return _bundle_result(
+            bundle.artifact_type,
+            ValidityOutcome.INVALID,
+            bundle.schema_version,
+            "payload_media_type_mismatch",
+            f"payload {payload_name!r} must declare {required_media_type}",
+        )
+    actual_media_type = _detect_payload_media_type(path)
+    if actual_media_type is None:
+        return _bundle_result(
+            bundle.artifact_type,
+            ValidityOutcome.UNREADABLE,
+            bundle.schema_version,
+            "payload_representation_unreadable",
+            f"payload {payload_name!r} is neither readable JSON nor HDF5",
+        )
+    if payload.media_type != actual_media_type:
+        return _bundle_result(
+            bundle.artifact_type,
+            ValidityOutcome.INVALID,
+            bundle.schema_version,
+            "payload_media_type_mismatch",
+            f"payload {payload_name!r} media_type does not match its representation",
+        )
+    return None
+
+
+def _detect_payload_media_type(path: Path) -> str | None:
+    """Return the canonical representation media type without using a filename."""
+    try:
+        if h5py.is_hdf5(path):
+            return _HDF5_MEDIA_TYPE
+    except OSError:
+        return None
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return _JSON_MEDIA_TYPE
 
 
 def _validate_manifest_sidecar_consistency(

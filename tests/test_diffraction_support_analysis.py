@@ -50,6 +50,48 @@ def _write_synthetic_survey(path: Path) -> None:
         )
 
 
+def _write_broadband_synthetic_survey(path: Path) -> None:
+    frame = np.full((64, 64), 0.02, dtype=np.float64)
+    frame[20:24, 20:24] += 4.0
+    illumination = json.dumps(
+        {
+            "mode": "broadband_passthrough",
+            "effective_wavelength_nm": None,
+            "tls_setpoint_nm": 0.0,
+            "wavelength_label_nm": None,
+        },
+        sort_keys=True,
+    )
+    with h5py.File(str(path), "w") as f:
+        string_dtype = h5py.string_dtype(encoding="utf-8")
+        g = f.require_group("full_frame_survey")
+        g.create_dataset("frames_avg", data=np.stack([frame, frame]))
+        g.create_dataset(
+            "entry_wavelength_nm",
+            data=np.asarray([float("nan"), float("nan")], dtype=np.float64),
+        )
+        g.create_dataset(
+            "entry_mask_ids",
+            data=np.asarray(["mask_a", "mask_b"], dtype=object),
+            dtype=string_dtype,
+        )
+        g.create_dataset(
+            "entry_illumination_json",
+            data=np.asarray([illumination, illumination], dtype=object),
+            dtype=string_dtype,
+        )
+        g.create_dataset(
+            "camera_frame_extent_json",
+            data=json.dumps({
+                "mode": "full_sensor",
+                "origin_xy": [0, 0],
+                "shape_hw": [64, 64],
+                "sensor_shape_hw": [64, 64],
+            }),
+            dtype=string_dtype,
+        )
+
+
 def _write_raw_frames_h5(path: Path) -> None:
     frame = np.full((16, 16), 0.02, dtype=np.float64)
     frame[4:6, 4:6] += 3.0
@@ -176,6 +218,33 @@ def test_component_table_detects_far_field_significant_component(tmp_path: Path)
     assert np.max(energies) >= 12.0
     assert np.any(far)
     assert centroids.shape[1] == 2
+
+
+def test_broadband_survey_component_table_validates_nan_wavelengths(
+    tmp_path: Path,
+) -> None:
+    survey_h5 = tmp_path / "broadband_survey.h5"
+    report_h5 = tmp_path / "broadband_support.h5"
+    _write_broadband_synthetic_survey(survey_h5)
+
+    manifest = analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[100],
+        far_field_radius=20,
+        min_component_area=2,
+    )
+
+    assert len(manifest.entry_wavelengths_nm) == 2
+    assert all(np.isnan(value) for value in manifest.entry_wavelengths_nm)
+    with h5py.File(str(report_h5), "r") as f:
+        assert f["components/entry_index"].shape[0] > 0
+        assert np.isnan(f["components/wavelength_nm"][()]).all()
+    assert (
+        check_validity("peak_support_analysis_report", report_h5).outcome
+        is ValidityOutcome.VALID
+    )
 
 
 def test_manifest_round_trips_and_p99_is_visualization_only(tmp_path: Path) -> None:

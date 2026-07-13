@@ -46,6 +46,14 @@ def test_newer_schema_version_rejected():
         read_schema_version({"schema_version": current + 1}, "camera_profile")
 
 
+def test_raw_capture_schema_v3_keeps_v2_read_compatibility():
+    compat = schema_compat("raw_capture")
+
+    assert compat.current == 3
+    assert compat.min_readable == 2
+    assert read_schema_version({"schema_version": 2}, "raw_capture") == 2
+
+
 def test_unknown_artifact_type_rejected():
     with pytest.raises(SchemaCompatibilityError, match="unknown"):
         schema_compat("nope")

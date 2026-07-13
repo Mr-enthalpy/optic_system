@@ -17,7 +17,10 @@ from .artifacts.coordinate_frame import (
 from .capture_plan import CapturePlan
 
 
-RAW_CAPTURE_SCHEMA_VERSION = 2
+# Schema v3 makes the writer-emitted root identity and finalized capture-count
+# flags mandatory. The structural validator retains a separate v2 contract for
+# raw captures written before those fields were part of the schema.
+RAW_CAPTURE_SCHEMA_VERSION = 3
 SOFTWARE_NAME = "optic_system"
 DEFAULT_CAPTURE_ROLE = "minimal_capture"
 
