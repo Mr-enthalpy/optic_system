@@ -220,6 +220,11 @@ def _validate_json_artifact(
 def _read_json_file(path: Path) -> dict[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
+    except UnicodeError as exc:
+        raise _UnreadableArtifact(
+            "json_unreadable",
+            "artifact JSON is not valid UTF-8",
+        ) from exc
     except OSError as exc:
         raise _UnreadableArtifact("location_unreadable", "artifact location could not be read") from exc
     try:
@@ -913,7 +918,7 @@ def _validate_raw_capture(path: Path) -> ValidityResult:
     artifact_type = "raw_capture"
     try:
         with h5py.File(path, "r") as h5:
-            _validate_root_artifact_type(h5, artifact_type, required=False)
+            _validate_root_artifact_type(h5, artifact_type, required=True)
             schema_version, outcome = _read_hdf_schema_version(
                 h5,
                 attribute="raw_capture_schema_version",
@@ -1234,6 +1239,24 @@ def _read_int_pair_dataset(dataset: h5py.Dataset, *, name: str) -> tuple[int, in
 
 
 def _validate_raw_capture_h5(h5: h5py.File) -> None:
+    """Validate the complete current raw-capture schema v2 contract.
+
+    A capture can be incomplete, but it must still retain every v2 metadata
+    surface.  The completed bitmap determines which per-capture values must be
+    populated; missing schema fields are never used to represent an incomplete
+    run.
+    """
+    root_plan_id = _require_hdf_attribute_text(h5, "plan_id")
+    _require_hdf_attribute_integer(h5, "created_at_ns", minimum=0)
+    _require_hdf_attribute_text(h5, "software_version")
+    root_schema_version = _require_hdf_attribute_integer(
+        h5,
+        "raw_capture_schema_version",
+        minimum=1,
+    )
+    root_capture_role = _require_hdf_attribute_text(h5, "capture_role")
+    _require_hdf_attribute_text(h5, "hdf5_writer_version")
+
     required_paths = (
         "raw/frames_avg",
         "masks/masks_physical",
@@ -1244,47 +1267,114 @@ def _validate_raw_capture_h5(h5: h5py.File) -> None:
         "illumination/illumination_json",
         "illumination/tls_setpoint_nm",
         "illumination/effective_wavelength_nm",
+        "tls/grating",
+        "tls/settle_ms",
+        "tls/timestamp_ns",
+        "tls/status_json",
+        "camera/requested_exposure_us",
+        "camera/requested_gain_db",
+        "camera/readback_exposure_us",
+        "camera/readback_gain_db",
         "camera/frame_extent_json",
+        "camera/timestamp_ns",
+        "camera/status_json",
+        "lcd/settle_ms",
+        "lcd/display_timestamp_ns",
+        "lcd/mapping_policy_json",
+        "lcd/metadata_json",
+        "profiles/requirements_json",
+        "profiles/pupil_profile_id",
+        "profiles/camera_profile_id",
         "capture/capture_index",
         "capture/wavelength_index",
         "capture/mask_index",
         "capture/burst_count",
         "capture/completed",
         "capture/plan_json",
+        "capture/plan_id",
+        "capture/runtime_mode",
+        "capture/runtime_policy_json",
         "capture/processing_flags_json",
     )
     for required in required_paths:
         _require_dataset(h5, required)
 
+    plan = _read_hdf_json_mapping(h5, "capture/plan_json")
+    (
+        plan_id,
+        plan_mask_ids,
+        plan_illuminations,
+        plan_frames_per_capture,
+        plan_store_burst,
+    ) = _raw_capture_plan_contract(plan)
+    capture_plan_id = _read_hdf_scalar_text(h5, "capture/plan_id")
+    if root_plan_id != plan_id or capture_plan_id != plan_id:
+        raise _InvalidArtifact(
+            "plan_id_mismatch",
+            "root plan_id, capture/plan_id, and capture/plan_json must agree",
+        )
+
     frames = _require_dataset(h5, "raw/frames_avg")
     _require_rank(frames, 3, name="raw/frames_avg")
+    if not np.issubdtype(frames.dtype, np.number):
+        raise _InvalidArtifact(
+            "frame_dtype_invalid",
+            "raw/frames_avg must use a numeric dtype",
+        )
     if frames.shape[1] <= 0 or frames.shape[2] <= 0:
         raise _InvalidArtifact(
             "frame_shape_invalid",
             "raw/frames_avg spatial dimensions must be positive",
         )
     planned_count = int(frames.shape[0])
-
-    plan = _read_hdf_json_mapping(h5, "capture/plan_json")
-    wavelengths = plan.get("wavelengths")
-    masks = plan.get("masks")
-    if not isinstance(wavelengths, list) or not isinstance(masks, list):
-        raise _InvalidArtifact("plan_invalid", "capture plan lacks masks or wavelengths")
-    if planned_count != len(wavelengths) * len(masks):
+    if planned_count != len(plan_illuminations) * len(plan_mask_ids):
         raise _InvalidArtifact(
             "planned_capture_count_mismatch",
             "capture datasets do not match planned capture count",
         )
-    if not wavelengths or not masks:
+
+    raw_group = h5.get("raw")
+    if not isinstance(raw_group, h5py.Group):
+        raise _InvalidArtifact("missing_required_path", "raw group is missing")
+    raw_store_burst = _require_hdf_attribute_bool(raw_group, "store_burst")
+    raw_frames_per_capture = _require_hdf_attribute_integer(
+        raw_group,
+        "frames_per_capture",
+        minimum=1,
+    )
+    if raw_store_burst != plan_store_burst or raw_frames_per_capture != plan_frames_per_capture:
         raise _InvalidArtifact(
-            "plan_invalid",
-            "capture plan masks and wavelengths must be non-empty",
+            "raw_plan_metadata_mismatch",
+            "raw storage metadata does not match capture/plan_json",
+        )
+    _read_hdf_attribute_json_mapping(raw_group, "storage_policy_json")
+    for attribute in (
+        "average_compute_dtype",
+        "frames_avg_stored_dtype",
+        "burst_stored_dtype",
+    ):
+        _require_hdf_attribute_text(raw_group, attribute)
+    if raw_store_burst:
+        burst_frames = _require_dataset(h5, "raw/frames")
+        _validate_raw_burst_frames(
+            burst_frames,
+            planned_count=planned_count,
+            frames_per_capture=raw_frames_per_capture,
+            frame_shape=(int(frames.shape[1]), int(frames.shape[2])),
+        )
+    elif "raw/frames" in h5:
+        burst_frames = _require_dataset(h5, "raw/frames")
+        _validate_raw_burst_frames(
+            burst_frames,
+            planned_count=planned_count,
+            frames_per_capture=raw_frames_per_capture,
+            frame_shape=(int(frames.shape[1]), int(frames.shape[2])),
         )
 
     masks_physical = _require_dataset(h5, "masks/masks_physical")
     _require_rank(masks_physical, 3, name="masks/masks_physical")
     mask_count = int(_require_dataset(h5, "masks/mask_id").shape[0])
-    if masks_physical.shape[0] != mask_count or mask_count != len(masks):
+    if masks_physical.shape[0] != mask_count or mask_count != len(plan_mask_ids):
         raise _InvalidArtifact(
             "mask_count_mismatch",
             "mask datasets do not match capture plan mask count",
@@ -1296,11 +1386,34 @@ def _validate_raw_capture_h5(h5: h5py.File) -> None:
         "masks/has_mask_array",
     ):
         _require_vector_length(_require_dataset(h5, path), mask_count, name=path)
+    mask_ids = _read_text_array(_require_dataset(h5, "masks/mask_id"), name="masks/mask_id")
+    if mask_ids != plan_mask_ids:
+        raise _InvalidArtifact(
+            "mask_metadata_mismatch",
+            "masks/mask_id does not match capture/plan_json",
+        )
+    for value in _read_text_array(
+        _require_dataset(h5, "masks/family_params_json"),
+        name="masks/family_params_json",
+    ):
+        _read_json_mapping_text(
+            value,
+            unreadable_code="mask_metadata_unreadable",
+            invalid_code="mask_metadata_invalid",
+            context="masks/family_params_json",
+        )
+    has_mask_array_dataset = _require_dataset(h5, "masks/has_mask_array")
+    if not np.issubdtype(has_mask_array_dataset.dtype, np.bool_):
+        raise _InvalidArtifact(
+            "mask_metadata_dtype_invalid",
+            "masks/has_mask_array must use boolean dtype",
+        )
+    has_mask_array = np.asarray(has_mask_array_dataset[()], dtype=bool)
 
     wavelength_count = int(
         _require_dataset(h5, "illumination/illumination_json").shape[0]
     )
-    if wavelength_count != len(wavelengths):
+    if wavelength_count != len(plan_illuminations):
         raise _InvalidArtifact(
             "wavelength_count_mismatch",
             "illumination datasets do not match capture plan wavelength count",
@@ -1313,6 +1426,26 @@ def _validate_raw_capture_h5(h5: h5py.File) -> None:
         _require_vector_length(
             _require_dataset(h5, path), wavelength_count, name=path
         )
+    illumination_json = _read_text_array(
+        _require_dataset(h5, "illumination/illumination_json"),
+        name="illumination/illumination_json",
+    )
+    tls_setpoints = _read_numeric_vector(
+        h5,
+        "illumination/tls_setpoint_nm",
+        length=wavelength_count,
+    )
+    effective_wavelengths = _read_numeric_vector(
+        h5,
+        "illumination/effective_wavelength_nm",
+        length=wavelength_count,
+    )
+    for path in ("tls/grating", "tls/settle_ms", "tls/timestamp_ns"):
+        _read_integer_vector(h5, path, length=wavelength_count)
+    tls_statuses = _read_text_array(
+        _require_dataset(h5, "tls/status_json"),
+        name="tls/status_json",
+    )
 
     capture_paths = (
         "capture/capture_index",
@@ -1321,6 +1454,14 @@ def _validate_raw_capture_h5(h5: h5py.File) -> None:
         "capture/burst_count",
         "capture/completed",
         "camera/frame_extent_json",
+        "camera/requested_exposure_us",
+        "camera/requested_gain_db",
+        "camera/readback_exposure_us",
+        "camera/readback_gain_db",
+        "camera/timestamp_ns",
+        "camera/status_json",
+        "lcd/settle_ms",
+        "lcd/display_timestamp_ns",
     )
     for capture_path in capture_paths:
         _require_vector_length(
@@ -1339,9 +1480,44 @@ def _validate_raw_capture_h5(h5: h5py.File) -> None:
         completed_dataset[()],
         dtype=bool,
     )
-    capture_indices = np.asarray(h5["capture/capture_index"][()], dtype=np.int64)
-    wavelength_indices = np.asarray(h5["capture/wavelength_index"][()], dtype=np.int64)
-    mask_indices = np.asarray(h5["capture/mask_index"][()], dtype=np.int64)
+    capture_indices = _read_integer_vector(
+        h5,
+        "capture/capture_index",
+        length=planned_count,
+    )
+    wavelength_indices = _read_integer_vector(
+        h5,
+        "capture/wavelength_index",
+        length=planned_count,
+    )
+    mask_indices = _read_integer_vector(
+        h5,
+        "capture/mask_index",
+        length=planned_count,
+    )
+    burst_counts = _read_integer_vector(
+        h5,
+        "capture/burst_count",
+        length=planned_count,
+    )
+    camera_statuses = _read_text_array(
+        _require_dataset(h5, "camera/status_json"),
+        name="camera/status_json",
+    )
+    _read_numeric_vector(h5, "camera/requested_exposure_us", length=planned_count)
+    _read_numeric_vector(h5, "camera/requested_gain_db", length=planned_count)
+    _read_numeric_vector(h5, "camera/readback_exposure_us", length=planned_count)
+    _read_numeric_vector(h5, "camera/readback_gain_db", length=planned_count)
+    _read_integer_vector(h5, "camera/timestamp_ns", length=planned_count)
+    _read_integer_vector(h5, "lcd/settle_ms", length=planned_count)
+    _read_integer_vector(h5, "lcd/display_timestamp_ns", length=planned_count)
+    _read_single_hdf_json_mapping(h5, "lcd/mapping_policy_json")
+    _read_single_hdf_json_mapping(h5, "lcd/metadata_json")
+    requirements = _read_hdf_json_mapping(h5, "profiles/requirements_json")
+    _validate_profile_requirement_ids(h5, requirements)
+    _read_hdf_scalar_text(h5, "capture/runtime_mode", allow_empty=True)
+    _read_hdf_json_mapping(h5, "capture/runtime_policy_json")
+
     for row in np.flatnonzero(completed):
         if capture_indices[row] < 0 or capture_indices[row] >= planned_count:
             raise _InvalidArtifact(
@@ -1358,22 +1534,27 @@ def _validate_raw_capture_h5(h5: h5py.File) -> None:
                 "mask_index_out_of_bounds",
                 "completed capture has an invalid mask index",
             )
+        if not has_mask_array[int(mask_indices[row])]:
+            raise _InvalidArtifact(
+                "mask_payload_missing",
+                "completed capture references a mask without a stored physical mask array",
+            )
+        if burst_counts[row] != raw_frames_per_capture:
+            raise _InvalidArtifact(
+                "burst_count_mismatch",
+                "completed capture burst_count does not match raw frames_per_capture",
+            )
 
     extents = _read_text_array(h5["camera/frame_extent_json"], name="camera/frame_extent_json")
     frame_shape = (int(frames.shape[1]), int(frames.shape[2]))
     for row in np.flatnonzero(completed):
-        try:
-            extent_data = json.loads(extents[int(row)])
-        except json.JSONDecodeError as exc:
-            raise _UnreadableArtifact(
-                "frame_extent_unreadable",
-                "completed capture frame extent JSON could not be parsed",
-            ) from exc
-        if not isinstance(extent_data, dict):
-            raise _InvalidArtifact(
-                "frame_extent_invalid",
-                "completed capture frame extent must be a mapping",
-            )
+        row_index = int(row)
+        extent_data = _read_json_mapping_text(
+            extents[row_index],
+            unreadable_code="frame_extent_unreadable",
+            invalid_code="frame_extent_invalid",
+            context="completed capture frame extent",
+        )
         coordinate_frame = (
             "sensor_full_frame"
             if extent_data.get("mode") == "full_sensor"
@@ -1387,16 +1568,469 @@ def _validate_raw_capture_h5(h5: h5py.File) -> None:
             )
         except ValueError as exc:
             raise _InvalidArtifact("frame_extent_invalid", str(exc)) from exc
+        _read_json_mapping_text(
+            camera_statuses[row_index],
+            unreadable_code="camera_status_unreadable",
+            invalid_code="camera_status_invalid",
+            context="completed capture camera status",
+        )
+        wavelength_index = int(wavelength_indices[row_index])
+        illumination = _illumination_identity_from_json_text(
+            illumination_json[wavelength_index],
+            context=f"illumination/illumination_json[{wavelength_index}]",
+            code="illumination_metadata_invalid",
+        )
+        if not _illumination_identity_equal(
+            illumination,
+            plan_illuminations[wavelength_index],
+        ):
+            raise _InvalidArtifact(
+                "illumination_metadata_mismatch",
+                "illumination metadata does not match capture/plan_json",
+            )
+        _validate_hdf_illumination_numeric_metadata(
+            tls_setpoint=float(tls_setpoints[wavelength_index]),
+            effective_wavelength=float(effective_wavelengths[wavelength_index]),
+            identity=illumination,
+        )
+        _read_json_mapping_text(
+            tls_statuses[wavelength_index],
+            unreadable_code="tls_status_unreadable",
+            invalid_code="tls_status_invalid",
+            context="active illumination TLS status",
+        )
 
     flags = _read_hdf_json_mapping(h5, "capture/processing_flags_json")
-    if flags.get("raw_capture_schema_version") != int(h5.attrs["raw_capture_schema_version"]):
+    _validate_raw_processing_flags(
+        flags,
+        schema_version=root_schema_version,
+        capture_role=root_capture_role,
+        completed=completed,
+        planned_count=planned_count,
+    )
+
+
+def _validate_raw_burst_frames(
+    dataset: h5py.Dataset,
+    *,
+    planned_count: int,
+    frames_per_capture: int,
+    frame_shape: tuple[int, int],
+) -> None:
+    _require_rank(dataset, 4, name="raw/frames")
+    if not np.issubdtype(dataset.dtype, np.number):
+        raise _InvalidArtifact(
+            "frame_dtype_invalid",
+            "raw/frames must use a numeric dtype",
+        )
+    if (
+        dataset.shape[0] != planned_count
+        or dataset.shape[1] != frames_per_capture
+        or tuple(int(value) for value in dataset.shape[2:]) != frame_shape
+    ):
+        raise _InvalidArtifact(
+            "burst_frame_shape_mismatch",
+            "raw/frames must match planned capture count, burst count, and averaged frame shape",
+        )
+
+
+def _require_hdf_attribute_text(
+    container: h5py.File | h5py.Group,
+    name: str,
+) -> str:
+    if name not in container.attrs:
+        raise _InvalidArtifact(
+            "missing_required_attribute",
+            f"required HDF5 attribute {name!r} is missing",
+        )
+    value = container.attrs[name]
+    if not isinstance(value, (str, bytes, np.bytes_)):
+        raise _InvalidArtifact(
+            "attribute_type_invalid",
+            f"HDF5 attribute {name!r} must be a non-empty string",
+        )
+    try:
+        text = decode_h5_string(value).strip()
+    except Exception as exc:  # noqa: BLE001 - decoding failures are unreadable payloads.
+        raise _UnreadableArtifact(
+            "attribute_unreadable",
+            f"HDF5 attribute {name!r} could not be decoded",
+        ) from exc
+    if not text:
+        raise _InvalidArtifact(
+            "attribute_value_invalid",
+            f"HDF5 attribute {name!r} must be non-empty",
+        )
+    return text
+
+
+def _require_hdf_attribute_integer(
+    container: h5py.File | h5py.Group,
+    name: str,
+    *,
+    minimum: int | None = None,
+) -> int:
+    if name not in container.attrs:
+        raise _InvalidArtifact(
+            "missing_required_attribute",
+            f"required HDF5 attribute {name!r} is missing",
+        )
+    value = container.attrs[name]
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value,
+        (Integral, np.integer),
+    ):
+        raise _InvalidArtifact(
+            "attribute_type_invalid",
+            f"HDF5 attribute {name!r} must be an integer",
+        )
+    integer = int(value)
+    if minimum is not None and integer < minimum:
+        raise _InvalidArtifact(
+            "attribute_value_invalid",
+            f"HDF5 attribute {name!r} is below its required minimum",
+        )
+    return integer
+
+
+def _require_hdf_attribute_bool(
+    container: h5py.File | h5py.Group,
+    name: str,
+) -> bool:
+    if name not in container.attrs:
+        raise _InvalidArtifact(
+            "missing_required_attribute",
+            f"required HDF5 attribute {name!r} is missing",
+        )
+    value = container.attrs[name]
+    if not isinstance(value, (bool, np.bool_)):
+        raise _InvalidArtifact(
+            "attribute_type_invalid",
+            f"HDF5 attribute {name!r} must be boolean",
+        )
+    return bool(value)
+
+
+def _read_hdf_attribute_json_mapping(
+    container: h5py.File | h5py.Group,
+    name: str,
+) -> dict[str, Any]:
+    text = _require_hdf_attribute_text(container, name)
+    return _read_json_mapping_text(
+        text,
+        unreadable_code="metadata_unreadable",
+        invalid_code="metadata_invalid",
+        context=f"HDF5 attribute {name!r}",
+    )
+
+
+def _read_hdf_scalar_text(
+    h5: h5py.File,
+    path: str,
+    *,
+    allow_empty: bool = False,
+) -> str:
+    dataset = _require_dataset(h5, path)
+    if dataset.ndim != 0:
+        raise _InvalidArtifact(
+            "dataset_rank_mismatch",
+            f"{path} must be a scalar text dataset",
+        )
+    text = _read_hdf_text(dataset).strip()
+    if not allow_empty and not text:
+        raise _InvalidArtifact(
+            "metadata_value_invalid",
+            f"{path} must be non-empty",
+        )
+    return text
+
+
+def _read_single_hdf_json_mapping(h5: h5py.File, path: str) -> dict[str, Any]:
+    dataset = _require_dataset(h5, path)
+    _require_vector_length(dataset, 1, name=path)
+    value = _read_text_array(dataset, name=path)[0]
+    return _read_json_mapping_text(
+        value,
+        unreadable_code="metadata_unreadable",
+        invalid_code="metadata_invalid",
+        context=path,
+    )
+
+
+def _read_json_mapping_text(
+    text: str,
+    *,
+    unreadable_code: str,
+    invalid_code: str,
+    context: str,
+) -> dict[str, Any]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise _UnreadableArtifact(
+            unreadable_code,
+            f"{context} could not be parsed as JSON",
+        ) from exc
+    if not isinstance(data, dict):
+        raise _InvalidArtifact(invalid_code, f"{context} JSON root must be a mapping")
+    return data
+
+
+def _read_numeric_vector(
+    h5: h5py.File,
+    path: str,
+    *,
+    length: int,
+) -> np.ndarray:
+    dataset = _require_dataset(h5, path)
+    _require_vector_length(dataset, length, name=path)
+    if not np.issubdtype(dataset.dtype, np.number):
+        raise _InvalidArtifact(
+            "metadata_dtype_invalid",
+            f"{path} must use a numeric dtype",
+        )
+    return np.asarray(dataset[()], dtype=np.float64)
+
+
+def _read_integer_vector(
+    h5: h5py.File,
+    path: str,
+    *,
+    length: int,
+) -> np.ndarray:
+    dataset = _require_dataset(h5, path)
+    _require_vector_length(dataset, length, name=path)
+    if not np.issubdtype(dataset.dtype, np.integer):
+        raise _InvalidArtifact(
+            "metadata_dtype_invalid",
+            f"{path} must use an integer dtype",
+        )
+    return np.asarray(dataset[()], dtype=np.int64)
+
+
+def _raw_capture_plan_contract(
+    plan: Mapping[str, Any],
+) -> tuple[str, list[str], list[_IlluminationIdentity], int, bool]:
+    """Validate the current writer's serialized capture-plan fields."""
+    plan_id = plan.get("plan_id")
+    if not isinstance(plan_id, str) or not plan_id.strip():
+        raise _InvalidArtifact("plan_invalid", "capture plan plan_id must be non-empty")
+    masks = plan.get("masks")
+    wavelengths = plan.get("wavelengths")
+    if not isinstance(masks, list) or not masks:
+        raise _InvalidArtifact("plan_invalid", "capture plan masks must be a non-empty array")
+    if not isinstance(wavelengths, list) or not wavelengths:
+        raise _InvalidArtifact(
+            "plan_invalid",
+            "capture plan wavelengths must be a non-empty array",
+        )
+    mask_ids: list[str] = []
+    for index, entry in enumerate(masks):
+        if not isinstance(entry, Mapping):
+            raise _InvalidArtifact("plan_invalid", "capture plan mask entries must be mappings")
+        mask_id = entry.get("mask_id")
+        if not isinstance(mask_id, str) or not mask_id.strip():
+            raise _InvalidArtifact(
+                "plan_invalid",
+                f"capture plan masks[{index}].mask_id must be non-empty",
+            )
+        mask_ids.append(mask_id)
+    illuminations: list[_IlluminationIdentity] = []
+    for index, entry in enumerate(wavelengths):
+        if not isinstance(entry, Mapping):
+            raise _InvalidArtifact(
+                "plan_invalid",
+                "capture plan wavelength entries must be mappings",
+            )
+        illumination = entry.get("illumination")
+        illuminations.append(
+            _illumination_identity_from_mapping(
+                illumination,
+                context=f"capture plan wavelengths[{index}].illumination",
+                code="plan_invalid",
+            )
+        )
+    camera = plan.get("camera")
+    if not isinstance(camera, Mapping):
+        raise _InvalidArtifact("plan_invalid", "capture plan camera must be a mapping")
+    frames_per_capture = camera.get("frames_per_capture")
+    if isinstance(frames_per_capture, bool) or not isinstance(frames_per_capture, int):
+        raise _InvalidArtifact(
+            "plan_invalid",
+            "capture plan camera.frames_per_capture must be an integer",
+        )
+    if frames_per_capture < 1:
+        raise _InvalidArtifact(
+            "plan_invalid",
+            "capture plan camera.frames_per_capture must be positive",
+        )
+    store_burst = plan.get("store_burst")
+    if not isinstance(store_burst, bool):
+        raise _InvalidArtifact("plan_invalid", "capture plan store_burst must be boolean")
+    return (
+        plan_id.strip(),
+        mask_ids,
+        illuminations,
+        int(frames_per_capture),
+        store_burst,
+    )
+
+
+def _validate_profile_requirement_ids(
+    h5: h5py.File,
+    requirements: Mapping[str, Any],
+) -> None:
+    for field in ("pupil_profile_id", "camera_profile_id"):
+        expected = requirements.get(field, "")
+        if expected is None:
+            expected = ""
+        if not isinstance(expected, str):
+            raise _InvalidArtifact(
+                "profile_requirements_invalid",
+                f"profiles/requirements_json.{field} must be a string when present",
+            )
+        actual = _read_hdf_scalar_text(h5, f"profiles/{field}", allow_empty=True)
+        if actual != expected:
+            raise _InvalidArtifact(
+                "profile_requirements_mismatch",
+                f"profiles/{field} does not match profiles/requirements_json",
+            )
+
+
+def _validate_hdf_illumination_numeric_metadata(
+    *,
+    tls_setpoint: float,
+    effective_wavelength: float,
+    identity: _IlluminationIdentity,
+) -> None:
+    if identity.mode == "broadband_passthrough":
+        if not math.isnan(effective_wavelength) or not math.isclose(
+            tls_setpoint,
+            0.0,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            raise _InvalidArtifact(
+                "illumination_metadata_mismatch",
+                "broadband illumination metadata must use NaN effective wavelength and zero TLS setpoint",
+            )
+        return
+    assert identity.effective_wavelength_nm is not None
+    if not math.isclose(
+        effective_wavelength,
+        identity.effective_wavelength_nm,
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
+        raise _InvalidArtifact(
+            "illumination_metadata_mismatch",
+            "effective wavelength metadata does not match capture plan",
+        )
+    if identity.tls_setpoint_nm is None:
+        if not math.isnan(tls_setpoint):
+            raise _InvalidArtifact(
+                "illumination_metadata_mismatch",
+                "null monochromatic TLS setpoint must be stored as NaN",
+            )
+    elif not math.isclose(
+        tls_setpoint,
+        identity.tls_setpoint_nm,
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
+        raise _InvalidArtifact(
+            "illumination_metadata_mismatch",
+            "TLS setpoint metadata does not match capture plan",
+        )
+
+
+def _validate_raw_processing_flags(
+    flags: Mapping[str, Any],
+    *,
+    schema_version: int,
+    capture_role: str,
+    completed: np.ndarray,
+    planned_count: int,
+) -> None:
+    for field in (
+        "scientific_calibration_valid",
+        "optical_alignment_validated",
+        "training_ready",
+        "completed",
+    ):
+        if not isinstance(flags.get(field), bool):
+            raise _InvalidArtifact(
+                "processing_flags_invalid",
+                f"processing_flags_json.{field} must be boolean",
+            )
+    if flags.get("raw_capture_schema_version") != schema_version:
         raise _InvalidArtifact(
             "processing_flags_mismatch",
             "processing flags do not record the raw capture schema version",
         )
+    if flags.get("capture_role") != capture_role:
+        raise _InvalidArtifact(
+            "processing_flags_mismatch",
+            "processing flags do not record the root capture role",
+        )
+    if flags.get("error") is not None and not isinstance(flags.get("error"), str):
+        raise _InvalidArtifact(
+            "processing_flags_invalid",
+            "processing_flags_json.error must be a string or null",
+        )
+    for field in (
+        "last_completed_capture_index",
+        "n_captures_written",
+        "n_captures_total",
+    ):
+        value = flags.get(field)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise _InvalidArtifact(
+                "processing_flags_invalid",
+                f"processing_flags_json.{field} must be an integer",
+            )
+    completed_count = int(np.count_nonzero(completed))
+    if flags["n_captures_written"] != completed_count:
+        raise _InvalidArtifact(
+            "processing_flags_mismatch",
+            "processing flags written capture count does not match capture/completed",
+        )
+    if flags["n_captures_total"] != planned_count:
+        raise _InvalidArtifact(
+            "processing_flags_mismatch",
+            "processing flags planned capture count does not match raw frame rows",
+        )
+    if flags["completed"] != bool(np.all(completed)):
+        raise _InvalidArtifact(
+            "processing_flags_mismatch",
+            "processing flags completed state does not match capture/completed",
+        )
+    last_completed = flags["last_completed_capture_index"]
+    if last_completed < -1 or last_completed >= planned_count:
+        raise _InvalidArtifact(
+            "processing_flags_invalid",
+            "processing flags last completed capture index is out of bounds",
+        )
+    if completed_count == 0 and last_completed != -1:
+        raise _InvalidArtifact(
+            "processing_flags_mismatch",
+            "an empty capture must record last_completed_capture_index as -1",
+        )
 
 
-def _source_plan_index_contract(h5: h5py.File) -> tuple[list[str], list[float]]:
+@dataclass(frozen=True)
+class _IlluminationIdentity:
+    """Strict, mode-aware identity for one capture-plan illumination row."""
+
+    mode: str
+    effective_wavelength_nm: float | None
+    tls_setpoint_nm: float | None
+    wavelength_label_nm: float | None
+
+
+def _source_plan_index_contract(
+    h5: h5py.File,
+) -> tuple[list[str], list[_IlluminationIdentity]]:
     """Read the source capture-plan identity table used by derived HDF5 data."""
     plan = _read_hdf_json_mapping(h5, "source/plan_json")
     masks = plan.get("masks")
@@ -1427,7 +2061,7 @@ def _source_plan_index_contract(h5: h5py.File) -> tuple[list[str], list[float]]:
             )
         mask_ids.append(mask_id)
 
-    wavelength_values: list[float] = []
+    illumination_identities: list[_IlluminationIdentity] = []
     for index, entry in enumerate(wavelengths):
         if not isinstance(entry, Mapping):
             raise _InvalidArtifact(
@@ -1440,24 +2074,166 @@ def _source_plan_index_contract(h5: h5py.File) -> tuple[list[str], list[float]]:
                 "source_plan_invalid",
                 f"source plan wavelengths[{index}].illumination must be a mapping",
             )
-        value = illumination.get("effective_wavelength_nm")
-        if value is None:
-            value = illumination.get("wavelength_label_nm")
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise _InvalidArtifact(
-                "source_plan_invalid",
-                f"source plan wavelengths[{index}] lacks a numeric effective wavelength",
+        illumination_identities.append(
+            _illumination_identity_from_mapping(
+                illumination,
+                context=f"source plan wavelengths[{index}].illumination",
+                code="source_plan_invalid",
             )
-        wavelength = float(value)
-        if not math.isfinite(wavelength):
-            raise _InvalidArtifact(
-                "source_plan_invalid",
-                f"source plan wavelengths[{index}] has a non-finite effective wavelength",
-            )
-        wavelength_values.append(wavelength)
+        )
 
     _validate_optional_mask_table_against_source_plan(h5, mask_ids)
-    return mask_ids, wavelength_values
+    return mask_ids, illumination_identities
+
+
+def _illumination_identity_from_mapping(
+    data: Mapping[str, Any],
+    *,
+    context: str,
+    code: str,
+) -> _IlluminationIdentity:
+    """Validate a serialized illumination mapping without compatibility coercion."""
+    if not isinstance(data, Mapping):
+        raise _InvalidArtifact(code, f"{context} must be a mapping")
+    for field in (
+        "mode",
+        "effective_wavelength_nm",
+        "tls_setpoint_nm",
+        "wavelength_label_nm",
+    ):
+        if field not in data:
+            raise _InvalidArtifact(code, f"{context}.{field} is required")
+    mode = data["mode"]
+    if not isinstance(mode, str) or not mode.strip():
+        raise _InvalidArtifact(code, f"{context}.mode must be a non-empty string")
+    effective = _illumination_identity_number(
+        data["effective_wavelength_nm"],
+        context=f"{context}.effective_wavelength_nm",
+        code=code,
+    )
+    tls_setpoint = _illumination_identity_number(
+        data["tls_setpoint_nm"],
+        context=f"{context}.tls_setpoint_nm",
+        code=code,
+    )
+    wavelength_label = _illumination_identity_number(
+        data["wavelength_label_nm"],
+        context=f"{context}.wavelength_label_nm",
+        code=code,
+    )
+    normalized_mode = mode.strip()
+    if normalized_mode == "monochromatic":
+        if effective is None or effective <= 0.0:
+            raise _InvalidArtifact(
+                code,
+                f"{context}.effective_wavelength_nm must be finite and positive for monochromatic illumination",
+            )
+        if tls_setpoint is not None and tls_setpoint <= 0.0:
+            raise _InvalidArtifact(
+                code,
+                f"{context}.tls_setpoint_nm must be finite and positive or null for monochromatic illumination",
+            )
+    elif normalized_mode == "broadband_passthrough":
+        if effective is not None:
+            raise _InvalidArtifact(
+                code,
+                f"{context}.effective_wavelength_nm must be null for broadband_passthrough",
+            )
+        if tls_setpoint != 0.0:
+            raise _InvalidArtifact(
+                code,
+                f"{context}.tls_setpoint_nm must be 0.0 for broadband_passthrough",
+            )
+        if wavelength_label is not None:
+            raise _InvalidArtifact(
+                code,
+                f"{context}.wavelength_label_nm must be null for broadband_passthrough",
+            )
+    else:
+        raise _InvalidArtifact(code, f"{context}.mode is not supported")
+    return _IlluminationIdentity(
+        mode=normalized_mode,
+        effective_wavelength_nm=effective,
+        tls_setpoint_nm=tls_setpoint,
+        wavelength_label_nm=wavelength_label,
+    )
+
+
+def _illumination_identity_number(
+    value: Any,
+    *,
+    context: str,
+    code: str,
+) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value,
+        (int, float, np.integer, np.floating),
+    ):
+        raise _InvalidArtifact(code, f"{context} must be a finite JSON number or null")
+    number = float(value)
+    if not math.isfinite(number):
+        raise _InvalidArtifact(code, f"{context} must be finite when present")
+    return number
+
+
+def _illumination_identity_from_json_text(
+    text: str,
+    *,
+    context: str,
+    code: str,
+) -> _IlluminationIdentity:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise _UnreadableArtifact(
+            "entry_illumination_unreadable",
+            f"{context} could not be parsed as JSON",
+        ) from exc
+    if not isinstance(data, Mapping):
+        raise _InvalidArtifact(code, f"{context} JSON root must be a mapping")
+    return _illumination_identity_from_mapping(data, context=context, code=code)
+
+
+def _illumination_identity_equal(
+    left: _IlluminationIdentity,
+    right: _IlluminationIdentity,
+) -> bool:
+    return (
+        left.mode == right.mode
+        and _same_optional_float(
+            left.effective_wavelength_nm,
+            right.effective_wavelength_nm,
+        )
+        and _same_optional_float(left.tls_setpoint_nm, right.tls_setpoint_nm)
+        and _same_optional_float(
+            left.wavelength_label_nm,
+            right.wavelength_label_nm,
+        )
+    )
+
+
+def _same_optional_float(left: float | None, right: float | None) -> bool:
+    if left is None or right is None:
+        return left is right
+    return math.isclose(left, right, rel_tol=0.0, abs_tol=1e-9)
+
+
+def _entry_wavelength_matches_illumination_identity(
+    wavelength: float,
+    identity: _IlluminationIdentity,
+) -> bool:
+    """Compare survey/dictionary wavelength metadata to its mode-aware identity."""
+    if identity.mode == "broadband_passthrough":
+        return math.isnan(float(wavelength))
+    assert identity.effective_wavelength_nm is not None
+    return math.isfinite(float(wavelength)) and math.isclose(
+        float(wavelength),
+        identity.effective_wavelength_nm,
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    )
 
 
 def _validate_optional_mask_table_against_source_plan(
@@ -1604,11 +2380,12 @@ def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> Non
         manifest.entry_wavelengths_nm,
         name="entry_wavelength_nm",
     )
+    entry_illumination_json = _read_text_array(
+        h5["full_frame_survey/entry_illumination_json"],
+        name="entry_illumination_json",
+    )
     _require_manifest_sequence_match(
-        _read_text_array(
-            h5["full_frame_survey/entry_illumination_json"],
-            name="entry_illumination_json",
-        ),
+        entry_illumination_json,
         manifest.entry_illumination_json,
         name="entry_illumination_json",
     )
@@ -1631,7 +2408,15 @@ def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> Non
             "manifest_metadata_mismatch",
             "survey_policy_json does not match embedded manifest",
         )
-    source_mask_ids, source_wavelengths = _source_plan_index_contract(h5)
+    source_mask_ids, source_illuminations = _source_plan_index_contract(h5)
+    entry_illuminations = [
+        _illumination_identity_from_json_text(
+            value,
+            context=f"full_frame_survey.entry_illumination_json[{index}]",
+            code="entry_illumination_invalid",
+        )
+        for index, value in enumerate(entry_illumination_json)
+    ]
     mask_indices = _read_integer_index_vector(
         h5,
         "full_frame_survey/mask_index",
@@ -1656,7 +2441,7 @@ def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> Non
                 "mask_index_out_of_bounds",
                 "survey mask_index is outside the source capture plan",
             )
-        if wavelength_index < 0 or wavelength_index >= len(source_wavelengths):
+        if wavelength_index < 0 or wavelength_index >= len(source_illuminations):
             raise _InvalidArtifact(
                 "wavelength_index_out_of_bounds",
                 "survey wavelength_index is outside the source capture plan",
@@ -1666,19 +2451,26 @@ def _validate_full_frame_psf_survey_payload(h5: h5py.File, manifest: Any) -> Non
                 "entry_mask_id_mismatch",
                 "survey entry_mask_ids do not match source plan mask IDs",
             )
-        if not math.isclose(
+        source_illumination = source_illuminations[wavelength_index]
+        if not _entry_wavelength_matches_illumination_identity(
             float(entry_wavelengths[index]),
-            source_wavelengths[wavelength_index],
-            rel_tol=0.0,
-            abs_tol=1e-9,
+            source_illumination,
         ):
             raise _InvalidArtifact(
                 "entry_wavelength_mismatch",
                 "survey entry wavelengths do not match source plan wavelengths",
             )
+        if not _illumination_identity_equal(
+            entry_illuminations[index],
+            source_illumination,
+        ):
+            raise _InvalidArtifact(
+                "entry_illumination_mismatch",
+                "survey entry illumination metadata does not match the source capture plan",
+            )
         _validate_capture_index_in_bounds(
             capture_index,
-            planned_capture_count=len(source_mask_ids) * len(source_wavelengths),
+            planned_capture_count=len(source_mask_ids) * len(source_illuminations),
         )
     if "survey_id" in h5.attrs and decode_h5_string(h5.attrs["survey_id"]) != manifest.survey_id:
         raise _InvalidArtifact(
@@ -1963,7 +2755,7 @@ def _validate_peak_patch_psf_dictionary_payload(h5: h5py.File, manifest: Any) ->
             "manifest_metadata_mismatch",
             "normalization_policy_json does not match embedded manifest",
         )
-    source_mask_ids, source_wavelengths = _source_plan_index_contract(h5)
+    source_mask_ids, source_illuminations = _source_plan_index_contract(h5)
     mask_indices = _read_integer_index_vector(
         h5,
         "peak_patch_dictionary/entry_mask_index",
@@ -1988,12 +2780,10 @@ def _validate_peak_patch_psf_dictionary_payload(h5: h5py.File, manifest: Any) ->
             )
         matching_wavelength_indices = [
             wavelength_index
-            for wavelength_index, source_wavelength in enumerate(source_wavelengths)
-            if math.isclose(
+            for wavelength_index, source_illumination in enumerate(source_illuminations)
+            if _entry_wavelength_matches_illumination_identity(
                 float(entry_wavelengths[index]),
-                source_wavelength,
-                rel_tol=0.0,
-                abs_tol=1e-9,
+                source_illumination,
             )
         ]
         if not matching_wavelength_indices:
@@ -2004,7 +2794,7 @@ def _validate_peak_patch_psf_dictionary_payload(h5: h5py.File, manifest: Any) ->
         for capture_index in capture_index_rows[index]:
             _validate_capture_index_in_bounds(
                 int(capture_index),
-                planned_capture_count=len(source_mask_ids) * len(source_wavelengths),
+                planned_capture_count=len(source_mask_ids) * len(source_illuminations),
             )
     if "dictionary_id" in h5.attrs and decode_h5_string(
         h5.attrs["dictionary_id"]

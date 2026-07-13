@@ -161,6 +161,20 @@ def illumination_mode(plan: dict[str, Any]) -> str:
             node = node[key]
         if isinstance(node, str) and node.strip():
             return node.strip()
+    wavelengths = plan.get("wavelengths")
+    if isinstance(wavelengths, list):
+        modes: set[str] = set()
+        for entry in wavelengths:
+            if not isinstance(entry, dict):
+                continue
+            illumination = entry.get("illumination")
+            if not isinstance(illumination, dict):
+                continue
+            mode = illumination.get("mode")
+            if isinstance(mode, str) and mode.strip():
+                modes.add(mode.strip())
+        if len(modes) == 1:
+            return modes.pop()
     return "monochromatic"
 
 

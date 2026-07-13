@@ -14,6 +14,7 @@ from tasks.artifacts.validation import (
     ValidityOutcome,
     check_validity,
 )
+from tasks.capture_plan import CapturePlan
 from tasks.profiles import CameraProfile, PupilProfile
 from tasks.psf.analyze_diffraction_support import (
     DiffractionSupportAnalysisError,
@@ -35,6 +36,7 @@ from tasks.psf.sensor_energy_center import (
     SensorEnergyCenterError,
     SensorEnergyCenterProfile,
 )
+from tasks.raw_capture_h5 import RawCaptureWriter
 
 
 _STRING_DTYPE = h5py.string_dtype(encoding="utf-8")
@@ -138,7 +140,17 @@ def _survey_manifest(shape: tuple[int, int] = (2, 3)) -> FullFramePSFSurveyManif
         camera_profile_id=None,
         illumination_mode="monochromatic",
         entry_wavelengths_nm=[550.0],
-        entry_illumination_json=['{"mode":"monochromatic"}'],
+        entry_illumination_json=[
+            json.dumps(
+                {
+                    "mode": "monochromatic",
+                    "effective_wavelength_nm": 550.0,
+                    "tls_setpoint_nm": 550.0,
+                    "wavelength_label_nm": 550.0,
+                },
+                sort_keys=True,
+            )
+        ],
         entry_mask_ids=["mask_1"],
         unique_wavelengths_nm=[550.0],
         unique_mask_ids=["mask_1"],
@@ -230,39 +242,36 @@ def _write_derived_source_plan(h5: h5py.File) -> None:
 
 
 def _write_raw_capture(path: Path) -> None:
-    shape = (2, 3)
-    with h5py.File(path, "w") as h5:
-        h5.attrs["artifact_type"] = "raw_capture"
-        h5.attrs["raw_capture_schema_version"] = schema_compat("raw_capture").current
-        raw = h5.require_group("raw")
-        raw.create_dataset("frames_avg", data=np.zeros((1, *shape), dtype=np.float32))
-        masks = h5.require_group("masks")
-        masks.create_dataset("masks_physical", data=np.zeros((1, 2, 3), dtype=np.uint8))
-        _write_text_array(masks, "mask_id", ["mask_1"])
-        _write_text_array(masks, "family_id", [""])
-        _write_text_array(masks, "family_params_json", ["{}"])
-        masks.create_dataset("has_mask_array", data=np.asarray([True], dtype=bool))
-        illumination = h5.require_group("illumination")
-        _write_text_array(illumination, "illumination_json", ['{"mode":"monochromatic"}'])
-        illumination.create_dataset("tls_setpoint_nm", data=np.asarray([550.0]))
-        illumination.create_dataset("effective_wavelength_nm", data=np.asarray([550.0]))
-        camera = h5.require_group("camera")
-        _write_text_array(camera, "frame_extent_json", [json.dumps(_extent(shape))])
-        capture = h5.require_group("capture")
-        capture.create_dataset("capture_index", data=np.asarray([0], dtype=np.int64))
-        capture.create_dataset("wavelength_index", data=np.asarray([0], dtype=np.int64))
-        capture.create_dataset("mask_index", data=np.asarray([0], dtype=np.int64))
-        capture.create_dataset("burst_count", data=np.asarray([1], dtype=np.int64))
-        capture.create_dataset("completed", data=np.asarray([True], dtype=bool))
-        _write_scalar_text(
-            capture,
-            "plan_json",
-            _source_plan_json(),
-        )
-        _write_scalar_text(
-            capture,
-            "processing_flags_json",
-            json.dumps({"raw_capture_schema_version": 2}),
+    plan = CapturePlan.from_dict(
+        {
+            "plan_id": "validation_plan_v1",
+            "wavelengths": [
+                {
+                    "settle_ms": 0,
+                    "illumination": {
+                        "mode": "monochromatic",
+                        "effective_wavelength_nm": 550.0,
+                        "tls_setpoint_nm": 550.0,
+                        "wavelength_label_nm": 550.0,
+                    },
+                }
+            ],
+            "masks": [{"mask_id": "mask_1"}],
+            "camera": {"frames_per_capture": 1},
+            "store_burst": False,
+        }
+    )
+    with RawCaptureWriter(path, plan) as writer:
+        writer.write_runtime_metadata({"mode": "test"})
+        writer.write_lcd_metadata({"subpixel_axis": 1})
+        writer.write_physical_masks([np.ones((2, 3), dtype=np.uint8)])
+        writer.append_capture(
+            capture_index=0,
+            wavelength_index=0,
+            mask_index=0,
+            frames=None,
+            frames_avg=np.zeros((2, 3), dtype=np.float32),
+            camera_meta={},
         )
 
 
@@ -295,6 +304,65 @@ def _write_survey_h5(path: Path) -> FullFramePSFSurveyManifest:
         _write_scalar_text(group, "survey_policy_json", json.dumps(manifest.survey_policy))
         _write_scalar_text(group, "manifest_json", manifest.to_json())
         _write_derived_source_plan(h5)
+    return manifest
+
+
+def _write_broadband_survey_h5(path: Path) -> FullFramePSFSurveyManifest:
+    shape = (2, 3)
+    illumination = {
+        "mode": "broadband_passthrough",
+        "effective_wavelength_nm": None,
+        "tls_setpoint_nm": 0.0,
+        "wavelength_label_nm": None,
+    }
+    illumination_json = json.dumps(illumination, sort_keys=True)
+    manifest = FullFramePSFSurveyManifest(
+        survey_id="survey_broadband_validation_v1",
+        source_raw_capture_h5="raw_capture.h5",
+        pupil_profile_id=None,
+        camera_profile_id=None,
+        illumination_mode="broadband_passthrough",
+        entry_wavelengths_nm=[float("nan"), float("nan")],
+        entry_illumination_json=[illumination_json, illumination_json],
+        entry_mask_ids=["mask_1", "mask_2"],
+        unique_wavelengths_nm=[float("nan")],
+        unique_mask_ids=["mask_1", "mask_2"],
+        frame_shape=shape,
+        camera_frame_extent=_extent(shape),
+        survey_policy={"background": "none", "normalization": "none"},
+        full_frame_role="scout",
+    )
+    source_plan = {
+        "plan_id": "broadband_validation_plan_v1",
+        "wavelengths": [{"settle_ms": 0, "illumination": illumination}],
+        "masks": [{"mask_id": "mask_1"}, {"mask_id": "mask_2"}],
+    }
+    with h5py.File(path, "w") as h5:
+        h5.attrs["artifact_type"] = "full_frame_psf_survey"
+        h5.attrs["schema_version"] = schema_compat("full_frame_psf_survey").current
+        h5.attrs["survey_id"] = manifest.survey_id
+        group = h5.require_group("full_frame_survey")
+        group.create_dataset("frames_avg", data=np.zeros((2, *shape), dtype=np.float32))
+        _write_text_array(group, "entry_mask_ids", manifest.entry_mask_ids)
+        group.create_dataset(
+            "entry_wavelength_nm",
+            data=np.asarray(manifest.entry_wavelengths_nm, dtype=np.float64),
+        )
+        _write_text_array(group, "entry_illumination_json", manifest.entry_illumination_json)
+        _write_text_array(group, "unique_mask_ids", manifest.unique_mask_ids)
+        group.create_dataset(
+            "unique_wavelength_nm",
+            data=np.asarray(manifest.unique_wavelengths_nm, dtype=np.float64),
+        )
+        group.create_dataset("mask_index", data=np.asarray([0, 1], dtype=np.int64))
+        group.create_dataset("wavelength_index", data=np.asarray([0, 0], dtype=np.int64))
+        group.create_dataset("capture_indices", data=np.asarray([0, 1], dtype=np.int64))
+        group.create_dataset("frame_shape", data=np.asarray(shape, dtype=np.int64))
+        _write_scalar_text(group, "camera_frame_extent_json", json.dumps(_extent(shape)))
+        _write_scalar_text(group, "survey_policy_json", json.dumps(manifest.survey_policy))
+        _write_scalar_text(group, "manifest_json", manifest.to_json())
+        source = h5.require_group("source")
+        _write_scalar_text(source, "plan_json", json.dumps(source_plan, sort_keys=True))
     return manifest
 
 
@@ -439,6 +507,12 @@ def test_validation_reports_legacy_and_unreadable_locations(tmp_path: Path) -> N
     unreadable_json.write_text("{", encoding="utf-8")
     assert check_validity("pupil_profile", unreadable_json).outcome is ValidityOutcome.UNREADABLE
 
+    non_utf8_json = tmp_path / "non_utf8.json"
+    non_utf8_json.write_bytes(b"\xff\xfe")
+    non_utf8_result = check_validity("pupil_profile", non_utf8_json)
+    assert non_utf8_result.outcome is ValidityOutcome.UNREADABLE
+    assert non_utf8_result.reason_codes == ("json_unreadable",)
+
     unreadable_hdf = tmp_path / "broken.h5"
     unreadable_hdf.write_bytes(b"not an HDF5 payload")
     assert check_validity("raw_capture", unreadable_hdf).outcome is ValidityOutcome.UNREADABLE
@@ -548,6 +622,130 @@ def test_raw_capture_validator_rejects_invalid_completed_index(tmp_path: Path) -
     assert result.reason_codes == ("mask_index_out_of_bounds",)
 
 
+def test_raw_capture_validator_requires_complete_v2_schema_contract(tmp_path: Path) -> None:
+    path = tmp_path / "raw_capture.h5"
+    _write_raw_capture(path)
+    with h5py.File(path, "r+") as h5:
+        del h5["tls/status_json"]
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("missing_required_path",)
+
+
+def test_raw_capture_validator_requires_current_root_artifact_type(tmp_path: Path) -> None:
+    path = tmp_path / "raw_capture.h5"
+    _write_raw_capture(path)
+    with h5py.File(path, "r+") as h5:
+        del h5.attrs["artifact_type"]
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("artifact_type_missing",)
+
+
+def test_raw_capture_validator_accepts_incomplete_capture_with_complete_schema(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "partial_raw_capture.h5"
+    plan = CapturePlan.from_dict(
+        {
+            "plan_id": "partial_validation_plan_v1",
+            "wavelengths": [
+                {
+                    "illumination": {
+                        "mode": "monochromatic",
+                        "effective_wavelength_nm": 550.0,
+                        "tls_setpoint_nm": 550.0,
+                        "wavelength_label_nm": 550.0,
+                    }
+                }
+            ],
+            "masks": [{"mask_id": "mask_1"}, {"mask_id": "mask_2"}],
+            "camera": {"frames_per_capture": 1},
+            "store_burst": False,
+        }
+    )
+    writer = RawCaptureWriter(path, plan)
+    writer.open()
+    writer.write_lcd_metadata({"subpixel_axis": 1})
+    writer.write_physical_masks(
+        [np.ones((2, 3), dtype=np.uint8), np.ones((2, 3), dtype=np.uint8)]
+    )
+    writer.append_capture(
+        capture_index=0,
+        wavelength_index=0,
+        mask_index=0,
+        frames=None,
+        frames_avg=np.zeros((2, 3), dtype=np.float32),
+        camera_meta={},
+    )
+    writer.finalize(completed=False)
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.VALID
+
+
+def test_raw_capture_validator_requires_burst_payload_when_store_burst_is_true(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "burst_raw_capture.h5"
+    plan = CapturePlan.from_dict(
+        {
+            "plan_id": "burst_validation_plan_v1",
+            "wavelengths": [
+                {
+                    "illumination": {
+                        "mode": "monochromatic",
+                        "effective_wavelength_nm": 550.0,
+                        "tls_setpoint_nm": 550.0,
+                        "wavelength_label_nm": 550.0,
+                    }
+                }
+            ],
+            "masks": [{"mask_id": "mask_1"}],
+            "camera": {"frames_per_capture": 1},
+            "store_burst": True,
+        }
+    )
+    with RawCaptureWriter(path, plan) as writer:
+        writer.write_lcd_metadata({"subpixel_axis": 1})
+        writer.write_physical_masks([np.ones((2, 3), dtype=np.uint8)])
+        burst = np.ones((1, 2, 3), dtype=np.uint16)
+        writer.append_capture(
+            capture_index=0,
+            wavelength_index=0,
+            mask_index=0,
+            frames=burst,
+            frames_avg=burst.mean(axis=0),
+            camera_meta={},
+        )
+
+    assert check_validity("raw_capture", path).outcome is ValidityOutcome.VALID
+    with h5py.File(path, "r+") as h5:
+        del h5["raw/frames"]
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("missing_required_path",)
+
+
+def test_broadband_survey_uses_nan_sentinel_and_validates_against_source_identity(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "broadband_survey.h5"
+    manifest = _write_broadband_survey_h5(path)
+
+    manifest.validate()
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.VALID
+
+
 def test_survey_validator_rejects_hdf5_manifest_disagreement(tmp_path: Path) -> None:
     path = tmp_path / "survey.h5"
     _write_survey_h5(path)
@@ -595,6 +793,8 @@ def test_survey_validator_rejects_source_plan_identity_mismatch(tmp_path: Path) 
                         "illumination": {
                             "mode": "monochromatic",
                             "effective_wavelength_nm": 550.0,
+                            "tls_setpoint_nm": 550.0,
+                            "wavelength_label_nm": 550.0,
                         }
                     }
                 ],
@@ -689,6 +889,8 @@ def test_dictionary_validator_rejects_source_plan_entry_identity_mismatch(
                         "illumination": {
                             "mode": "monochromatic",
                             "effective_wavelength_nm": source_wavelength_nm,
+                            "tls_setpoint_nm": source_wavelength_nm,
+                            "wavelength_label_nm": source_wavelength_nm,
                         }
                     }
                 ],

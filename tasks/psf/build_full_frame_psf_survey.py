@@ -21,6 +21,7 @@ from tasks.artifacts.json_io import (
     read_optional_dataset_string,
     read_scalar_string,
     read_string_array,
+    sequence_equal_nan_aware,
     unique_preserve_order,
 )
 from .profile_requirements import (
@@ -123,8 +124,9 @@ class FullFramePSFSurveyManifest:
             raise FullFramePSFSurveyError(
                 "entry_mask_ids length must match entry_wavelengths_nm"
             )
-        if self.unique_wavelengths_nm != unique_preserve_order(
-            self.entry_wavelengths_nm
+        if not sequence_equal_nan_aware(
+            self.unique_wavelengths_nm,
+            unique_preserve_order(self.entry_wavelengths_nm),
         ):
             raise FullFramePSFSurveyError(
                 "unique_wavelengths_nm must match entry order-preserving uniqueness"

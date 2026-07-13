@@ -64,6 +64,21 @@ type from a filename or media type. A bundle with inventory but without an
 explicit primary payload is `unsupported` for full artifact validation, not
 silently treated as valid.
 
+### Bundle And Native Identity
+
+`ArtifactBundleManifest.artifact_id` is the immutable identity of one external
+storage generation. It is deliberately not required to equal a task-native ID
+such as `survey_id`, `dictionary_id`, or `camera_profile_id`: those IDs remain
+inside the validated payload manifest. This is the generation-identity model
+that the future catalog will use. A catalog record may later make the native-ID
+relationship explicit, but this local bundle foundation neither invents a
+second native-ID field nor infers equality from a filename.
+
+Payload-native IDs must still be internally consistent. For example, HDF5
+embedded manifests and declared JSON sidecars are compared canonically, so two
+payloads that name different surveys cannot form a valid bundle even when the
+bundle generation ID is intentionally different.
+
 When `manifest_sidecar` is declared, integrity verification alone is not
 sufficient. The sidecar must parse as the declared artifact type and schema,
 and it must canonically equal the primary payload's manifest: the direct JSON
@@ -93,6 +108,15 @@ scientifically unreviewed, and an unsupported representation is not evidence
 that it is corrupt. JSON manifest validation checks only the JSON contract;
 HDF5 validation checks embedded manifests plus the HDF5 datasets/metadata that
 belong to that artifact type.
+
+Current `raw_capture` schema v2 validation requires its root identity
+attributes and all fixed raw, masks, illumination, TLS, camera, LCD, profiles,
+and capture metadata surfaces. An incomplete acquisition is represented by the
+`capture/completed` bitmap and matching processing flags, not by omitting v2
+datasets. Broadband pass-through remains a valid illumination identity:
+`effective_wavelength_nm = null`, `tls_setpoint_nm = 0`, and no wavelength
+label; downstream survey/dictionary metadata uses the documented `NaN`
+sentinel only where a numeric wavelength array is required.
 
 Only explicit artifact-contract violations produce `invalid`. An unexpected
 validator failure, missing optional validator dependency, or unhandled validator

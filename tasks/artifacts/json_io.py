@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Mapping
 
 import h5py
@@ -88,11 +89,34 @@ def loads_json_object(text: str) -> dict[str, Any]:
 
 
 def unique_preserve_order(values: list[Any]) -> list[Any]:
+    """Return order-preserving unique values with stable NaN equivalence."""
     result: list[Any] = []
     for value in values:
-        if value not in result:
+        if not any(_json_value_equal(value, existing) for existing in result):
             result.append(value)
     return result
+
+
+def sequence_equal_nan_aware(left: list[Any], right: list[Any]) -> bool:
+    """Compare serialized-value sequences while treating two NaN sentinels equal."""
+    return len(left) == len(right) and all(
+        _json_value_equal(first, second)
+        for first, second in zip(left, right, strict=True)
+    )
+
+
+def _json_value_equal(first: Any, second: Any) -> bool:
+    if _is_nan_scalar(first) and _is_nan_scalar(second):
+        return True
+    try:
+        equal = first == second
+    except (TypeError, ValueError):
+        return False
+    return bool(equal) if isinstance(equal, (bool, np.bool_)) else False
+
+
+def _is_nan_scalar(value: Any) -> bool:
+    return isinstance(value, (float, np.floating)) and math.isnan(float(value))
 
 
 def index_string(values: list[str], index: int) -> str:

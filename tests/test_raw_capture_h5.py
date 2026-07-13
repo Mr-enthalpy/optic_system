@@ -125,7 +125,9 @@ class TestRawCaptureWriter:
             assert pf["raw_capture_schema_version"] == 2
             assert pf["capture_role"] == "minimal_capture"
             assert "phase" not in pf
-            assert pf["completed"] is True
+            assert pf["completed"] is False
+            assert pf["n_captures_written"] == 0
+            assert pf["n_captures_total"] == sample_plan.n_captures
 
     def test_writes_physical_masks(
         self, sample_plan: CapturePlan, tmp_h5_path: Path

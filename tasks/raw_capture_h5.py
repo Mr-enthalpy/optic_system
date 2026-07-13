@@ -191,6 +191,10 @@ class RawCaptureWriter:
         masks_grp.create_dataset("family_params_json", shape=(n_mask,), dtype=h5py.string_dtype())
         masks_grp.create_dataset("has_mask_array", shape=(n_mask,), dtype=bool)
         masks_grp.attrs["mask_count"] = n_mask
+        for index, entry in enumerate(self._plan.masks):
+            masks_grp["mask_id"][index] = entry.mask_id
+            masks_grp["family_id"][index] = entry.family_id or ""
+            masks_grp["family_params_json"][index] = _json_str(entry.family_params or {})
 
         tls_grp = f.require_group("tls")
         tls_grp.create_dataset("grating", shape=(n_wl,), dtype=np.int64)
@@ -217,6 +221,8 @@ class RawCaptureWriter:
         lcd_grp.create_dataset("display_timestamp_ns", shape=(n_cap,), dtype=np.int64)
         lcd_grp.create_dataset("mapping_policy_json", shape=(1,), dtype=h5py.string_dtype())
         lcd_grp.create_dataset("metadata_json", shape=(1,), dtype=h5py.string_dtype())
+        lcd_grp["mapping_policy_json"][0] = _json_str({})
+        lcd_grp["metadata_json"][0] = _json_str({})
 
         cap_grp = f.require_group("capture")
         cap_grp.create_dataset("capture_index", shape=(n_cap,), dtype=np.int64, fillvalue=-1)
@@ -253,6 +259,8 @@ class RawCaptureWriter:
             "completed": False,
             "error": None,
             "last_completed_capture_index": -1,
+            "n_captures_written": 0,
+            "n_captures_total": n_cap,
         }
         cap_grp.create_dataset("processing_flags_json", data=_json_str(pf))
 
@@ -445,12 +453,15 @@ class RawCaptureWriter:
 
     def finalize(
         self,
-        completed: bool = True,
+        completed: bool | None = None,
         error: str | None = None,
         last_completed_capture_index: int | None = None,
     ) -> None:
         if self._file is None or self._closed:
             return
+
+        if completed is None:
+            completed = bool(np.asarray(self._file["capture/completed"][()]).all())
 
         pf = {
             "scientific_calibration_valid": False,
@@ -474,7 +485,7 @@ class RawCaptureWriter:
         self._file = None
 
     def close(self) -> None:
-        self.finalize(completed=True)
+        self.finalize()
 
     def __enter__(self) -> RawCaptureWriter:
         self.open()
@@ -493,7 +504,7 @@ class RawCaptureWriter:
                 last_completed_capture_index=self._n_written - 1,
             )
         else:
-            self.finalize(completed=True)
+            self.finalize()
 
     @property
     def n_written(self) -> int:

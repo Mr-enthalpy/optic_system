@@ -84,7 +84,17 @@ def _survey_manifest() -> FullFramePSFSurveyManifest:
         camera_profile_id=None,
         illumination_mode="monochromatic",
         entry_wavelengths_nm=[550.0],
-        entry_illumination_json=['{"mode":"monochromatic"}'],
+        entry_illumination_json=[
+            json.dumps(
+                {
+                    "mode": "monochromatic",
+                    "effective_wavelength_nm": 550.0,
+                    "tls_setpoint_nm": 550.0,
+                    "wavelength_label_nm": 550.0,
+                },
+                sort_keys=True,
+            )
+        ],
         entry_mask_ids=["mask_1"],
         unique_wavelengths_nm=[550.0],
         unique_mask_ids=["mask_1"],
@@ -140,6 +150,7 @@ def _write_survey_h5(path: Path, manifest: FullFramePSFSurveyManifest) -> None:
                                 "mode": "monochromatic",
                                 "effective_wavelength_nm": 550.0,
                                 "tls_setpoint_nm": 550.0,
+                                "wavelength_label_nm": 550.0,
                             }
                         }
                     ],
@@ -197,6 +208,20 @@ def test_bundle_json_roundtrip_and_local_payload_validation(tmp_path: Path) -> N
 
 def test_bundle_validates_matching_hdf5_embedded_manifest_sidecar(tmp_path: Path) -> None:
     bundle, generation, _ = _bundle_for_survey(tmp_path)
+
+    result = validate_bundle(bundle, generation)
+
+    assert result.outcome is ValidityOutcome.VALID
+
+
+def test_bundle_generation_id_need_not_equal_payload_native_id(tmp_path: Path) -> None:
+    bundle, generation, _ = _bundle_for_survey(tmp_path)
+    bundle = ArtifactBundleManifest(
+        artifact_id="generation_20260713_001",
+        artifact_type=bundle.artifact_type,
+        schema_version=bundle.schema_version,
+        payloads=bundle.payloads,
+    )
 
     result = validate_bundle(bundle, generation)
 
@@ -312,3 +337,15 @@ def test_bundle_atomic_write_leaves_no_temporary_manifest(tmp_path: Path) -> Non
     assert manifest_path.exists()
     assert ArtifactBundleManifest.load_json(manifest_path).artifact_id == bundle.artifact_id
     assert list(generation.glob(".bundle.manifest.json.*.tmp")) == []
+
+
+def test_bundle_non_utf8_manifest_is_unreadable_not_an_exception(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "bundle.manifest.json"
+    manifest_path.write_bytes(b"\xff\xfe")
+
+    result = validate_bundle(manifest_path, tmp_path)
+
+    assert result.outcome is ValidityOutcome.UNREADABLE
+    assert result.reason_codes == ("bundle_manifest_unreadable",)
+    with pytest.raises(ArtifactBundleError, match="UTF-8"):
+        ArtifactBundleManifest.load_json(manifest_path)

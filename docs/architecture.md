@@ -279,6 +279,14 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   invalid. Strict validation checks serialized field types before invoking
   compatibility loaders, so coercive legacy parsing cannot repair a malformed
   current artifact during validation.
+- Current `raw_capture` schema v2 validation requires the root identity
+  attributes and every fixed raw, mask, illumination, TLS, camera, LCD,
+  profile, and capture metadata field. Partial runs remain structurally
+  representable through `capture/completed` and matching processing flags; they
+  do not omit schema fields. Broadband pass-through is a valid illumination
+  identity (`effective_wavelength_nm = null`, `tls_setpoint_nm = 0`), and the
+  measured survey's numeric wavelength arrays use a stable `NaN` sentinel for
+  those entries.
 - `ValidityResult` intentionally does not retain the input path. A future
   catalog owns `(storage_root, rel_path)` separately, so machine-specific
   absolute paths cannot leak into tracked catalog records.
@@ -296,6 +304,10 @@ Artifact bundle foundation (`tasks/artifacts/bundle.py`):
   `manifest_sidecar`, validation also strictly parses it and requires an exact
   canonical match with the primary JSON manifest or HDF5 embedded manifest.
   Bundle JSON writes use temporary-file replacement.
+- Bundle `artifact_id` is an immutable generation identity and need not equal a
+  payload-native ID such as `survey_id`. Native IDs remain inside the validated
+  payload manifest; future catalog records will define their relationship
+  explicitly instead of inferring it from paths or filenames.
 - These primitives do not register artifacts, select a current generation,
   promote trust, supersede data, or migrate existing task outputs. They are the
   local integrity boundary required before a catalog can be introduced.

@@ -217,6 +217,10 @@ class ArtifactBundleManifest:
         """Load a bundle manifest without resolving its payload locations."""
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except UnicodeError as exc:
+            raise ArtifactBundleError(
+                "bundle manifest JSON is not valid UTF-8"
+            ) from exc
         except OSError as exc:
             raise ArtifactBundleError("bundle manifest could not be read") from exc
         except json.JSONDecodeError as exc:
@@ -504,6 +508,14 @@ def _load_bundle_for_validation(
         )
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeError:
+        return _bundle_result(
+            "artifact_bundle",
+            ValidityOutcome.UNREADABLE,
+            None,
+            "bundle_manifest_unreadable",
+            "bundle manifest JSON is not valid UTF-8",
+        )
     except OSError:
         return _bundle_result(
             "artifact_bundle",
