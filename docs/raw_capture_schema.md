@@ -136,6 +136,8 @@ capture bitmap and planned frame rows. They also separate:
 - `capture_complete`: whether every planned row is committed;
 - `run_succeeded`: whether finalization recorded no task error;
 - `error`: the task error string, or null when `run_succeeded` is true.
+- `last_completed_capture_index`: the capture index stored on the final row
+  whose `capture/completed` commit marker is true, or `-1` when none are true.
 
 A run may therefore have `capture_complete: true` and `run_succeeded: false`
 when all captures were committed before a later task failure. These fields, the

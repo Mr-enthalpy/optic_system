@@ -199,7 +199,10 @@ def _support_manifest(shape: tuple[int, int] = (2, 3)) -> PeakSupportAnalysisMan
         bg_policy={"method": "percentile"},
         corr_policy={"formula": "corr=max(psf-bg,0)"},
         radial_policy={"center_policy": "frame_center"},
-        component_policy={"analysis_mode": "energy_only"},
+        component_policy={
+            "analysis_mode": "energy_only",
+            "component_table_written": False,
+        },
         entry_mask_ids=["mask_1"],
         entry_wavelengths_nm=[550.0],
     )
@@ -670,6 +673,11 @@ def test_json_manifest_validate_methods_reject_structural_contradictions() -> No
     with pytest.raises(DiffractionSupportAnalysisError, match="equal length"):
         support.validate()
 
+    support = _support_manifest()
+    support.component_policy["component_table_written"] = True
+    with pytest.raises(DiffractionSupportAnalysisError, match="disagree"):
+        support.validate()
+
 
 @pytest.mark.parametrize(
     ("artifact_type", "writer"),
@@ -797,6 +805,61 @@ def test_raw_capture_validator_accepts_incomplete_capture_with_complete_schema(
     result = check_validity("raw_capture", path)
 
     assert result.outcome is ValidityOutcome.VALID
+
+
+def test_raw_capture_validator_binds_last_completed_index_to_committed_row(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "partial_raw_capture_wrong_last_index.h5"
+    plan = CapturePlan.from_dict(
+        {
+            "plan_id": "partial_last_index_validation_v1",
+            "wavelengths": [
+                {
+                    "illumination": {
+                        "mode": "monochromatic",
+                        "effective_wavelength_nm": 550.0,
+                        "tls_setpoint_nm": 550.0,
+                        "wavelength_label_nm": 550.0,
+                    }
+                }
+            ],
+            "masks": [{"mask_id": "mask_1"}, {"mask_id": "mask_2"}],
+            "camera": {"frames_per_capture": 1},
+            "store_burst": False,
+        }
+    )
+    with RawCaptureWriter(path, plan) as writer:
+        writer.write_lcd_metadata({"subpixel_axis": 1})
+        writer.write_physical_masks(
+            [
+                np.ones((2, 3), dtype=np.uint8),
+                np.ones((2, 3), dtype=np.uint8),
+            ]
+        )
+        writer.append_capture(
+            capture_index=0,
+            wavelength_index=0,
+            mask_index=0,
+            frames=None,
+            frames_avg=np.zeros((2, 3), dtype=np.float32),
+            camera_meta={},
+        )
+
+    with h5py.File(path, "r+") as h5:
+        flags_value = h5["capture/processing_flags_json"][()]
+        flags = json.loads(
+            flags_value.decode("utf-8")
+            if isinstance(flags_value, bytes)
+            else str(flags_value)
+        )
+        flags["last_completed_capture_index"] = 1
+        h5["capture/processing_flags_json"][()] = json.dumps(flags, sort_keys=True)
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("processing_flags_mismatch",)
 
 
 def test_raw_writer_failed_append_does_not_commit_partial_row(
@@ -1069,6 +1132,20 @@ def test_support_validator_rejects_incomplete_component_table(tmp_path: Path) ->
     path = tmp_path / "support.h5"
     _write_support_report_h5(path)
     with h5py.File(path, "r+") as h5:
+        manifest_value = h5["metadata/manifest_json"][()]
+        manifest_data = json.loads(
+            manifest_value.decode("utf-8")
+            if isinstance(manifest_value, bytes)
+            else str(manifest_value)
+        )
+        manifest_data["component_policy"] = {
+            "analysis_mode": "component_table",
+            "component_table_written": True,
+        }
+        h5["metadata/manifest_json"][()] = json.dumps(
+            manifest_data,
+            sort_keys=True,
+        )
         h5.require_group("components").create_dataset(
             "entry_index", data=np.asarray([0], dtype=np.int64)
         )
@@ -1077,6 +1154,20 @@ def test_support_validator_rejects_incomplete_component_table(tmp_path: Path) ->
 
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == ("component_table_incomplete",)
+
+
+def test_support_validator_rejects_components_for_energy_only_report(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "support_energy_only.h5"
+    _write_support_report_h5(path)
+    with h5py.File(path, "r+") as h5:
+        h5.require_group("components")
+
+    result = check_validity("peak_support_analysis_report", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("component_table_presence_mismatch",)
 
 
 def test_dictionary_validator_rejects_wrong_root_artifact_type(tmp_path: Path) -> None:

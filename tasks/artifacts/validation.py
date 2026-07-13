@@ -1877,6 +1877,7 @@ def _validate_raw_capture_v3(h5: h5py.File) -> None:
         schema_version=root_schema_version,
         capture_role=root_capture_role,
         completed=completed,
+        capture_indices=capture_indices,
         planned_count=planned_count,
     )
 
@@ -2221,6 +2222,7 @@ def _validate_raw_processing_flags(
     schema_version: int,
     capture_role: str,
     completed: np.ndarray,
+    capture_indices: np.ndarray,
     planned_count: int,
 ) -> None:
     for field in (
@@ -2289,10 +2291,16 @@ def _validate_raw_processing_flags(
             "processing_flags_invalid",
             "processing flags last completed capture index is out of bounds",
         )
-    if completed_count == 0 and last_completed != -1:
+    completed_rows = np.flatnonzero(completed)
+    expected_last = (
+        int(capture_indices[int(completed_rows[-1])])
+        if completed_rows.size
+        else -1
+    )
+    if last_completed != expected_last:
         raise _InvalidArtifact(
             "processing_flags_mismatch",
-            "an empty capture must record last_completed_capture_index as -1",
+            "last_completed_capture_index does not match the last committed row",
         )
 
 
@@ -2802,9 +2810,39 @@ def _validate_peak_support_analysis_payload(h5: h5py.File, manifest: Any) -> Non
                 "dataset_shape_mismatch",
                 f"{path} has an unexpected shape",
             )
-    if "components" in h5:
+    component_policy = manifest.component_policy
+    analysis_mode = component_policy.get("analysis_mode")
+    expected_components = component_policy.get("component_table_written")
+    if analysis_mode not in {"energy_only", "component_table"}:
+        raise _InvalidArtifact(
+            "component_policy_invalid",
+            "component_policy.analysis_mode must be energy_only or component_table",
+        )
+    if not isinstance(expected_components, bool):
+        raise _InvalidArtifact(
+            "component_policy_invalid",
+            "component_policy.component_table_written must be boolean",
+        )
+    if expected_components != (analysis_mode == "component_table"):
+        raise _InvalidArtifact(
+            "component_policy_invalid",
+            "component_policy analysis_mode and component_table_written disagree",
+        )
+    actual_components = "components" in h5
+    if actual_components != expected_components:
+        raise _InvalidArtifact(
+            "component_table_presence_mismatch",
+            "components group presence does not match manifest component_policy",
+        )
+    if actual_components:
+        components = h5.get("components")
+        if not isinstance(components, h5py.Group):
+            raise _InvalidArtifact(
+                "component_table_invalid",
+                "components must be an HDF5 group",
+            )
         _validate_component_table(
-            h5["components"],
+            components,
             entry_count,
             manifest.tau_values,
             manifest.entry_mask_ids,

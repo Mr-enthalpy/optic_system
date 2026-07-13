@@ -161,6 +161,23 @@ class PeakSupportAnalysisManifest:
         ):
             if not isinstance(value, dict):
                 raise DiffractionSupportAnalysisError(f"{name} must be a mapping")
+        analysis_mode = self.component_policy.get("analysis_mode")
+        component_table_written = self.component_policy.get(
+            "component_table_written"
+        )
+        if analysis_mode not in {"energy_only", "component_table"}:
+            raise DiffractionSupportAnalysisError(
+                "component_policy.analysis_mode must be energy_only or component_table"
+            )
+        if not isinstance(component_table_written, bool):
+            raise DiffractionSupportAnalysisError(
+                "component_policy.component_table_written must be boolean"
+            )
+        expected_written = analysis_mode == "component_table"
+        if component_table_written != expected_written:
+            raise DiffractionSupportAnalysisError(
+                "component_policy analysis_mode and component_table_written disagree"
+            )
 
     def to_json_text(self) -> str:
         return json.dumps(

@@ -291,7 +291,9 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   Processing flags separately record `capture_complete` (all rows committed)
   and `run_succeeded` (the enclosing run ended without an error). Partial runs
   and a fully captured run followed by a task error therefore remain
-  structurally representable; they do not omit schema fields. Historical v2
+  structurally representable. `last_completed_capture_index` must equal the
+  capture index stored on the final committed row. Partial runs do not omit
+  schema fields. Historical v2
   captures remain readable against their original,
   narrower structural contract: v2 does not require the later root
   `artifact_type`, finalized capture-count flags, or fully initialized
@@ -300,6 +302,9 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   HDF5 numeric wavelength arrays use a stable `NaN` sentinel for those entries.
   JSON manifests encode the same broadband entries as `null` and never emit
   non-standard JSON `NaN` tokens.
+- A support report's `component_policy` is part of payload structure:
+  `component_table_written` must agree with `analysis_mode` and with the actual
+  presence of the HDF5 `components` group.
 - `ValidityResult` intentionally does not retain the input path. A future
   catalog owns `(storage_root, rel_path)` separately, so machine-specific
   absolute paths cannot leak into tracked catalog records.

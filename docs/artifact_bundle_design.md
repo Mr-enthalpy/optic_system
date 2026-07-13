@@ -131,6 +131,9 @@ valid illumination identity:
 label. HDF5 survey/dictionary numeric arrays use the documented `NaN` sentinel;
 JSON manifests encode the same broadband wavelength as `null`. Strict JSON
 validation rejects non-standard `NaN` and infinity tokens in every other field.
+For support reports, the embedded `component_policy.analysis_mode` and
+`component_table_written` fields must also agree with whether the HDF5
+`components` group exists.
 
 A syntactically readable JSON scalar or array is structurally `invalid` when a
 mapping is required, not `unreadable`. A newer schema is `unsupported`, because

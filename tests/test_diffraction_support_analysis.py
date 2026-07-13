@@ -148,6 +148,26 @@ def test_builds_peak_support_analysis_report_from_synthetic_survey(tmp_path: Pat
         assert _decode(f["source/survey_h5"][()]) == str(survey_h5)
 
 
+def test_component_table_policy_requires_components_group(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support_without_components.h5"
+    _write_synthetic_survey(survey_h5)
+    analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[10],
+        min_component_area=2,
+    )
+    with h5py.File(report_h5, "r+") as h5:
+        del h5["components"]
+
+    result = check_validity("peak_support_analysis_report", report_h5)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("component_table_presence_mismatch",)
+
+
 def test_uses_fifth_percentile_background_and_corr_clip(tmp_path: Path) -> None:
     survey_h5 = tmp_path / "survey.h5"
     report_h5 = tmp_path / "support.h5"
