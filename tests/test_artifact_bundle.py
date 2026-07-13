@@ -426,3 +426,30 @@ def test_bundle_non_utf8_manifest_is_unreadable_not_an_exception(tmp_path: Path)
     assert result.reason_codes == ("bundle_manifest_unreadable",)
     with pytest.raises(ArtifactBundleError, match="UTF-8"):
         ArtifactBundleManifest.load_json(manifest_path)
+
+
+def test_bundle_with_newer_artifact_schema_is_unsupported(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "bundle.manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "artifact_id": "future_pupil_generation",
+                "artifact_type": "pupil_profile",
+                "schema_version": schema_compat("pupil_profile").current + 1,
+                "payloads": {
+                    "data": {
+                        "rel_path": "profile.json",
+                        "media_type": "application/json",
+                        "size_bytes": 0,
+                        "sha256": "sha256:" + "0" * 64,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = validate_bundle(manifest_path, tmp_path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("schema_newer_than_supported",)

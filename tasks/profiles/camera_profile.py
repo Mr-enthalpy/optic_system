@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -65,11 +66,22 @@ class CameraProfileIllumination:
         if self.mode == MONOCHROMATIC:
             if not self.wavelengths_nm:
                 raise ProfileError("monochromatic illumination requires wavelengths_nm")
-            nonpositive = [w for w in self.wavelengths_nm if w <= 0]
+            nonpositive = [
+                w
+                for w in self.wavelengths_nm
+                if not math.isfinite(float(w)) or w <= 0
+            ]
             if nonpositive:
                 raise ProfileError(
-                    f"monochromatic wavelengths_nm must be positive, got {nonpositive}"
+                    "monochromatic wavelengths_nm must be finite and positive, "
+                    f"got {nonpositive}"
                 )
+            for name, value in (
+                ("tls_setpoint_nm", self.tls_setpoint_nm),
+                ("effective_wavelength_nm", self.effective_wavelength_nm),
+            ):
+                if value is not None and not math.isfinite(float(value)):
+                    raise ProfileError(f"{name} must be finite when present")
             if self.tls_setpoint_nm == 0:
                 raise ProfileError(
                     "tls_setpoint_nm: 0 is only valid for broadband_passthrough"
@@ -125,8 +137,18 @@ class PerWavelengthCameraSettings:
         return settings
 
     def validate(self) -> None:
-        if self.exposure_us <= 0:
-            raise ProfileError("exposure_us must be positive")
+        _require_finite_camera_number(
+            self.exposure_us,
+            "exposure_us",
+            positive=True,
+        )
+        _require_finite_camera_number(self.gain_db, "gain_db")
+        for name, value in (
+            ("peak_pixel", self.peak_pixel),
+            ("saturation_margin", self.saturation_margin),
+        ):
+            if value is not None:
+                _require_finite_camera_number(value, name)
         if self.frames_per_capture is not None and self.frames_per_capture < 1:
             raise ProfileError("frames_per_capture must be >= 1")
         _validate_peak_domain_fields(
@@ -419,12 +441,40 @@ def _validate_peak_domain_fields(
 
 
 def _validate_single_camera_settings(profile: CameraProfile) -> None:
-    if profile.exposure_us is None or profile.exposure_us <= 0:
+    if profile.exposure_us is None:
         raise ProfileError("camera.exposure_us must be positive")
+    _require_finite_camera_number(
+        profile.exposure_us,
+        "camera.exposure_us",
+        positive=True,
+    )
     if profile.gain_db is None:
         raise ProfileError("camera.gain_db is required")
+    _require_finite_camera_number(profile.gain_db, "camera.gain_db")
+    for name, value in (
+        ("camera.peak_pixel", profile.peak_pixel),
+        ("camera.saturation_margin", profile.saturation_margin),
+    ):
+        if value is not None:
+            _require_finite_camera_number(value, name)
     if profile.frames_per_capture is not None and profile.frames_per_capture < 1:
         raise ProfileError("camera.frames_per_capture must be >= 1")
+
+
+def _require_finite_camera_number(
+    value: Any,
+    name: str,
+    *,
+    positive: bool = False,
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ProfileError(f"{name} must be a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ProfileError(f"{name} must be finite")
+    if positive and number <= 0:
+        raise ProfileError(f"{name} must be positive")
+    return number
 
 
 def _wavelength_key(wavelength_nm: float) -> str:

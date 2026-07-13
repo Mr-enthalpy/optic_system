@@ -29,6 +29,27 @@ def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
+def wavelengths_from_json(values: list[Any]) -> list[float]:
+    """Decode JSON wavelength values, mapping broadband ``null`` to NaN."""
+    return [float("nan") if value is None else float(value) for value in values]
+
+
+def wavelengths_to_json(values: list[Any]) -> list[float | None]:
+    """Encode finite wavelengths and the broadband NaN sentinel as strict JSON."""
+    result: list[float | None] = []
+    for index, value in enumerate(values):
+        if isinstance(value, (bool, np.bool_)):
+            raise ValueError(f"wavelengths[{index}] must be a number")
+        number = float(value)
+        if math.isnan(number):
+            result.append(None)
+        elif math.isfinite(number):
+            result.append(number)
+        else:
+            raise ValueError(f"wavelengths[{index}] must be finite or broadband NaN")
+    return result
+
+
 def read_json_dataset_or_attr(group: h5py.Group, name: str) -> dict[str, Any]:
     if name in group:
         text = decode_h5_string(group[name][()])

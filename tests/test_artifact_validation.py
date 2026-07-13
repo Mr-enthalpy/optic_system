@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import tasks.artifacts.validation as artifact_validation
+import tasks.raw_capture_h5 as raw_capture_h5
 from tasks.artifact_versioning import schema_compat
 from tasks.artifacts.validation import (
     VALIDATOR_REGISTRY,
@@ -16,6 +17,7 @@ from tasks.artifacts.validation import (
 )
 from tasks.capture_plan import CapturePlan
 from tasks.profiles import CameraProfile, PupilProfile
+from tasks.profiles.camera_profile import ProfileError
 from tasks.psf.analyze_diffraction_support import (
     DiffractionSupportAnalysisError,
     PeakSupportAnalysisManifest,
@@ -285,6 +287,9 @@ def _write_historical_v2_raw_capture(path: Path) -> None:
         flags_text = flags_value.decode("utf-8") if isinstance(flags_value, bytes) else str(flags_value)
         flags = json.loads(flags_text)
         flags["raw_capture_schema_version"] = 2
+        flags["completed"] = bool(h5["capture/completed"][:].all())
+        del flags["capture_complete"]
+        del flags["run_succeeded"]
         del flags["n_captures_written"]
         del flags["n_captures_total"]
         h5["capture/processing_flags_json"][()] = json.dumps(flags, sort_keys=True)
@@ -541,6 +546,52 @@ def test_validation_reports_legacy_and_unreadable_locations(tmp_path: Path) -> N
     assert check_validity("raw_capture", unreadable_hdf).outcome is ValidityOutcome.UNREADABLE
 
 
+@pytest.mark.parametrize("root", ["[]", '"profile"', "1"])
+def test_parsed_non_mapping_json_root_is_invalid(
+    tmp_path: Path,
+    root: str,
+) -> None:
+    path = tmp_path / "invalid_root.json"
+    path.write_text(root, encoding="utf-8")
+
+    result = check_validity("pupil_profile", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("json_root_invalid",)
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_nonstandard_json_numeric_constants_are_invalid(
+    tmp_path: Path,
+    token: str,
+) -> None:
+    data = _camera_profile().to_dict()
+    text = json.dumps(data, allow_nan=False)
+    exposure_field = '"exposure_us": 100.0'
+    assert exposure_field in text
+    text = text.replace(exposure_field, f'"exposure_us": {token}')
+    path = tmp_path / "camera_profile.json"
+    path.write_text(text, encoding="utf-8")
+
+    result = check_validity("camera_profile", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("json_number_nonfinite",)
+
+
+@pytest.mark.parametrize("field", ["exposure_us", "gain_db"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_camera_profile_rejects_nonfinite_settings_before_serialization(
+    field: str,
+    value: float,
+) -> None:
+    data = _camera_profile().to_dict()
+    data["camera"][field] = value
+
+    with pytest.raises(ProfileError, match="finite"):
+        CameraProfile.from_dict(data, legacy_mode=False)
+
+
 def test_json_artifact_validators_accept_complete_structures(tmp_path: Path) -> None:
     artifacts = [
         ("camera_profile", _camera_profile()),
@@ -602,6 +653,16 @@ def test_json_manifest_validate_methods_reject_structural_contradictions() -> No
     dictionary = _dictionary_manifest()
     dictionary.applied_normalization_policy = ""
     with pytest.raises(PeakPatchPSFDictionaryError, match="normalization"):
+        dictionary.validate()
+
+    dictionary = _dictionary_manifest()
+    dictionary.unique_mask_ids = ["wrong"]
+    with pytest.raises(PeakPatchPSFDictionaryError, match="unique_mask_ids"):
+        dictionary.validate()
+
+    dictionary = _dictionary_manifest()
+    dictionary.unique_wavelengths_nm = [560.0]
+    with pytest.raises(PeakPatchPSFDictionaryError, match="unique_wavelengths_nm"):
         dictionary.validate()
 
     support = _support_manifest()
@@ -669,6 +730,22 @@ def test_raw_capture_validator_requires_v3_root_artifact_type(tmp_path: Path) ->
     assert result.reason_codes == ("artifact_type_missing",)
 
 
+def test_raw_capture_validator_reports_newer_schema_as_unsupported(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "newer_raw_capture.h5"
+    _write_raw_capture(path)
+    with h5py.File(path, "r+") as h5:
+        h5.attrs["raw_capture_schema_version"] = (
+            schema_compat("raw_capture").current + 1
+        )
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("schema_newer_than_supported",)
+
+
 def test_raw_capture_validator_accepts_historical_v2_contract(tmp_path: Path) -> None:
     path = tmp_path / "historical_v2_raw_capture.h5"
     _write_historical_v2_raw_capture(path)
@@ -715,11 +792,129 @@ def test_raw_capture_validator_accepts_incomplete_capture_with_complete_schema(
         frames_avg=np.zeros((2, 3), dtype=np.float32),
         camera_meta={},
     )
-    writer.finalize(completed=False)
+    writer.finalize()
 
     result = check_validity("raw_capture", path)
 
     assert result.outcome is ValidityOutcome.VALID
+
+
+def test_raw_writer_failed_append_does_not_commit_partial_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "failed_append_raw_capture.h5"
+    plan = CapturePlan.from_dict(
+        {
+            "plan_id": "failed_append_plan_v1",
+            "wavelengths": [
+                {
+                    "illumination": {
+                        "mode": "monochromatic",
+                        "effective_wavelength_nm": 550.0,
+                        "tls_setpoint_nm": 550.0,
+                        "wavelength_label_nm": 550.0,
+                    }
+                }
+            ],
+            "masks": [{"mask_id": "mask_1"}],
+            "camera": {"frames_per_capture": 1},
+            "store_burst": False,
+        }
+    )
+
+    def _fail_extent(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("extent conversion failed")
+
+    with pytest.raises(RuntimeError, match="extent conversion failed"):
+        with RawCaptureWriter(path, plan) as writer:
+            writer.write_lcd_metadata({"subpixel_axis": 1})
+            writer.write_physical_masks([np.ones((2, 3), dtype=np.uint8)])
+            monkeypatch.setattr(
+                raw_capture_h5,
+                "camera_frame_extent_from_camera_metadata",
+                _fail_extent,
+            )
+            writer.append_capture(
+                capture_index=0,
+                wavelength_index=0,
+                mask_index=0,
+                frames=None,
+                frames_avg=np.zeros((2, 3), dtype=np.float32),
+                camera_meta={},
+            )
+
+    with h5py.File(path, "r") as h5:
+        assert not bool(h5["capture/completed"][:].any())
+        flags_value = h5["capture/processing_flags_json"][()]
+        flags = json.loads(
+            flags_value.decode("utf-8")
+            if isinstance(flags_value, bytes)
+            else str(flags_value)
+        )
+        assert flags["n_captures_written"] == 0
+        assert flags["capture_complete"] is False
+        assert flags["run_succeeded"] is False
+        assert flags["error"] == "extent conversion failed"
+    assert check_validity("raw_capture", path).outcome is ValidityOutcome.VALID
+
+
+def test_raw_writer_all_rows_committed_then_run_failure_remains_valid(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "complete_capture_failed_run.h5"
+    plan = CapturePlan.from_dict(
+        {
+            "plan_id": "complete_capture_failed_run_v1",
+            "wavelengths": [
+                {
+                    "illumination": {
+                        "mode": "monochromatic",
+                        "effective_wavelength_nm": 550.0,
+                        "tls_setpoint_nm": 550.0,
+                        "wavelength_label_nm": 550.0,
+                    }
+                }
+            ],
+            "masks": [{"mask_id": "mask_1"}, {"mask_id": "mask_2"}],
+            "camera": {"frames_per_capture": 1},
+            "store_burst": False,
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="post-capture failure"):
+        with RawCaptureWriter(path, plan) as writer:
+            writer.write_lcd_metadata({"subpixel_axis": 1})
+            writer.write_physical_masks(
+                [
+                    np.ones((2, 3), dtype=np.uint8),
+                    np.ones((2, 3), dtype=np.uint8),
+                ]
+            )
+            for capture_index in range(plan.n_captures):
+                writer.append_capture(
+                    capture_index=capture_index,
+                    wavelength_index=0,
+                    mask_index=capture_index,
+                    frames=None,
+                    frames_avg=np.zeros((2, 3), dtype=np.float32),
+                    camera_meta={},
+                )
+            raise RuntimeError("post-capture failure")
+
+    with h5py.File(path, "r") as h5:
+        assert bool(h5["capture/completed"][:].all())
+        flags_value = h5["capture/processing_flags_json"][()]
+        flags = json.loads(
+            flags_value.decode("utf-8")
+            if isinstance(flags_value, bytes)
+            else str(flags_value)
+        )
+        assert flags["n_captures_written"] == plan.n_captures
+        assert flags["capture_complete"] is True
+        assert flags["run_succeeded"] is False
+        assert flags["error"] == "post-capture failure"
+    assert check_validity("raw_capture", path).outcome is ValidityOutcome.VALID
 
 
 def test_raw_capture_validator_requires_burst_payload_when_store_burst_is_true(
@@ -774,9 +969,38 @@ def test_broadband_survey_uses_nan_sentinel_and_validates_against_source_identit
     manifest = _write_broadband_survey_h5(path)
 
     manifest.validate()
+    manifest_text = manifest.to_json()
+    manifest_data = json.loads(manifest_text)
+    assert "NaN" not in manifest_text
+    assert manifest_data["entry_wavelengths_nm"] == [None, None]
+    assert manifest_data["unique_wavelengths_nm"] == [None]
+    round_tripped = FullFramePSFSurveyManifest.from_dict(
+        manifest_data,
+        legacy_mode=False,
+    )
+    assert all(np.isnan(value) for value in round_tripped.entry_wavelengths_nm)
     result = check_validity("full_frame_psf_survey", path)
 
     assert result.outcome is ValidityOutcome.VALID
+
+
+def test_broadband_dictionary_json_uses_null_and_validates(tmp_path: Path) -> None:
+    manifest = _dictionary_manifest()
+    manifest.illumination_mode = "broadband_passthrough"
+    manifest.entry_wavelengths_nm = [float("nan")]
+    manifest.unique_wavelengths_nm = [float("nan")]
+    path = tmp_path / "broadband_dictionary.json"
+
+    text = manifest.to_json(path)
+    data = json.loads(text)
+
+    assert "NaN" not in text
+    assert data["entry_wavelengths_nm"] == [None]
+    assert data["unique_wavelengths_nm"] == [None]
+    assert (
+        check_validity("peak_patch_psf_dictionary", path).outcome
+        is ValidityOutcome.VALID
+    )
 
 
 def test_survey_validator_rejects_hdf5_manifest_disagreement(tmp_path: Path) -> None:
@@ -865,6 +1089,29 @@ def test_dictionary_validator_rejects_wrong_root_artifact_type(tmp_path: Path) -
 
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == ("artifact_type_mismatch",)
+
+
+@pytest.mark.parametrize(
+    ("dataset", "value"),
+    [
+        ("peak_patch_dictionary/unique_mask_ids", "other_mask"),
+        ("peak_patch_dictionary/unique_wavelength_nm", 560.0),
+    ],
+)
+def test_dictionary_validator_rejects_unique_metadata_disagreement(
+    tmp_path: Path,
+    dataset: str,
+    value: object,
+) -> None:
+    path = tmp_path / "dictionary.h5"
+    _write_dictionary_h5(path)
+    with h5py.File(path, "r+") as h5:
+        h5[dataset][0] = value
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("manifest_metadata_mismatch",)
 
 
 @pytest.mark.parametrize(

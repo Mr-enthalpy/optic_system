@@ -18,6 +18,8 @@ from tasks.artifacts.frame_source import (
 )
 from tasks.artifacts.json_io import (
     decode_h5_string,
+    wavelengths_from_json,
+    wavelengths_to_json,
 )
 from tasks.runtime_mode import RuntimePolicy
 from tasks.valid_pixel_domain import (
@@ -100,7 +102,9 @@ class PeakSupportAnalysisManifest:
             radial_policy=dict(data["radial_policy"]),
             component_policy=dict(data["component_policy"]),
             entry_mask_ids=[str(x) for x in data["entry_mask_ids"]],
-            entry_wavelengths_nm=[float(x) for x in data["entry_wavelengths_nm"]],
+            entry_wavelengths_nm=wavelengths_from_json(
+                list(data["entry_wavelengths_nm"])
+            ),
             notes=data.get("notes"),
             valid_pixel_domain=(
                 dict(data["valid_pixel_domain"])
@@ -115,6 +119,9 @@ class PeakSupportAnalysisManifest:
         out["artifact_type"] = "peak_support_analysis_report"
         emit_schema_version(out, "peak_support_analysis_report")
         out["frame_shape"] = [int(self.frame_shape[0]), int(self.frame_shape[1])]
+        out["entry_wavelengths_nm"] = wavelengths_to_json(
+            self.entry_wavelengths_nm
+        )
         return out
 
     def validate(self) -> None:
@@ -156,7 +163,12 @@ class PeakSupportAnalysisManifest:
                 raise DiffractionSupportAnalysisError(f"{name} must be a mapping")
 
     def to_json_text(self) -> str:
-        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        return json.dumps(
+            self.to_dict(),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
 
 
 @dataclass

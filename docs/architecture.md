@@ -270,7 +270,8 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   also have artifact-specific structural validators.
 - `ValidityResult` reports one machine-readable outcome: `valid` means
   structurally validated; `invalid` means a validator found an internal
-  contradiction; `unsupported` means the known type lacks a complete validator;
+  contradiction; `unsupported` means the known type lacks a complete validator
+  or declares a schema newer than this reader;
   `legacy_unversioned` means explicit schema metadata is absent; and `unreadable`
   covers unavailable or unparsable local payloads. Unsupported is not evidence
   that data is invalid, and neither readability nor structural validity is a
@@ -278,19 +279,27 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   `unsupported` with `validator_failed`, not as a claim that the artifact data is
   invalid. Strict validation checks serialized field types before invoking
   compatibility loaders, so coercive legacy parsing cannot repair a malformed
-  current artifact during validation.
+  current artifact during validation. A parsed JSON scalar or array root is
+  `invalid`, while bytes or syntax that cannot be parsed are `unreadable`.
+  Strict JSON numbers are finite; non-standard `NaN` and infinity tokens are
+  rejected.
 - Current `raw_capture` schema v3 validation requires the root identity
   attributes and every fixed raw, mask, illumination, TLS, camera, LCD,
   profile, and capture metadata field, including finalized written/planned
-  capture counts. Partial runs remain structurally representable through
-  `capture/completed` and matching processing flags; they do not omit schema
-  fields. Historical v2 captures remain readable against their original,
+  capture counts. `RawCaptureWriter` writes all frame and row metadata before
+  setting `capture/completed[row]`, so that bitmap is the row commit marker.
+  Processing flags separately record `capture_complete` (all rows committed)
+  and `run_succeeded` (the enclosing run ended without an error). Partial runs
+  and a fully captured run followed by a task error therefore remain
+  structurally representable; they do not omit schema fields. Historical v2
+  captures remain readable against their original,
   narrower structural contract: v2 does not require the later root
   `artifact_type`, finalized capture-count flags, or fully initialized
   mask/LCD metadata. Broadband pass-through is a valid illumination identity
   (`effective_wavelength_nm = null`, `tls_setpoint_nm = 0`), and the measured
-  survey's numeric wavelength arrays use a stable `NaN` sentinel for those
-  entries.
+  HDF5 numeric wavelength arrays use a stable `NaN` sentinel for those entries.
+  JSON manifests encode the same broadband entries as `null` and never emit
+  non-standard JSON `NaN` tokens.
 - `ValidityResult` intentionally does not retain the input path. A future
   catalog owns `(storage_root, rel_path)` separately, so machine-specific
   absolute paths cannot leak into tracked catalog records.

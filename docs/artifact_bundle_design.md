@@ -102,7 +102,8 @@ trust, supersede a predecessor, or write catalog events.
 - `valid`: the declared local representation is readable and structurally
   consistent.
 - `invalid`: a validator found a structural contradiction.
-- `unsupported`: the type is known but no complete structural validator exists.
+- `unsupported`: the type is known but no complete structural validator exists,
+  or the artifact schema is newer than the local reader.
 - `legacy_unversioned`: the serialized representation lacks explicit schema
   version metadata.
 - `unreadable`: the location or serialized payload cannot be read or parsed.
@@ -117,14 +118,23 @@ Current `raw_capture` schema v3 validation requires its root identity
 attributes and all fixed raw, masks, illumination, TLS, camera, LCD, profiles,
 and capture metadata surfaces, including finalized written/planned capture
 counts. An incomplete acquisition is represented by the `capture/completed`
-bitmap and matching processing flags, not by omitting v3 datasets. Historical
+bitmap and matching processing flags, not by omitting v3 datasets. The writer
+sets each bitmap entry only after the frame and all row metadata have been
+written. `capture_complete` records whether every row is committed, while
+`run_succeeded` records whether the enclosing run ended without an error; these
+are intentionally independent. Historical
 schema v2 remains structurally readable through its original narrower contract:
 it does not require the later root `artifact_type`, finalized capture-count
 flags, or fully initialized mask/LCD metadata. Broadband pass-through remains a
 valid illumination identity:
 `effective_wavelength_nm = null`, `tls_setpoint_nm = 0`, and no wavelength
-label; downstream survey/dictionary metadata uses the documented `NaN`
-sentinel only where a numeric wavelength array is required.
+label. HDF5 survey/dictionary numeric arrays use the documented `NaN` sentinel;
+JSON manifests encode the same broadband wavelength as `null`. Strict JSON
+validation rejects non-standard `NaN` and infinity tokens in every other field.
+
+A syntactically readable JSON scalar or array is structurally `invalid` when a
+mapping is required, not `unreadable`. A newer schema is `unsupported`, because
+it may be valid under a newer reader and is not evidence of corrupt data.
 
 Only explicit artifact-contract violations produce `invalid`. An unexpected
 validator failure, missing optional validator dependency, or unhandled validator

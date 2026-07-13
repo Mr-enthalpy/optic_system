@@ -8,6 +8,7 @@ import pytest
 from tasks.artifact_versioning import (
     CURRENT_SCHEMA_VERSIONS,
     LegacyUnversionedArtifactError,
+    NewerSchemaVersionError,
     SchemaCompatibilityError,
     check_validity,
     emit_schema_version,
@@ -42,7 +43,7 @@ def test_missing_schema_version_requires_explicit_legacy_mode():
 
 def test_newer_schema_version_rejected():
     current = schema_compat("camera_profile").current
-    with pytest.raises(SchemaCompatibilityError, match="newer"):
+    with pytest.raises(NewerSchemaVersionError, match="newer"):
         read_schema_version({"schema_version": current + 1}, "camera_profile")
 
 
@@ -118,7 +119,7 @@ def test_check_validity_type_mismatch(tmp_path: Path):
     assert result.reason_codes == ("artifact_type_mismatch",)
 
 
-def test_check_validity_incompatible_schema(tmp_path: Path):
+def test_check_validity_reports_newer_schema_as_unsupported(tmp_path: Path):
     profile = PupilProfile.from_dict(pupil_profile_dict())
     data = profile.to_dict()
     data["schema_version"] = schema_compat("pupil_profile").current + 5
@@ -128,6 +129,19 @@ def test_check_validity_incompatible_schema(tmp_path: Path):
     result = check_validity("pupil_profile", path)
 
     assert not result.ok
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("schema_newer_than_supported",)
+
+
+def test_check_validity_reports_malformed_schema_as_invalid(tmp_path: Path):
+    profile = PupilProfile.from_dict(pupil_profile_dict())
+    data = profile.to_dict()
+    data["schema_version"] = "1"
+    path = tmp_path / "pupil_profile.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = check_validity("pupil_profile", path)
+
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == ("schema_incompatible",)
 

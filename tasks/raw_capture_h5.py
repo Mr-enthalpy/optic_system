@@ -259,8 +259,9 @@ class RawCaptureWriter:
             "training_ready": False,
             "raw_capture_schema_version": RAW_CAPTURE_SCHEMA_VERSION,
             "capture_role": _capture_role(self._plan),
-            "completed": False,
-            "error": None,
+            "capture_complete": False,
+            "run_succeeded": False,
+            "error": "capture not finalized",
             "last_completed_capture_index": -1,
             "n_captures_written": 0,
             "n_captures_total": n_cap,
@@ -356,6 +357,26 @@ class RawCaptureWriter:
         row = self._n_written
         store_burst = self._plan.store_burst
 
+        capture_index = _validated_index(
+            capture_index,
+            upper_bound=self._plan.n_captures,
+            name="capture_index",
+        )
+        wavelength_index = _validated_index(
+            wavelength_index,
+            upper_bound=self._plan.n_wavelengths,
+            name="wavelength_index",
+        )
+        mask_index = _validated_index(
+            mask_index,
+            upper_bound=self._plan.n_masks,
+            name="mask_index",
+        )
+        if not isinstance(camera_meta, dict):
+            raise RawCaptureWriteError("camera_meta must be a mapping")
+        if tls_status is not None and not isinstance(tls_status, dict):
+            raise RawCaptureWriteError("tls_status must be a mapping or null")
+
         avg_input = np.asarray(frames_avg)
         avg = avg_input.astype(self._storage_policy.frames_avg_dtype(), copy=False)
         if avg.ndim != 2:
@@ -363,11 +384,7 @@ class RawCaptureWriter:
                 f"frames_avg must be 2D [H, W], got {avg.ndim}D shape {avg.shape}"
             )
 
-        dset_avg: h5py.Dataset = f["raw/frames_avg"]
-        if dset_avg.shape[1:] != avg.shape:
-            dset_avg.resize((self._plan.n_captures, avg.shape[0], avg.shape[1]))
-        dset_avg[row] = avg
-
+        burst_input: np.ndarray | None = None
         if store_burst:
             if frames is None:
                 raise RawCaptureWriteError(
@@ -379,10 +396,91 @@ class RawCaptureWriter:
                     "frames burst must be 3D [K, H, W], got "
                     f"{burst_input.ndim}D shape {burst_input.shape}"
                 )
+            expected_count = self._plan.camera.frames_per_capture
+            if burst_input.shape[0] != expected_count:
+                raise RawCaptureWriteError(
+                    "frames burst count does not match plan.camera.frames_per_capture: "
+                    f"expected {expected_count}, got {burst_input.shape[0]}"
+                )
+            if tuple(burst_input.shape[1:]) != tuple(avg.shape):
+                raise RawCaptureWriteError(
+                    "frames burst spatial shape must match frames_avg: "
+                    f"expected {avg.shape}, got {burst_input.shape[1:]}"
+                )
+
+        requested_exposure = float(
+            requested_exposure_us if requested_exposure_us is not None else -1
+        )
+        requested_gain = float(
+            requested_gain_db if requested_gain_db is not None else -1
+        )
+        readback_exposure = (
+            readback_exposure_us
+            if readback_exposure_us is not None
+            else camera_meta.get("exposure_us")
+        )
+        readback_gain = (
+            readback_gain_db
+            if readback_gain_db is not None
+            else camera_meta.get("gain_db")
+        )
+        readback_exposure_value = float(
+            readback_exposure if readback_exposure is not None else -1
+        )
+        readback_gain_value = float(
+            readback_gain if readback_gain is not None else -1
+        )
+        frame_extent = camera_frame_extent_json_dict(
+            camera_frame_extent_from_camera_metadata(
+                camera_meta,
+                fallback_shape=(int(avg.shape[0]), int(avg.shape[1])),
+            )
+        )
+        frame_extent_json = _json_str(frame_extent)
+        camera_timestamp_ns = int(camera_meta.get("timestamp_ns") or _now_ns())
+        camera_status_json = _json_str(camera_meta.get("status", {}))
+        lcd_timestamp_ns = int(lcd_display_timestamp_ns)
+
+        wl = self._plan.wavelengths[wavelength_index]
+        if tls_status:
+            grating = int(tls_status.get("grating") or wl.grating or -1)
+            tls_timestamp_ns = int(tls_status.get("timestamp_ns") or _now_ns())
+        else:
+            grating = int(wl.grating or -1)
+            tls_timestamp_ns = _now_ns()
+        illumination_data = _illumination_status_json(wl, tls_status)
+        illumination_json = _json_str(illumination_data)
+        tls_setpoint_nm = (
+            float(illumination_data["tls_setpoint_nm"])
+            if illumination_data.get("tls_setpoint_nm") is not None
+            else float("nan")
+        )
+        effective_wavelength_nm = (
+            float(illumination_data["effective_wavelength_nm"])
+            if illumination_data.get("effective_wavelength_nm") is not None
+            else float("nan")
+        )
+        tls_settle_ms = int(wl.settle_ms)
+        tls_status_json = _json_str(tls_status or {})
+
+        # A row is committed only after every frame and metadata field succeeds.
+        dset_avg: h5py.Dataset = f["raw/frames_avg"]
+        if dset_avg.shape[1:] != avg.shape:
+            dset_avg.resize((self._plan.n_captures, avg.shape[0], avg.shape[1]))
+        dset_avg[row] = avg
+
+        if burst_input is not None:
             dset = self._require_burst_dataset(burst_input.dtype)
             burst = burst_input.astype(dset.dtype, copy=False)
             if dset.shape[2:] != burst.shape[1:]:
-                dset.resize((self._plan.n_captures, burst.shape[0], burst.shape[1], burst.shape[2]))
+                dset.resize(
+                    (
+                        self._plan.n_captures,
+                        burst.shape[0],
+                        burst.shape[1],
+                        burst.shape[2],
+                    )
+                )
             dset[row] = burst
 
         raw_grp = f["raw"]
@@ -397,74 +495,57 @@ class RawCaptureWriter:
         cap_grp["wavelength_index"][row] = wavelength_index
         cap_grp["mask_index"][row] = mask_index
         cap_grp["burst_count"][row] = self._plan.camera.frames_per_capture
-        cap_grp["completed"][row] = True
 
         cam_grp = f["camera"]
-        cam_grp["requested_exposure_us"][row] = float(requested_exposure_us if requested_exposure_us is not None else -1)
-        cam_grp["requested_gain_db"][row] = float(requested_gain_db if requested_gain_db is not None else -1)
-        _readback_exposure = readback_exposure_us if readback_exposure_us is not None else camera_meta.get("exposure_us")
-        _readback_gain = readback_gain_db if readback_gain_db is not None else camera_meta.get("gain_db")
-        cam_grp["readback_exposure_us"][row] = float(_readback_exposure if _readback_exposure is not None else -1)
-        cam_grp["readback_gain_db"][row] = float(_readback_gain if _readback_gain is not None else -1)
-        frame_extent = camera_frame_extent_json_dict(
-            camera_frame_extent_from_camera_metadata(
-                camera_meta,
-                fallback_shape=(int(avg.shape[0]), int(avg.shape[1])),
-            )
-        )
-        frame_extent_json = _json_str(frame_extent)
+        cam_grp["requested_exposure_us"][row] = requested_exposure
+        cam_grp["requested_gain_db"][row] = requested_gain
+        cam_grp["readback_exposure_us"][row] = readback_exposure_value
+        cam_grp["readback_gain_db"][row] = readback_gain_value
         cam_grp["frame_extent_json"][row] = frame_extent_json
-        cam_grp["timestamp_ns"][row] = int(camera_meta.get("timestamp_ns") or _now_ns())
-        cam_grp["status_json"][row] = _json_str(camera_meta.get("status", {}))
+        cam_grp["timestamp_ns"][row] = camera_timestamp_ns
+        cam_grp["status_json"][row] = camera_status_json
 
         lcd_grp = f["lcd"]
         lcd_grp["settle_ms"][row] = self._plan.lcd_settle_ms
-        lcd_grp["display_timestamp_ns"][row] = lcd_display_timestamp_ns
+        lcd_grp["display_timestamp_ns"][row] = lcd_timestamp_ns
 
-        wl = self._plan.wavelengths[wavelength_index]
         wl_grp = f["tls"]
-        if tls_status:
-            _grat = int(
-                tls_status.get("grating") or wl.grating or -1
-            )
-            _tls_ts = int(
-                tls_status.get("timestamp_ns") or _now_ns()
-            )
-        else:
-            _grat = int(wl.grating or -1)
-            _tls_ts = _now_ns()
-
-        illum_json_str = _json_str(_illumination_status_json(wl, tls_status))
-        illum_data = _illumination_status_json(wl, tls_status)
-        f["illumination"]["illumination_json"][wavelength_index] = illum_json_str
-        f["illumination"]["tls_setpoint_nm"][wavelength_index] = (
-            float(illum_data.get("tls_setpoint_nm"))
-            if illum_data.get("tls_setpoint_nm") is not None
-            else float("nan")
-        )
+        f["illumination"]["illumination_json"][wavelength_index] = illumination_json
+        f["illumination"]["tls_setpoint_nm"][wavelength_index] = tls_setpoint_nm
         f["illumination"]["effective_wavelength_nm"][wavelength_index] = (
-            float(illum_data.get("effective_wavelength_nm"))
-            if illum_data.get("effective_wavelength_nm") is not None
-            else float("nan")
+            effective_wavelength_nm
         )
-        wl_grp["grating"][wavelength_index] = _grat
-        wl_grp["settle_ms"][wavelength_index] = wl.settle_ms
-        wl_grp["timestamp_ns"][wavelength_index] = _tls_ts
-        wl_grp["status_json"][wavelength_index] = _json_str(tls_status or {})
+        wl_grp["grating"][wavelength_index] = grating
+        wl_grp["settle_ms"][wavelength_index] = tls_settle_ms
+        wl_grp["timestamp_ns"][wavelength_index] = tls_timestamp_ns
+        wl_grp["status_json"][wavelength_index] = tls_status_json
 
+        cap_grp["completed"][row] = True
         self._n_written += 1
 
     def finalize(
         self,
-        completed: bool | None = None,
         error: str | None = None,
-        last_completed_capture_index: int | None = None,
     ) -> None:
         if self._file is None or self._closed:
             return
 
-        if completed is None:
-            completed = bool(np.asarray(self._file["capture/completed"][()]).all())
+        completed_bitmap = np.asarray(
+            self._file["capture/completed"][()],
+            dtype=bool,
+        )
+        completed_rows = np.flatnonzero(completed_bitmap)
+        captures_written = int(completed_rows.size)
+        capture_complete = bool(np.all(completed_bitmap))
+        run_succeeded = error is None
+        if captures_written:
+            last_row = int(completed_rows[-1])
+            last_completed_capture_index = int(
+                self._file["capture/capture_index"][last_row]
+            )
+        else:
+            last_completed_capture_index = -1
+        self._n_written = captures_written
 
         pf = {
             "scientific_calibration_valid": False,
@@ -472,14 +553,11 @@ class RawCaptureWriter:
             "training_ready": False,
             "raw_capture_schema_version": RAW_CAPTURE_SCHEMA_VERSION,
             "capture_role": _capture_role(self._plan),
-            "completed": completed,
+            "capture_complete": capture_complete,
+            "run_succeeded": run_succeeded,
             "error": error,
-            "last_completed_capture_index": (
-                last_completed_capture_index
-                if last_completed_capture_index is not None
-                else self._n_written - 1
-            ),
-            "n_captures_written": self._n_written,
+            "last_completed_capture_index": last_completed_capture_index,
+            "n_captures_written": captures_written,
             "n_captures_total": self._plan.n_captures,
         }
         self._file["capture/processing_flags_json"][()] = _json_str(pf)
@@ -501,11 +579,7 @@ class RawCaptureWriter:
         traceback: TracebackType | None,
     ) -> None:
         if exc_type is not None:
-            self.finalize(
-                completed=False,
-                error=str(exc_value),
-                last_completed_capture_index=self._n_written - 1,
-            )
+            self.finalize(error=str(exc_value))
         else:
             self.finalize()
 
@@ -533,6 +607,20 @@ class RawCaptureWriter:
             chunks=(1, k, int(chunk_h), int(chunk_w)),
             **self._storage_policy.compression_kwargs(),
         )
+
+
+def _validated_index(value: Any, *, upper_bound: int, name: str) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value,
+        (int, np.integer),
+    ):
+        raise RawCaptureWriteError(f"{name} must be an integer")
+    index = int(value)
+    if index < 0 or index >= upper_bound:
+        raise RawCaptureWriteError(
+            f"{name} must be in [0, {upper_bound}), got {index}"
+        )
+    return index
 
 
 def _ensure_open(file: h5py.File | None) -> h5py.File:

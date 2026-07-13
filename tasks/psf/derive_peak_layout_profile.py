@@ -9,6 +9,8 @@ from typing import Any
 import h5py
 import numpy as np
 
+from tasks.artifacts.json_io import wavelengths_from_json, wavelengths_to_json
+
 from tasks.artifacts.coordinate_frame import (
     camera_frame_extent_from_dict,
     resolve_coordinate_frame,
@@ -81,14 +83,13 @@ class PeakLayoutProfileManifest:
             local_background_stats=[
                 dict(v) for v in _require_list(data, "local_background_stats")
             ],
-            survey_wavelengths_nm=[
-                float(v)
-                for v in _require_list(
+            survey_wavelengths_nm=wavelengths_from_json(
+                _require_list(
                     data,
                     "survey_wavelengths_nm",
                     fallback_key="valid_wavelengths_nm",
                 )
-            ],
+            ),
             survey_mask_ids=[
                 str(v)
                 for v in _require_list(
@@ -97,9 +98,9 @@ class PeakLayoutProfileManifest:
                     fallback_key="valid_mask_ids",
                 )
             ],
-            valid_wavelengths_nm=[
-                float(v) for v in _require_list(data, "valid_wavelengths_nm")
-            ],
+            valid_wavelengths_nm=wavelengths_from_json(
+                _require_list(data, "valid_wavelengths_nm")
+            ),
             valid_mask_ids=[str(v) for v in _require_list(data, "valid_mask_ids")],
             validity_scope=_require_dict(data, "validity_scope"),
             detection_policy=_require_dict(data, "detection_policy"),
@@ -121,6 +122,12 @@ class PeakLayoutProfileManifest:
         data = asdict(self)
         data["artifact_type"] = "peak_layout_profile"
         data["frame_shape"] = list(self.frame_shape)
+        data["survey_wavelengths_nm"] = wavelengths_to_json(
+            self.survey_wavelengths_nm
+        )
+        data["valid_wavelengths_nm"] = wavelengths_to_json(
+            self.valid_wavelengths_nm
+        )
         emit_schema_version(data, "peak_layout_profile")
         return data
 
@@ -199,7 +206,12 @@ class PeakLayoutProfileManifest:
             )
 
     def to_json(self, path: str | Path | None = None) -> str:
-        text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        text = json.dumps(
+            self.to_dict(),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
         if path is not None:
             Path(path).write_text(text + "\n", encoding="utf-8")
         return text
@@ -560,4 +572,15 @@ def _nonnegative_int_pair(value: Any, name: str) -> tuple[int, int]:
 
 
 def _subset_values(values: list[float], candidates: list[float]) -> bool:
-    return all(any(float(value) == float(item) for item in candidates) for value in values)
+    return all(
+        any(_same_wavelength(value, item) for item in candidates)
+        for value in values
+    )
+
+
+def _same_wavelength(left: float, right: float) -> bool:
+    left_value = float(left)
+    right_value = float(right)
+    if math.isnan(left_value) or math.isnan(right_value):
+        return math.isnan(left_value) and math.isnan(right_value)
+    return left_value == right_value

@@ -9,6 +9,8 @@ from typing import Any
 import h5py
 import numpy as np
 
+from tasks.artifacts.json_io import wavelengths_from_json, wavelengths_to_json
+
 from tasks.artifacts.coordinate_frame import (
     CoordinateFrameDescriptor,
     camera_frame_extent_from_dict,
@@ -80,9 +82,9 @@ class SensorEnergyCenterProfile:
                 for item in _require_list(data, "per_entry_center_xy")
             ],
             per_entry_mask_ids=[str(x) for x in _require_list(data, "per_entry_mask_ids")],
-            per_entry_wavelengths_nm=[
-                float(x) for x in _require_list(data, "per_entry_wavelengths_nm")
-            ],
+            per_entry_wavelengths_nm=wavelengths_from_json(
+                _require_list(data, "per_entry_wavelengths_nm")
+            ),
             per_entry_background_value=[
                 float(x)
                 for x in data.get(
@@ -134,6 +136,9 @@ class SensorEnergyCenterProfile:
         data["per_entry_center_xy"] = [
             [float(x), float(y)] for x, y in self.per_entry_center_xy
         ]
+        data["per_entry_wavelengths_nm"] = wavelengths_to_json(
+            self.per_entry_wavelengths_nm
+        )
         data["per_entry_background_value"] = [
             float(x) for x in self.per_entry_background_value
         ]
@@ -226,7 +231,12 @@ class SensorEnergyCenterProfile:
             )
 
     def to_json(self, path: str | Path | None = None) -> str:
-        text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        text = json.dumps(
+            self.to_dict(),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
         if path is not None:
             Path(path).write_text(text + "\n", encoding="utf-8")
         return text
@@ -365,7 +375,11 @@ def derive_sensor_energy_center_profile(
     per_wavelength_std: dict[str, tuple[float, float]] = {}
     for wavelength in _unique_preserve_order(list(descriptor.entry_wavelengths_nm)):
         key = _wavelength_key(wavelength)
-        idx = [i for i, value in enumerate(descriptor.entry_wavelengths_nm) if float(value) == float(wavelength)]
+        idx = [
+            i
+            for i, value in enumerate(descriptor.entry_wavelengths_nm)
+            if _same_wavelength(value, wavelength)
+        ]
         values = center_arr[idx, :]
         per_wavelength_mean[key] = tuple(float(v) for v in np.mean(values, axis=0))
         per_wavelength_std[key] = tuple(float(v) for v in np.std(values, axis=0))
@@ -490,9 +504,17 @@ def _wavelength_key(value: float) -> str:
 def _unique_preserve_order(values: list[float]) -> list[float]:
     out: list[float] = []
     for value in values:
-        if not any(float(value) == float(existing) for existing in out):
+        if not any(_same_wavelength(value, existing) for existing in out):
             out.append(float(value))
     return out
+
+
+def _same_wavelength(left: float, right: float) -> bool:
+    left_value = float(left)
+    right_value = float(right)
+    if math.isnan(left_value) or math.isnan(right_value):
+        return math.isnan(left_value) and math.isnan(right_value)
+    return left_value == right_value
 
 
 def _require_str(data: dict[str, Any], key: str) -> str:

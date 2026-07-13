@@ -23,6 +23,8 @@ from tasks.artifacts.json_io import (
     read_string_array,
     sequence_equal_nan_aware,
     unique_preserve_order,
+    wavelengths_from_json,
+    wavelengths_to_json,
 )
 from .profile_requirements import (
     PSFArtifactError,
@@ -74,16 +76,16 @@ class FullFramePSFSurveyManifest:
             pupil_profile_id=_optional_str(data.get("pupil_profile_id")),
             camera_profile_id=_optional_str(data.get("camera_profile_id")),
             illumination_mode=_require_str(data, "illumination_mode"),
-            entry_wavelengths_nm=[
-                float(v) for v in _require_list(data, "entry_wavelengths_nm")
-            ],
+            entry_wavelengths_nm=wavelengths_from_json(
+                _require_list(data, "entry_wavelengths_nm")
+            ),
             entry_illumination_json=[
                 str(v) for v in data.get("entry_illumination_json", [])
             ],
             entry_mask_ids=[str(v) for v in _require_list(data, "entry_mask_ids")],
-            unique_wavelengths_nm=[
-                float(v) for v in _require_list(data, "unique_wavelengths_nm")
-            ],
+            unique_wavelengths_nm=wavelengths_from_json(
+                _require_list(data, "unique_wavelengths_nm")
+            ),
             unique_mask_ids=[str(v) for v in _require_list(data, "unique_mask_ids")],
             frame_shape=(int(frame_shape[0]), int(frame_shape[1])),
             camera_frame_extent=_require_dict(data, "camera_frame_extent"),
@@ -98,6 +100,12 @@ class FullFramePSFSurveyManifest:
         data = asdict(self)
         data["artifact_type"] = "full_frame_psf_survey"
         data["frame_shape"] = list(self.frame_shape)
+        data["entry_wavelengths_nm"] = wavelengths_to_json(
+            self.entry_wavelengths_nm
+        )
+        data["unique_wavelengths_nm"] = wavelengths_to_json(
+            self.unique_wavelengths_nm
+        )
         emit_schema_version(data, "full_frame_psf_survey")
         return data
 
@@ -141,7 +149,12 @@ class FullFramePSFSurveyManifest:
             raise FullFramePSFSurveyError("full_frame_role must be non-empty")
 
     def to_json(self, path: str | Path | None = None) -> str:
-        text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        text = json.dumps(
+            self.to_dict(),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
         if path is not None:
             Path(path).write_text(text + "\n", encoding="utf-8")
         return text

@@ -125,7 +125,8 @@ class TestRawCaptureWriter:
             assert pf["raw_capture_schema_version"] == 3
             assert pf["capture_role"] == "minimal_capture"
             assert "phase" not in pf
-            assert pf["completed"] is False
+            assert pf["capture_complete"] is False
+            assert pf["run_succeeded"] is True
             assert pf["n_captures_written"] == 0
             assert pf["n_captures_total"] == sample_plan.n_captures
 
@@ -257,8 +258,9 @@ class TestRawCaptureWriter:
 
         with h5py.File(tmp_h5_path, "r") as f:
             assert bool(f["capture/completed"][:].all())
-            pf = _h5_str(f["capture/processing_flags_json"])
-            assert "completed" in pf.lower()
+            pf = json.loads(_h5_str(f["capture/processing_flags_json"]))
+            assert pf["capture_complete"] is True
+            assert pf["run_succeeded"] is True
 
     def test_failure_records_partial_data(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
@@ -274,13 +276,13 @@ class TestRawCaptureWriter:
             )
             raise RuntimeError("simulated failure")
         except RuntimeError:
-            writer.finalize(completed=False, error="simulated failure",
-                            last_completed_capture_index=0)
+            writer.finalize(error="simulated failure")
 
         with h5py.File(tmp_h5_path, "r") as f:
-            pf = _h5_str(f["capture/processing_flags_json"])
-            assert "false" in pf.lower()
-            assert "simulated failure" in pf
+            pf = json.loads(_h5_str(f["capture/processing_flags_json"]))
+            assert pf["capture_complete"] is False
+            assert pf["run_succeeded"] is False
+            assert pf["error"] == "simulated failure"
 
     def test_no_burst_dataset_when_store_burst_false(
         self, sample_plan: CapturePlan, tmp_h5_path: Path

@@ -22,6 +22,7 @@ import numpy as np
 
 from tasks.artifact_versioning import (
     LegacyUnversionedArtifactError,
+    NewerSchemaVersionError,
     SchemaCompatibilityError,
     read_schema_version,
     schema_compat,
@@ -73,6 +74,13 @@ class _InvalidArtifact(ValueError):
 
 
 class _UnreadableArtifact(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class _UnsupportedArtifact(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
@@ -135,6 +143,13 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
         return _result(
             canonical_type,
             ValidityOutcome.UNREADABLE,
+            reason_codes=(exc.code,),
+            errors=(exc.message,),
+        )
+    except _UnsupportedArtifact as exc:
+        return _result(
+            canonical_type,
+            ValidityOutcome.UNSUPPORTED,
             reason_codes=(exc.code,),
             errors=(exc.message,),
         )
@@ -228,12 +243,26 @@ def _read_json_file(path: Path) -> dict[str, Any]:
     except OSError as exc:
         raise _UnreadableArtifact("location_unreadable", "artifact location could not be read") from exc
     try:
-        data = json.loads(text)
+        data = _json_loads_strict(text)
     except json.JSONDecodeError as exc:
         raise _UnreadableArtifact("json_unreadable", "artifact JSON could not be parsed") from exc
     if not isinstance(data, dict):
-        raise _UnreadableArtifact("json_root_unreadable", "artifact JSON root is not a mapping")
+        raise _InvalidArtifact(
+            "json_root_invalid",
+            "artifact JSON root must be a mapping",
+        )
     return data
+
+
+def _json_loads_strict(text: str) -> Any:
+    return json.loads(text, parse_constant=_reject_nonfinite_json_constant)
+
+
+def _reject_nonfinite_json_constant(token: str) -> Any:
+    raise _InvalidArtifact(
+        "json_number_nonfinite",
+        f"non-standard JSON numeric constant {token!r} is not allowed",
+    )
 
 
 def _validate_serialized_mapping(
@@ -266,6 +295,13 @@ def _validate_serialized_mapping(
             ValidityOutcome.LEGACY_UNVERSIONED,
             reason_codes=("legacy_unversioned",),
             errors=("serialized artifact lacks explicit schema_version",),
+        )
+    except NewerSchemaVersionError:
+        return _result(
+            artifact_type,
+            ValidityOutcome.UNSUPPORTED,
+            reason_codes=("schema_newer_than_supported",),
+            errors=("serialized schema_version requires a newer reader",),
         )
     except SchemaCompatibilityError as exc:
         return _result(
@@ -424,6 +460,11 @@ def _strict_number(value: Any, field: str, *, nullable: bool = False) -> None:
         return
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         _strict_error(field, "a JSON number" + (" or null" if nullable else ""))
+    if not math.isfinite(float(value)):
+        _strict_error(
+            field,
+            "a finite JSON number" + (" or null" if nullable else ""),
+        )
 
 
 def _strict_optional_number(data: Mapping[str, Any], field: str) -> None:
@@ -459,6 +500,19 @@ def _strict_number_list(data: Mapping[str, Any], field: str, *, required: bool =
         return
     for index, item in enumerate(_strict_required_list(data, field)):
         _strict_number(item, f"{field}[{index}]")
+
+
+def _strict_wavelength_list(
+    data: Mapping[str, Any],
+    field: str,
+    *,
+    required: bool = True,
+) -> None:
+    """Require finite wavelengths while allowing JSON null for broadband."""
+    if not required and field not in data:
+        return
+    for index, item in enumerate(_strict_required_list(data, field)):
+        _strict_number(item, f"{field}[{index}]", nullable=True)
 
 
 def _strict_string_list(data: Mapping[str, Any], field: str, *, required: bool = True) -> None:
@@ -584,7 +638,7 @@ def _validate_serialized_sensor_energy_center_profile(data: Mapping[str, Any]) -
     _strict_number(_strict_required(data, "max_center_deviation_px"), "max_center_deviation_px")
     _strict_pair_list(data, "per_entry_center_xy")
     _strict_string_list(data, "per_entry_mask_ids")
-    _strict_number_list(data, "per_entry_wavelengths_nm")
+    _strict_wavelength_list(data, "per_entry_wavelengths_nm")
     _strict_number_list(data, "per_entry_background_value", required=False)
     _strict_number_list(data, "per_entry_total_corr_energy", required=False)
     if "per_entry_fallback_used" in data:
@@ -617,9 +671,9 @@ def _validate_serialized_peak_layout_profile(data: Mapping[str, Any]) -> None:
         for key, value in stats.items():
             _strict_string(key, f"local_background_stats[{index}] key")
             _strict_number(value, f"local_background_stats[{index}][{key!r}]")
-    _strict_number_list(data, "survey_wavelengths_nm")
+    _strict_wavelength_list(data, "survey_wavelengths_nm")
     _strict_string_list(data, "survey_mask_ids")
-    _strict_number_list(data, "valid_wavelengths_nm")
+    _strict_wavelength_list(data, "valid_wavelengths_nm")
     _strict_string_list(data, "valid_mask_ids")
     validity_scope = _strict_required_mapping(data, "validity_scope")
     for key, value in validity_scope.items():
@@ -641,10 +695,10 @@ def _validate_serialized_full_frame_psf_survey(data: Mapping[str, Any]) -> None:
         _strict_required_string(data, field)
     for field in ("pupil_profile_id", "camera_profile_id", "notes"):
         _strict_optional_string(data, field)
-    _strict_number_list(data, "entry_wavelengths_nm")
+    _strict_wavelength_list(data, "entry_wavelengths_nm")
     _strict_string_list(data, "entry_illumination_json")
     _strict_string_list(data, "entry_mask_ids")
-    _strict_number_list(data, "unique_wavelengths_nm")
+    _strict_wavelength_list(data, "unique_wavelengths_nm")
     _strict_string_list(data, "unique_mask_ids")
     _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
     _strict_required_mapping(data, "camera_frame_extent")
@@ -666,7 +720,7 @@ def _validate_serialized_peak_support_analysis_report(data: Mapping[str, Any]) -
     _strict_number_list(data, "tau_values")
     _strict_number_list(data, "support_radii")
     _strict_string_list(data, "entry_mask_ids")
-    _strict_number_list(data, "entry_wavelengths_nm")
+    _strict_wavelength_list(data, "entry_wavelengths_nm")
     _strict_optional_string(data, "notes")
     if "valid_pixel_domain" in data and data["valid_pixel_domain"] is not None:
         _strict_mapping(data["valid_pixel_domain"], "valid_pixel_domain")
@@ -685,9 +739,9 @@ def _validate_serialized_peak_patch_psf_dictionary(data: Mapping[str, Any]) -> N
         _strict_required_string(data, field)
     for field in ("pupil_profile_id", "camera_profile_id", "notes"):
         _strict_optional_string(data, field)
-    _strict_number_list(data, "entry_wavelengths_nm")
+    _strict_wavelength_list(data, "entry_wavelengths_nm")
     _strict_string_list(data, "entry_mask_ids")
-    _strict_number_list(data, "unique_wavelengths_nm")
+    _strict_wavelength_list(data, "unique_wavelengths_nm")
     _strict_string_list(data, "unique_mask_ids")
     _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
     _strict_required_mapping(data, "camera_frame_extent")
@@ -844,6 +898,13 @@ def read_validated_manifest_mapping(
             reason_codes=(exc.code,),
             errors=(exc.message,),
         )
+    except _UnsupportedArtifact as exc:
+        return _result(
+            canonical_type,
+            ValidityOutcome.UNSUPPORTED,
+            reason_codes=(exc.code,),
+            errors=(exc.message,),
+        )
     except OSError:
         return _result(
             canonical_type,
@@ -954,6 +1015,13 @@ def _validate_raw_capture(path: Path) -> ValidityResult:
         return _result(
             artifact_type,
             ValidityOutcome.UNREADABLE,
+            reason_codes=(exc.code,),
+            errors=(exc.message,),
+        )
+    except _UnsupportedArtifact as exc:
+        return _result(
+            artifact_type,
+            ValidityOutcome.UNSUPPORTED,
             reason_codes=(exc.code,),
             errors=(exc.message,),
         )
@@ -1077,6 +1145,13 @@ def _validate_hdf_manifest_artifact(
             reason_codes=(exc.code,),
             errors=(exc.message,),
         )
+    except _UnsupportedArtifact as exc:
+        return _result(
+            artifact_type,
+            ValidityOutcome.UNSUPPORTED,
+            reason_codes=(exc.code,),
+            errors=(exc.message,),
+        )
     except OSError:
         return _result(
             artifact_type,
@@ -1112,6 +1187,13 @@ def _read_hdf_schema_version(
             {"schema_version": int(raw)},
             artifact_type,
         )
+    except NewerSchemaVersionError:
+        return None, _result(
+            artifact_type,
+            ValidityOutcome.UNSUPPORTED,
+            reason_codes=("schema_newer_than_supported",),
+            errors=("HDF5 schema version requires a newer reader",),
+        )
     except SchemaCompatibilityError:
         return None, _result(
             artifact_type,
@@ -1136,6 +1218,11 @@ def _validate_optional_root_schema_version(
         artifact_type=artifact_type,
     )
     if outcome is not None:
+        if outcome.outcome is ValidityOutcome.UNSUPPORTED:
+            raise _UnsupportedArtifact(
+                outcome.reason_codes[0],
+                outcome.errors[0],
+            )
         raise _InvalidArtifact(
             "schema_incompatible",
             "root schema_version is not supported",
@@ -1176,7 +1263,7 @@ def _read_hdf_json_mapping(h5: h5py.File, dataset_path: str) -> dict[str, Any]:
         )
     text = _read_hdf_text(h5[dataset_path])
     try:
-        data = json.loads(text)
+        data = _json_loads_strict(text)
     except json.JSONDecodeError as exc:
         raise _UnreadableArtifact(
             "manifest_unreadable",
@@ -1387,7 +1474,7 @@ def _validate_raw_capture_v2(h5: h5py.File) -> None:
     frame_shape = (int(frames.shape[1]), int(frames.shape[2]))
     for row in np.flatnonzero(completed):
         try:
-            extent_data = json.loads(extents[int(row)])
+            extent_data = _json_loads_strict(extents[int(row)])
         except json.JSONDecodeError as exc:
             raise _UnreadableArtifact(
                 "frame_extent_unreadable",
@@ -1949,7 +2036,7 @@ def _read_json_mapping_text(
     context: str,
 ) -> dict[str, Any]:
     try:
-        data = json.loads(text)
+        data = _json_loads_strict(text)
     except json.JSONDecodeError as exc:
         raise _UnreadableArtifact(
             unreadable_code,
@@ -2140,7 +2227,8 @@ def _validate_raw_processing_flags(
         "scientific_calibration_valid",
         "optical_alignment_validated",
         "training_ready",
-        "completed",
+        "capture_complete",
+        "run_succeeded",
     ):
         if not isinstance(flags.get(field), bool):
             raise _InvalidArtifact(
@@ -2184,10 +2272,16 @@ def _validate_raw_processing_flags(
             "processing_flags_mismatch",
             "processing flags planned capture count does not match raw frame rows",
         )
-    if flags["completed"] != bool(np.all(completed)):
+    if flags["capture_complete"] != bool(np.all(completed)):
         raise _InvalidArtifact(
             "processing_flags_mismatch",
-            "processing flags completed state does not match capture/completed",
+            "processing flags capture_complete state does not match capture/completed",
+        )
+    error = flags["error"]
+    if flags["run_succeeded"] != (error is None):
+        raise _InvalidArtifact(
+            "processing_flags_mismatch",
+            "processing flags run_succeeded must equal whether error is null",
         )
     last_completed = flags["last_completed_capture_index"]
     if last_completed < -1 or last_completed >= planned_count:
@@ -2369,7 +2463,7 @@ def _illumination_identity_from_json_text(
     code: str,
 ) -> _IlluminationIdentity:
     try:
-        data = json.loads(text)
+        data = _json_loads_strict(text)
     except json.JSONDecodeError as exc:
         raise _UnreadableArtifact(
             "entry_illumination_unreadable",
@@ -2864,6 +2958,22 @@ def _validate_peak_patch_psf_dictionary_payload(h5: h5py.File, manifest: Any) ->
         entry_wavelengths,
         manifest.entry_wavelengths_nm,
         name="entry_wavelength_nm",
+    )
+    _require_manifest_sequence_match(
+        _read_text_array(
+            _require_dataset(h5, "peak_patch_dictionary/unique_mask_ids"),
+            name="unique_mask_ids",
+        ),
+        manifest.unique_mask_ids,
+        name="unique_mask_ids",
+    )
+    _require_numeric_sequence_match(
+        _require_dataset(
+            h5,
+            "peak_patch_dictionary/unique_wavelength_nm",
+        )[()],
+        manifest.unique_wavelengths_nm,
+        name="unique_wavelength_nm",
     )
     _require_manifest_sequence_match(
         _read_text_array(h5["peak_patch_dictionary/peak_id"], name="peak_id"),

@@ -23,6 +23,10 @@ class LegacyUnversionedArtifactError(SchemaCompatibilityError):
     """Raised when strict validation encounters an artifact without a version."""
 
 
+class NewerSchemaVersionError(SchemaCompatibilityError):
+    """Raised when an artifact requires a newer reader implementation."""
+
+
 # Current schema version emitted when writing each artifact type.
 CURRENT_SCHEMA_VERSIONS: dict[str, int] = {
     "camera_profile": 1,
@@ -106,7 +110,7 @@ def read_schema_version(
             f"readable version {compat.min_readable}"
         )
     if version > compat.current:
-        raise SchemaCompatibilityError(
+        raise NewerSchemaVersionError(
             f"{artifact_type} schema_version {version} is newer than the supported "
             f"version {compat.current}; upgrade optic_system to read it"
         )
@@ -133,6 +137,7 @@ __all__ = [
     "CURRENT_SCHEMA_VERSIONS",
     "LegacyUnversionedArtifactError",
     "MIN_READABLE_SCHEMA_VERSIONS",
+    "NewerSchemaVersionError",
     "SchemaCompat",
     "SchemaCompatibilityError",
     "ValidityOutcome",

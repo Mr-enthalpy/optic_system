@@ -241,6 +241,9 @@ def test_broadband_survey_component_table_validates_nan_wavelengths(
     with h5py.File(str(report_h5), "r") as f:
         assert f["components/entry_index"].shape[0] > 0
         assert np.isnan(f["components/wavelength_nm"][()]).all()
+        manifest_text = _decode(f["metadata/manifest_json"][()])
+        assert "NaN" not in manifest_text
+        assert json.loads(manifest_text)["entry_wavelengths_nm"] == [None, None]
     assert (
         check_validity("peak_support_analysis_report", report_h5).outcome
         is ValidityOutcome.VALID

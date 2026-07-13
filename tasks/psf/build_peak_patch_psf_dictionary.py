@@ -21,7 +21,10 @@ from tasks.artifacts.json_io import (
     read_optional_dataset_string,
     read_scalar_string,
     read_string_array,
+    sequence_equal_nan_aware,
     unique_preserve_order,
+    wavelengths_from_json,
+    wavelengths_to_json,
 )
 from .profile_requirements import (
     PSFArtifactError,
@@ -80,13 +83,13 @@ class PeakPatchPSFDictionaryManifest:
             pupil_profile_id=_optional_str(data.get("pupil_profile_id")),
             camera_profile_id=_optional_str(data.get("camera_profile_id")),
             illumination_mode=_require_str(data, "illumination_mode"),
-            entry_wavelengths_nm=[
-                float(v) for v in _require_list(data, "entry_wavelengths_nm")
-            ],
+            entry_wavelengths_nm=wavelengths_from_json(
+                _require_list(data, "entry_wavelengths_nm")
+            ),
             entry_mask_ids=[str(v) for v in _require_list(data, "entry_mask_ids")],
-            unique_wavelengths_nm=[
-                float(v) for v in _require_list(data, "unique_wavelengths_nm")
-            ],
+            unique_wavelengths_nm=wavelengths_from_json(
+                _require_list(data, "unique_wavelengths_nm")
+            ),
             unique_mask_ids=[str(v) for v in _require_list(data, "unique_mask_ids")],
             frame_shape=(int(frame_shape[0]), int(frame_shape[1])),
             camera_frame_extent=_require_dict(data, "camera_frame_extent"),
@@ -106,6 +109,12 @@ class PeakPatchPSFDictionaryManifest:
         data = asdict(self)
         data["artifact_type"] = "peak_patch_psf_dictionary"
         data["frame_shape"] = list(self.frame_shape)
+        data["entry_wavelengths_nm"] = wavelengths_to_json(
+            self.entry_wavelengths_nm
+        )
+        data["unique_wavelengths_nm"] = wavelengths_to_json(
+            self.unique_wavelengths_nm
+        )
         emit_schema_version(data, "peak_patch_psf_dictionary")
         return data
 
@@ -131,6 +140,17 @@ class PeakPatchPSFDictionaryManifest:
         if len(self.entry_wavelengths_nm) != len(self.entry_mask_ids):
             raise PeakPatchPSFDictionaryError(
                 "entry_wavelengths_nm and entry_mask_ids must have equal length"
+            )
+        if not sequence_equal_nan_aware(
+            self.unique_wavelengths_nm,
+            unique_preserve_order(self.entry_wavelengths_nm),
+        ):
+            raise PeakPatchPSFDictionaryError(
+                "unique_wavelengths_nm must match entry order-preserving uniqueness"
+            )
+        if self.unique_mask_ids != unique_preserve_order(self.entry_mask_ids):
+            raise PeakPatchPSFDictionaryError(
+                "unique_mask_ids must match entry order-preserving uniqueness"
             )
         peak_count = len(self.peak_ids)
         if peak_count < 1 or len(set(self.peak_ids)) != peak_count:
@@ -163,7 +183,12 @@ class PeakPatchPSFDictionaryManifest:
             )
 
     def to_json(self, path: str | Path | None = None) -> str:
-        text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        text = json.dumps(
+            self.to_dict(),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
         if path is not None:
             Path(path).write_text(text + "\n", encoding="utf-8")
         return text

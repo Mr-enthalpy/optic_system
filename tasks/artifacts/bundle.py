@@ -20,7 +20,11 @@ from typing import Any
 
 import h5py
 
-from tasks.artifact_versioning import SchemaCompatibilityError, read_schema_version
+from tasks.artifact_versioning import (
+    NewerSchemaVersionError,
+    SchemaCompatibilityError,
+    read_schema_version,
+)
 
 from .validation import (
     ValidityOutcome,
@@ -557,7 +561,7 @@ def _canonical_manifest_mapping(data: Mapping[str, Any]) -> str:
         ensure_ascii=True,
         sort_keys=True,
         separators=(",", ":"),
-        allow_nan=True,
+        allow_nan=False,
     )
 
 
@@ -612,6 +616,24 @@ def _load_bundle_for_validation(
             "bundle manifest JSON could not be parsed",
         )
     artifact_type = raw.get("artifact_type") if isinstance(raw, Mapping) else "artifact_bundle"
+    if isinstance(raw, Mapping) and isinstance(artifact_type, str):
+        schema_version = raw.get("schema_version")
+        if isinstance(schema_version, int) and not isinstance(schema_version, bool):
+            try:
+                read_schema_version(
+                    {"schema_version": schema_version},
+                    artifact_type,
+                )
+            except NewerSchemaVersionError:
+                return _bundle_result(
+                    artifact_type,
+                    ValidityOutcome.UNSUPPORTED,
+                    schema_version,
+                    "schema_newer_than_supported",
+                    "bundle artifact schema requires a newer reader",
+                )
+            except SchemaCompatibilityError:
+                pass
     try:
         return ArtifactBundleManifest.from_dict(raw)
     except ArtifactBundleError as exc:
