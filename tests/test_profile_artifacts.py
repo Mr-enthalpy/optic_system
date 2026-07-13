@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from tasks.artifact_versioning import schema_compat
 from tasks.profiles import (
     BROADBAND_PASSTHROUGH,
     PER_BAND_PUPIL_OPEN,
@@ -20,6 +21,8 @@ from tasks.psf import (
 
 def broadband_camera_profile_dict() -> dict:
     return {
+        "artifact_type": "camera_profile",
+        "schema_version": schema_compat("camera_profile").current,
         "camera_profile_id": "broadband_passthrough_safe_v1",
         "profile_family": BROADBAND_PASSTHROUGH,
         "illumination": {
@@ -41,6 +44,8 @@ def broadband_camera_profile_dict() -> dict:
 
 def pupil_profile_dict() -> dict:
     return {
+        "artifact_type": "pupil_profile",
+        "schema_version": schema_compat("pupil_profile").current,
         "pupil_profile_id": "pupil_profile_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,
@@ -55,6 +60,8 @@ def pupil_profile_dict() -> dict:
 
 def per_band_camera_profile_dict() -> dict:
     return {
+        "artifact_type": "camera_profile",
+        "schema_version": schema_compat("camera_profile").current,
         "camera_profile_id": "per_band_pupil_open_v1",
         "profile_family": PER_BAND_PUPIL_OPEN,
         "depends_on": {"pupil_profile_id": "pupil_profile_v1"},

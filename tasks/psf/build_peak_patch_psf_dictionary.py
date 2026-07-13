@@ -56,6 +56,7 @@ class PeakPatchPSFDictionaryManifest:
     camera_frame_extent: dict[str, Any]
     peak_layout_coordinate_frame: str
     peak_layout_camera_frame_extent: dict[str, Any]
+    extent_compatibility: dict[str, Any]
     peak_ids: list[str]
     patch_shape_hw: list[list[int]]
     patch_origin_xy: list[list[int]]
@@ -68,14 +69,23 @@ class PeakPatchPSFDictionaryManifest:
         cls,
         data: dict[str, Any],
         *,
-        legacy_mode: bool = True,
+        legacy_mode: bool = False,
     ) -> PeakPatchPSFDictionaryManifest:
         from tasks.artifact_versioning import read_schema_version
 
-        read_schema_version(data, "peak_patch_psf_dictionary", legacy_mode=legacy_mode)
+        schema_version = read_schema_version(
+            data,
+            "peak_patch_psf_dictionary",
+            legacy_mode=legacy_mode,
+        )
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise PeakPatchPSFDictionaryError("frame_shape must contain [H, W]")
+        camera_frame_extent = _require_dict(data, "camera_frame_extent")
+        peak_layout_camera_frame_extent = _require_dict(
+            data,
+            "peak_layout_camera_frame_extent",
+        )
         return cls(
             dictionary_id=_require_str(data, "dictionary_id"),
             source_raw_capture_h5=_require_str(data, "source_raw_capture_h5"),
@@ -92,9 +102,16 @@ class PeakPatchPSFDictionaryManifest:
             ),
             unique_mask_ids=[str(v) for v in _require_list(data, "unique_mask_ids")],
             frame_shape=(int(frame_shape[0]), int(frame_shape[1])),
-            camera_frame_extent=_require_dict(data, "camera_frame_extent"),
+            camera_frame_extent=camera_frame_extent,
             peak_layout_coordinate_frame=_require_str(data, "peak_layout_coordinate_frame"),
-            peak_layout_camera_frame_extent=_require_dict(data, "peak_layout_camera_frame_extent"),
+            peak_layout_camera_frame_extent=peak_layout_camera_frame_extent,
+            extent_compatibility=_load_extent_compatibility(
+                data,
+                schema_version=schema_version,
+                legacy_mode=legacy_mode,
+                camera_frame_extent=camera_frame_extent,
+                peak_layout_camera_frame_extent=peak_layout_camera_frame_extent,
+            ),
             peak_ids=[str(v) for v in _require_list(data, "peak_ids")],
             patch_shape_hw=_int_pairs(data, "patch_shape_hw"),
             patch_origin_xy=_int_pairs(data, "patch_origin_xy"),
@@ -121,22 +138,30 @@ class PeakPatchPSFDictionaryManifest:
     def validate(self) -> None:
         """Validate JSON dictionary-manifest structure, not the HDF5 payload."""
         try:
-            dictionary_extent = validate_coordinate_frame_extent(
+            validate_coordinate_frame_extent(
                 self.peak_layout_coordinate_frame,
                 self.camera_frame_extent,
                 self.frame_shape,
             )
-            layout_extent = validate_coordinate_frame_extent(
+            validate_coordinate_frame_extent(
                 self.peak_layout_coordinate_frame,
                 self.peak_layout_camera_frame_extent,
                 self.frame_shape,
             )
         except ValueError as exc:
             raise PeakPatchPSFDictionaryError(str(exc)) from exc
-        # The builder can retain an explicitly audited raw/layout extent mismatch.
-        # Both descriptors still have to be legal in the same declared coordinate
-        # frame and match the dictionary frame shape, which the calls above check.
+        extents_match = _canonical_extent(
+            self.camera_frame_extent
+        ) == _canonical_extent(self.peak_layout_camera_frame_extent)
+        _validate_extent_compatibility_record(
+            self.extent_compatibility,
+            extents_match=extents_match,
+        )
 
+        if not self.entry_wavelengths_nm:
+            raise PeakPatchPSFDictionaryError(
+                "dictionary manifest must contain at least one measured entry"
+            )
         if len(self.entry_wavelengths_nm) != len(self.entry_mask_ids):
             raise PeakPatchPSFDictionaryError(
                 "entry_wavelengths_nm and entry_mask_ids must have equal length"
@@ -214,6 +239,7 @@ def build_peak_patch_psf_dictionary(
     normalization_policy: str = "none",
     output_dtype: str = "float32",
     allow_camera_frame_extent_mismatch: bool = False,
+    camera_frame_extent_mismatch_reason: str | None = None,
     notes: str | None = None,
 ) -> PeakPatchPSFDictionaryManifest:
     try:
@@ -277,10 +303,11 @@ def build_peak_patch_psf_dictionary(
                 extent,
                 artifact_name="peak-patch PSF dictionary",
             )
-            _validate_layout_extent(
+            extent_compatibility = _validate_layout_extent(
                 raw_extent=extent,
                 layout_extent=layout.camera_frame_extent,
                 allow_mismatch=allow_camera_frame_extent_mismatch,
+                mismatch_reason=camera_frame_extent_mismatch_reason,
             )
 
             groups: dict[tuple[int, int], list[int]] = {}
@@ -330,6 +357,7 @@ def build_peak_patch_psf_dictionary(
                 camera_frame_extent=extent,
                 peak_layout_coordinate_frame=layout.coordinate_frame,
                 peak_layout_camera_frame_extent=layout.camera_frame_extent,
+                extent_compatibility=extent_compatibility,
                 peak_ids=layout.peak_ids,
                 patch_shape_hw=layout.patch_shape_hw,
                 patch_origin_xy=layout.patch_origin_xy,
@@ -351,6 +379,10 @@ def build_peak_patch_psf_dictionary(
             groups=groups,
             capture_indices=capture_indices,
             entry_mask_indices=np.asarray([key[0] for key in sorted_keys], dtype=np.int64),
+            entry_wavelength_indices=np.asarray(
+                [key[1] for key in sorted_keys],
+                dtype=np.int64,
+            ),
             dtype=dtype,
             source_plan_json=source_plan_json,
         )
@@ -369,6 +401,7 @@ def _write_dictionary_h5(
     groups: dict[tuple[int, int], list[int]],
     capture_indices: np.ndarray,
     entry_mask_indices: np.ndarray,
+    entry_wavelength_indices: np.ndarray,
     dtype: np.dtype,
     source_plan_json: str,
 ) -> None:
@@ -401,6 +434,7 @@ def _write_dictionary_h5(
 
         grp.create_dataset("entry_mask_ids", data=np.asarray(manifest.entry_mask_ids, dtype=object), dtype=string_dtype)
         grp.create_dataset("entry_mask_index", data=entry_mask_indices)
+        grp.create_dataset("entry_wavelength_index", data=entry_wavelength_indices)
         grp.create_dataset("entry_wavelength_nm", data=np.asarray(manifest.entry_wavelengths_nm, dtype=np.float64))
         grp.create_dataset("unique_mask_ids", data=np.asarray(manifest.unique_mask_ids, dtype=object), dtype=string_dtype)
         grp.create_dataset("unique_wavelength_nm", data=np.asarray(manifest.unique_wavelengths_nm, dtype=np.float64))
@@ -417,6 +451,10 @@ def _write_dictionary_h5(
         grp.create_dataset(
             "peak_layout_camera_frame_extent_json",
             data=json.dumps(manifest.peak_layout_camera_frame_extent, sort_keys=True),
+        )
+        grp.create_dataset(
+            "extent_compatibility_json",
+            data=json.dumps(manifest.extent_compatibility, sort_keys=True),
         )
         grp.create_dataset("normalization_policy_json", data=json.dumps({"applied": manifest.applied_normalization_policy}))
         grp.create_dataset("background_policy_json", data=json.dumps({"applied": manifest.applied_background_policy}))
@@ -498,16 +536,105 @@ def _validate_layout_extent(
     raw_extent: dict[str, Any],
     layout_extent: dict[str, Any],
     allow_mismatch: bool,
-) -> None:
+    mismatch_reason: str | None,
+) -> dict[str, Any]:
     if _canonical_extent(raw_extent) == _canonical_extent(layout_extent):
-        return
-    if allow_mismatch:
-        return
-    raise PeakPatchPSFDictionaryError(
-        "raw capture camera_frame_extent does not match PeakLayoutProfile "
-        "camera_frame_extent; pass allow_camera_frame_extent_mismatch only when "
-        "the coordinate transform has been audited"
+        return {
+            "matches": True,
+            "mismatch_override": False,
+            "reason": None,
+        }
+    if not allow_mismatch:
+        raise PeakPatchPSFDictionaryError(
+            "raw capture camera_frame_extent does not match PeakLayoutProfile "
+            "camera_frame_extent; pass allow_camera_frame_extent_mismatch only when "
+            "the coordinate transform has been audited"
+        )
+    reason = _optional_str(mismatch_reason)
+    if reason is None:
+        raise PeakPatchPSFDictionaryError(
+            "camera_frame_extent_mismatch_reason must be non-empty when the "
+            "camera frame extent mismatch override is applied"
+        )
+    return {
+        "matches": False,
+        "mismatch_override": True,
+        "reason": reason,
+    }
+
+
+def _load_extent_compatibility(
+    data: dict[str, Any],
+    *,
+    schema_version: int,
+    legacy_mode: bool,
+    camera_frame_extent: dict[str, Any],
+    peak_layout_camera_frame_extent: dict[str, Any],
+) -> dict[str, Any]:
+    value = data.get("extent_compatibility")
+    if value is not None:
+        if not isinstance(value, dict):
+            raise PeakPatchPSFDictionaryError(
+                "extent_compatibility must be a mapping"
+            )
+        return dict(value)
+    if schema_version != 1 and not legacy_mode:
+        raise PeakPatchPSFDictionaryError(
+            "extent_compatibility is required by peak_patch_psf_dictionary schema v2"
+        )
+    matches = _canonical_extent(camera_frame_extent) == _canonical_extent(
+        peak_layout_camera_frame_extent
     )
+    return {
+        "matches": matches,
+        "mismatch_override": not matches,
+        "reason": (
+            None
+            if matches
+            else "legacy schema v1 did not record the extent mismatch approval"
+        ),
+    }
+
+
+def _validate_extent_compatibility_record(
+    value: dict[str, Any],
+    *,
+    extents_match: bool,
+) -> None:
+    if not isinstance(value, dict):
+        raise PeakPatchPSFDictionaryError(
+            "extent_compatibility must be a mapping"
+        )
+    allowed = {"matches", "mismatch_override", "reason"}
+    if set(value) != allowed:
+        raise PeakPatchPSFDictionaryError(
+            "extent_compatibility must contain exactly matches, mismatch_override, and reason"
+        )
+    matches = value.get("matches")
+    mismatch_override = value.get("mismatch_override")
+    reason = value.get("reason")
+    if type(matches) is not bool or type(mismatch_override) is not bool:
+        raise PeakPatchPSFDictionaryError(
+            "extent_compatibility matches and mismatch_override must be boolean"
+        )
+    if matches != extents_match:
+        raise PeakPatchPSFDictionaryError(
+            "extent_compatibility.matches disagrees with the persisted frame extents"
+        )
+    if matches:
+        if mismatch_override or reason is not None:
+            raise PeakPatchPSFDictionaryError(
+                "matching frame extents cannot carry a mismatch override or reason"
+            )
+        return
+    if not mismatch_override:
+        raise PeakPatchPSFDictionaryError(
+            "mismatched frame extents require an explicit mismatch override"
+        )
+    if not isinstance(reason, str) or not reason.strip():
+        raise PeakPatchPSFDictionaryError(
+            "mismatched frame extents require a non-empty override reason"
+        )
 
 
 def _canonical_extent(extent: dict[str, Any]) -> dict[str, Any]:

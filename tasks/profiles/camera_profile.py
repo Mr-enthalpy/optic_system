@@ -204,7 +204,7 @@ class CameraProfile:
         cls,
         d: dict[str, Any],
         *,
-        legacy_mode: bool = True,
+        legacy_mode: bool = False,
     ) -> CameraProfile:
         from tasks.artifact_versioning import read_schema_version
 

@@ -80,7 +80,7 @@ class PeakSupportAnalysisManifest:
         cls,
         data: dict[str, Any],
         *,
-        legacy_mode: bool = True,
+        legacy_mode: bool = False,
     ) -> "PeakSupportAnalysisManifest":
         from tasks.artifact_versioning import read_schema_version
 
@@ -149,9 +149,17 @@ class PeakSupportAnalysisManifest:
                     raise DiffractionSupportAnalysisError(
                         f"{name}[{index}] must be finite"
                     )
+                if name == "support_radii" and float(value) < 0.0:
+                    raise DiffractionSupportAnalysisError(
+                        f"{name}[{index}] must be nonnegative"
+                    )
         if len(self.entry_mask_ids) != len(self.entry_wavelengths_nm):
             raise DiffractionSupportAnalysisError(
                 "entry_mask_ids and entry_wavelengths_nm must have equal length"
+            )
+        if not self.entry_mask_ids:
+            raise DiffractionSupportAnalysisError(
+                "support report must contain at least one measured entry"
             )
         for name, value in (
             ("bg_policy", self.bg_policy),

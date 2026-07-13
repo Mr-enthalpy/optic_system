@@ -9,7 +9,7 @@ import pytest
 
 import tasks.artifacts.validation as artifact_validation
 import tasks.raw_capture_h5 as raw_capture_h5
-from tasks.artifact_versioning import schema_compat
+from tasks.artifact_versioning import LegacyUnversionedArtifactError, schema_compat
 from tasks.artifacts.validation import (
     VALIDATOR_REGISTRY,
     ValidityOutcome,
@@ -57,6 +57,8 @@ def _extent(shape: tuple[int, int]) -> dict[str, object]:
 def _pupil_profile() -> PupilProfile:
     return PupilProfile.from_dict(
         {
+            "artifact_type": "pupil_profile",
+            "schema_version": schema_compat("pupil_profile").current,
             "pupil_profile_id": "pupil_validation_v1",
             "lcd_coordinate_convention": "physical_mono_xy",
             "lcd_display_index": 1,
@@ -70,6 +72,8 @@ def _pupil_profile() -> PupilProfile:
 def _camera_profile() -> CameraProfile:
     return CameraProfile.from_dict(
         {
+            "artifact_type": "camera_profile",
+            "schema_version": schema_compat("camera_profile").current,
             "camera_profile_id": "camera_validation_v1",
             "profile_family": "broadband_passthrough",
             "illumination": {
@@ -179,6 +183,11 @@ def _dictionary_manifest(shape: tuple[int, int] = (2, 3)) -> PeakPatchPSFDiction
         camera_frame_extent=_extent(shape),
         peak_layout_coordinate_frame="sensor_full_frame",
         peak_layout_camera_frame_extent=_extent(shape),
+        extent_compatibility={
+            "matches": True,
+            "mismatch_override": False,
+            "reason": None,
+        },
         peak_ids=["peak_1"],
         patch_shape_hw=[[2, 2]],
         patch_origin_xy=[[1, 0]],
@@ -234,6 +243,22 @@ def _versioned_manifest_for_type(artifact_type: str) -> dict[str, object]:
         values = data[field]
         assert isinstance(values, list)
         data[field] = [float("nan")] * len(values)
+    if artifact_type == "full_frame_psf_survey":
+        illumination = json.dumps(
+            {
+                "mode": "broadband_passthrough",
+                "effective_wavelength_nm": None,
+                "tls_setpoint_nm": 0.0,
+                "wavelength_label_nm": None,
+            },
+            sort_keys=True,
+        )
+        data["illumination_mode"] = "broadband_passthrough"
+        data["entry_illumination_json"] = [
+            illumination for _ in data["entry_wavelengths_nm"]
+        ]
+    elif artifact_type == "peak_patch_psf_dictionary":
+        data["illumination_mode"] = "broadband_passthrough"
     return data
 
 
@@ -508,6 +533,48 @@ def _write_support_report_h5(path: Path) -> PeakSupportAnalysisManifest:
     return manifest
 
 
+def _enable_empty_component_table(path: Path) -> None:
+    with h5py.File(path, "r+") as h5:
+        manifest_value = h5["metadata/manifest_json"][()]
+        manifest_data = json.loads(
+            manifest_value.decode("utf-8")
+            if isinstance(manifest_value, bytes)
+            else str(manifest_value)
+        )
+        manifest_data["component_policy"] = {
+            "analysis_mode": "component_table",
+            "component_table_written": True,
+        }
+        h5["metadata/manifest_json"][()] = json.dumps(
+            manifest_data,
+            sort_keys=True,
+        )
+        components = h5.require_group("components")
+        for name in ("entry_index", "component_id", "area"):
+            components.create_dataset(name, data=np.asarray([], dtype=np.int64))
+        components.create_dataset(
+            "bbox_xyxy",
+            data=np.empty((0, 4), dtype=np.int64),
+        )
+        for name in ("centroid_xy", "centroid_xy_abs", "centroid_xy_rel"):
+            components.create_dataset(name, data=np.empty((0, 2), dtype=np.float64))
+        for name in (
+            "tau",
+            "energy",
+            "peak_value",
+            "mean_value",
+            "max_radius",
+            "max_radius_from_energy_center",
+            "wavelength_nm",
+        ):
+            components.create_dataset(name, data=np.asarray([], dtype=np.float64))
+        components.create_dataset(
+            "is_far_field",
+            data=np.asarray([], dtype=np.bool_),
+        )
+        _write_text_array(components, "mask_id", [])
+
+
 def _write_dictionary_h5(path: Path) -> PeakPatchPSFDictionaryManifest:
     manifest = _dictionary_manifest()
     with h5py.File(path, "w") as h5:
@@ -520,6 +587,10 @@ def _write_dictionary_h5(path: Path) -> PeakPatchPSFDictionaryManifest:
         group.create_dataset("patches", data=np.zeros((1, 1, 2, 2), dtype=np.float32))
         _write_text_array(group, "entry_mask_ids", manifest.entry_mask_ids)
         group.create_dataset("entry_mask_index", data=np.asarray([0], dtype=np.int64))
+        group.create_dataset(
+            "entry_wavelength_index",
+            data=np.asarray([0], dtype=np.int64),
+        )
         group.create_dataset(
             "entry_wavelength_nm", data=np.asarray(manifest.entry_wavelengths_nm)
         )
@@ -552,6 +623,11 @@ def _write_dictionary_h5(path: Path) -> PeakPatchPSFDictionaryManifest:
             group,
             "peak_layout_camera_frame_extent_json",
             json.dumps(manifest.peak_layout_camera_frame_extent),
+        )
+        _write_scalar_text(
+            group,
+            "extent_compatibility_json",
+            json.dumps(manifest.extent_compatibility),
         )
         _write_scalar_text(
             group,
@@ -611,6 +687,24 @@ def test_unexpected_validator_failure_is_unsupported(
     assert result.reason_codes == ("validator_failed",)
 
 
+def test_missing_object_validate_contract_is_unsupported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "pupil.json"
+    _pupil_profile().to_json(path)
+    monkeypatch.setattr(
+        artifact_validation,
+        "_class_loader",
+        lambda *_args: lambda _data: object(),
+    )
+
+    result = check_validity("pupil_profile", path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("validator_not_implemented",)
+
+
 def test_validation_reports_legacy_and_unreadable_locations(tmp_path: Path) -> None:
     legacy_path = tmp_path / "legacy.json"
     data = _pupil_profile().to_dict()
@@ -631,6 +725,71 @@ def test_validation_reports_legacy_and_unreadable_locations(tmp_path: Path) -> N
     unreadable_hdf = tmp_path / "broken.h5"
     unreadable_hdf.write_bytes(b"not an HDF5 payload")
     assert check_validity("raw_capture", unreadable_hdf).outcome is ValidityOutcome.UNREADABLE
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        _camera_profile,
+        _pupil_profile,
+        _sensor_center_profile,
+        _layout_manifest,
+        _survey_manifest,
+        _support_manifest,
+        _dictionary_manifest,
+    ],
+    ids=[
+        "camera_profile",
+        "pupil_profile",
+        "sensor_energy_center_profile",
+        "peak_layout_profile",
+        "full_frame_psf_survey",
+        "peak_support_analysis_report",
+        "peak_patch_psf_dictionary",
+    ],
+)
+def test_artifact_from_dict_requires_explicit_legacy_mode(artifact) -> None:
+    instance = artifact()
+    data = instance.to_dict()
+    del data["schema_version"]
+
+    with pytest.raises(LegacyUnversionedArtifactError):
+        type(instance).from_dict(data)
+
+    loaded = type(instance).from_dict(data, legacy_mode=True)
+    assert type(loaded) is type(instance)
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        _camera_profile,
+        _pupil_profile,
+        _sensor_center_profile,
+        _layout_manifest,
+        _survey_manifest,
+        _dictionary_manifest,
+    ],
+)
+def test_normal_json_load_rejects_unversioned_artifact(
+    tmp_path: Path,
+    artifact,
+) -> None:
+    instance = artifact()
+    data = instance.to_dict()
+    del data["schema_version"]
+    path = tmp_path / f"{data['artifact_type']}.json"
+    path.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
+
+    with pytest.raises(LegacyUnversionedArtifactError):
+        type(instance).load_json(path)
+
+
+def test_safe_validation_message_redacts_posix_absolute_path() -> None:
+    assert artifact_validation._safe_validation_message(
+        ValueError("failed to read (/var/tmp/private/artifact.json)"),
+        "artifact could not be read",
+    ) == "artifact could not be read"
 
 
 @pytest.mark.parametrize("root", ["[]", '"profile"', "1"])
@@ -802,6 +961,32 @@ def test_sensor_center_strict_validation_rejects_negative_corrected_energy(
 
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == ("serialized_contract_rejected",)
+
+
+def test_measured_profiles_reject_zero_entry_artifacts() -> None:
+    center = _sensor_center_profile()
+    center.per_entry_center_xy = []
+    center.per_entry_mask_ids = []
+    center.per_entry_wavelengths_nm = []
+    center.per_entry_background_value = []
+    center.per_entry_total_corr_energy = []
+    center.per_entry_fallback_used = []
+    with pytest.raises(SensorEnergyCenterError, match="at least one"):
+        center.validate()
+
+    support = _support_manifest()
+    support.entry_mask_ids = []
+    support.entry_wavelengths_nm = []
+    with pytest.raises(DiffractionSupportAnalysisError, match="at least one"):
+        support.validate()
+
+    dictionary = _dictionary_manifest()
+    dictionary.entry_mask_ids = []
+    dictionary.entry_wavelengths_nm = []
+    dictionary.unique_mask_ids = []
+    dictionary.unique_wavelengths_nm = []
+    with pytest.raises(PeakPatchPSFDictionaryError, match="at least one"):
+        dictionary.validate()
 
 
 @pytest.mark.parametrize(
@@ -1461,6 +1646,36 @@ def test_broadband_survey_uses_nan_sentinel_and_validates_against_source_identit
     assert result.outcome is ValidityOutcome.VALID
 
 
+@pytest.mark.parametrize(
+    "illumination_json",
+    [
+        "not JSON",
+        json.dumps({"mode": "monochromatic"}),
+        json.dumps(
+            {
+                "mode": "broadband_passthrough",
+                "effective_wavelength_nm": None,
+                "tls_setpoint_nm": 0.0,
+                "wavelength_label_nm": None,
+            }
+        ),
+    ],
+)
+def test_standalone_survey_manifest_validates_entry_illumination_identity(
+    tmp_path: Path,
+    illumination_json: str,
+) -> None:
+    data = _survey_manifest().to_dict()
+    data["entry_illumination_json"] = [illumination_json]
+    path = tmp_path / "survey.manifest.json"
+    path.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("serialized_contract_rejected",)
+
+
 def test_schema_v1_broadband_hdf_embedded_manifest_remains_valid(
     tmp_path: Path,
 ) -> None:
@@ -1501,6 +1716,34 @@ def test_broadband_dictionary_json_uses_null_and_validates(tmp_path: Path) -> No
         check_validity("peak_patch_psf_dictionary", path).outcome
         is ValidityOutcome.VALID
     )
+
+
+def test_schema_v1_dictionary_hdf_remains_readable_without_v2_fields(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dictionary_v1.h5"
+    _write_dictionary_h5(path)
+    with h5py.File(path, "r+") as h5:
+        manifest_value = h5["peak_patch_dictionary/manifest_json"][()]
+        manifest_data = json.loads(
+            manifest_value.decode("utf-8")
+            if isinstance(manifest_value, bytes)
+            else str(manifest_value)
+        )
+        manifest_data["schema_version"] = 1
+        del manifest_data["extent_compatibility"]
+        h5.attrs["schema_version"] = 1
+        h5["peak_patch_dictionary/manifest_json"][()] = json.dumps(
+            manifest_data,
+            sort_keys=True,
+        )
+        del h5["peak_patch_dictionary/entry_wavelength_index"]
+        del h5["peak_patch_dictionary/extent_compatibility_json"]
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert result.schema_version == 1
 
 
 def test_survey_validator_rejects_hdf5_manifest_disagreement(tmp_path: Path) -> None:
@@ -1565,6 +1808,36 @@ def test_survey_validator_rejects_source_plan_identity_mismatch(tmp_path: Path) 
     assert result.reason_codes == ("entry_mask_id_mismatch",)
 
 
+def test_survey_validator_binds_capture_index_to_wavelength_and_mask(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "survey.h5"
+    _write_broadband_survey_h5(path)
+    with h5py.File(path, "r+") as h5:
+        h5["full_frame_survey/capture_indices"][0] = 1
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("source_capture_binding_mismatch",)
+
+
+def test_survey_validator_rejects_non_numeric_frames(tmp_path: Path) -> None:
+    path = tmp_path / "survey.h5"
+    _write_survey_h5(path)
+    with h5py.File(path, "r+") as h5:
+        del h5["full_frame_survey/frames_avg"]
+        h5["full_frame_survey"].create_dataset(
+            "frames_avg",
+            data=np.full((1, 2, 3), "bad", dtype="S3"),
+        )
+
+    result = check_validity("full_frame_psf_survey", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("dataset_dtype_invalid",)
+
+
 def test_support_validator_rejects_incomplete_component_table(tmp_path: Path) -> None:
     path = tmp_path / "support.h5"
     _write_support_report_h5(path)
@@ -1607,6 +1880,66 @@ def test_support_validator_rejects_components_for_energy_only_report(
     assert result.reason_codes == ("component_table_presence_mismatch",)
 
 
+@pytest.mark.parametrize(
+    ("dataset_path", "replacement", "reason_code"),
+    [
+        (
+            "support_analysis/total_corr_energy",
+            np.asarray(["bad"], dtype="S3"),
+            "dataset_dtype_invalid",
+        ),
+        (
+            "support_analysis/far_field_noise_pixel_count",
+            np.asarray([[0.0]], dtype=np.float64),
+            "dataset_dtype_invalid",
+        ),
+        (
+            "support_analysis/compact_support_fraction",
+            np.asarray([[float("inf")]], dtype=np.float64),
+            "dataset_value_invalid",
+        ),
+    ],
+)
+def test_support_validator_rejects_invalid_scientific_payload_types(
+    tmp_path: Path,
+    dataset_path: str,
+    replacement: np.ndarray,
+    reason_code: str,
+) -> None:
+    path = tmp_path / "support.h5"
+    _write_support_report_h5(path)
+    parent_path, name = dataset_path.rsplit("/", 1)
+    with h5py.File(path, "r+") as h5:
+        del h5[dataset_path]
+        h5[parent_path].create_dataset(name, data=replacement)
+
+    result = check_validity("peak_support_analysis_report", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == (reason_code,)
+
+
+def test_support_component_counts_require_integer_dtype(tmp_path: Path) -> None:
+    path = tmp_path / "support_components.h5"
+    _write_support_report_h5(path)
+    _enable_empty_component_table(path)
+    assert (
+        check_validity("peak_support_analysis_report", path).outcome
+        is ValidityOutcome.VALID
+    )
+    with h5py.File(path, "r+") as h5:
+        del h5["components/area"]
+        h5["components"].create_dataset(
+            "area",
+            data=np.asarray([], dtype=np.float64),
+        )
+
+    result = check_validity("peak_support_analysis_report", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("dataset_dtype_invalid",)
+
+
 def test_dictionary_validator_rejects_wrong_root_artifact_type(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.h5"
     _write_dictionary_h5(path)
@@ -1617,6 +1950,38 @@ def test_dictionary_validator_rejects_wrong_root_artifact_type(tmp_path: Path) -
 
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == ("artifact_type_mismatch",)
+
+
+def test_dictionary_validator_rejects_non_numeric_patches(tmp_path: Path) -> None:
+    path = tmp_path / "dictionary.h5"
+    _write_dictionary_h5(path)
+    with h5py.File(path, "r+") as h5:
+        del h5["peak_patch_dictionary/patches"]
+        h5["peak_patch_dictionary"].create_dataset(
+            "patches",
+            data=np.full((1, 1, 2, 2), "bad", dtype="S3"),
+        )
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("dataset_dtype_invalid",)
+
+
+def test_dictionary_validator_requires_integer_patch_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "dictionary.h5"
+    manifest = _write_dictionary_h5(path)
+    with h5py.File(path, "r+") as h5:
+        del h5["peak_patch_dictionary/patch_origin_xy"]
+        h5["peak_patch_dictionary"].create_dataset(
+            "patch_origin_xy",
+            data=np.asarray(manifest.patch_origin_xy, dtype=np.float64),
+        )
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("dataset_dtype_invalid",)
 
 
 @pytest.mark.parametrize(
@@ -1710,3 +2075,70 @@ def test_dictionary_validator_rejects_source_plan_entry_identity_mismatch(
 
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == (reason_code,)
+
+
+def test_dictionary_schema_v2_requires_explicit_wavelength_index(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dictionary.h5"
+    _write_dictionary_h5(path)
+    with h5py.File(path, "r+") as h5:
+        del h5["peak_patch_dictionary/entry_wavelength_index"]
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("missing_required_path",)
+
+
+def test_dictionary_validator_binds_capture_to_explicit_source_indices(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dictionary.h5"
+    _write_dictionary_h5(path)
+    source_plan = {
+        "plan_id": "two_mask_plan",
+        "wavelengths": [
+            {
+                "illumination": {
+                    "mode": "monochromatic",
+                    "effective_wavelength_nm": 550.0,
+                    "tls_setpoint_nm": 550.0,
+                    "wavelength_label_nm": 550.0,
+                }
+            }
+        ],
+        "masks": [{"mask_id": "mask_1"}, {"mask_id": "mask_2"}],
+    }
+    with h5py.File(path, "r+") as h5:
+        h5["source/plan_json"][()] = json.dumps(source_plan, sort_keys=True)
+        h5["peak_patch_dictionary/entry_capture_indices"][0] = np.asarray(
+            [1],
+            dtype=np.int64,
+        )
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("source_capture_binding_mismatch",)
+
+
+def test_dictionary_validator_rejects_extent_compatibility_disagreement(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dictionary.h5"
+    _write_dictionary_h5(path)
+    with h5py.File(path, "r+") as h5:
+        h5["peak_patch_dictionary/extent_compatibility_json"][()] = json.dumps(
+            {
+                "matches": False,
+                "mismatch_override": True,
+                "reason": "not the embedded manifest record",
+            },
+            sort_keys=True,
+        )
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("manifest_metadata_mismatch",)

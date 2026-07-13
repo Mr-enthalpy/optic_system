@@ -30,6 +30,8 @@ _STRING_DTYPE = h5py.string_dtype(encoding="utf-8")
 def _pupil_profile() -> PupilProfile:
     return PupilProfile.from_dict(
         {
+            "artifact_type": "pupil_profile",
+            "schema_version": schema_compat("pupil_profile").current,
             "pupil_profile_id": "bundle_pupil_v1",
             "lcd_coordinate_convention": "physical_mono_xy",
             "lcd_display_index": 1,

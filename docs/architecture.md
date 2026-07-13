@@ -261,7 +261,11 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
 - Every new serialized artifact emits a round-trippable integer
   `schema_version` via `emit_schema_version`. Strict reads reject a missing
   version as `legacy_unversioned`; compatibility loaders opt into legacy mode
-  explicitly. Legacy compatibility is not catalog eligibility.
+  explicitly. Artifact `from_dict()` and normal JSON/YAML loaders default to
+  strict mode; reading an unversioned mapping requires an explicit
+  `legacy_mode=True` call. Legacy compatibility is not catalog eligibility and
+  ordinary load/write code cannot silently reserialize an unversioned artifact
+  as the current schema.
 - `tasks.artifacts.validation.check_validity(artifact_type, path)` is a strict
   local structural check. The caller supplies the canonical artifact type; the
   validator never infers it from a filename or suffix. JSON manifests require
@@ -330,6 +334,21 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
 - A support report's `component_policy` is part of payload structure:
   `component_table_written` must agree with `analysis_mode` and with the actual
   presence of the HDF5 `components` group.
+- Derived survey entries retain `mask_index`, `wavelength_index`, and
+  `capture_index`, and validation requires the raw-plan binding
+  `capture_index = wavelength_index * n_masks + mask_index`. Dictionary schema
+  v2 persists `entry_wavelength_index` alongside `entry_mask_index`; every
+  source capture listed for an entry must resolve to that exact pair. Numeric
+  wavelength or illumination equality is not used to guess index identity.
+- Measured HDF5 frames and patch tensors require real numeric dtypes. Support
+  scientific arrays require their declared real numeric, finite, nonnegative,
+  integer-count, or boolean contracts; broadband `NaN` remains limited to the
+  explicit wavelength datasets.
+- Dictionary schema v2 persists `extent_compatibility`. Equal extents record no
+  override. Unequal extents are structurally valid only with an explicit
+  override and non-empty reason, and local validation returns a warning so the
+  audited exception remains visible without being confused with scientific
+  trust.
 - `ValidityResult` intentionally does not retain the input path. A future
   catalog owns `(storage_root, rel_path)` separately, so machine-specific
   absolute paths cannot leak into tracked catalog records.

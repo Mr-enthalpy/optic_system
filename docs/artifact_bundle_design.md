@@ -160,6 +160,27 @@ diagnostics are finite, corrected energies are nonnegative, and fallback values
 are strict booleans. Compatibility defaults for legacy loading are not accepted
 by strict validation.
 
+Normal artifact `from_dict()` and JSON/YAML loading are strict and reject a
+missing `schema_version`. A caller that intentionally handles an unversioned
+representation must invoke `from_dict(..., legacy_mode=True)` explicitly;
+compatibility loading does not itself migrate, register, or promote that data.
+
+Derived HDF5 provenance is index-bound. Survey entries must satisfy
+`capture_index = wavelength_index * n_masks + mask_index`. Dictionary schema v2
+stores `entry_wavelength_index` and `entry_mask_index`, and each listed source
+capture must resolve to that exact pair. This avoids ambiguous reverse lookup
+when source plans contain repeated or equivalent illumination metadata.
+
+Scientific payload validation is non-coercive: survey frames and dictionary
+patches use real numeric dtypes; support energies, fractions, centers, radii,
+counts, and component fields enforce their finite/numeric/integer/boolean
+contracts. The broadband `NaN` sentinel is allowed only in documented HDF5
+wavelength arrays.
+
+`PeakPatchPSFDictionary` schema v2 also records `extent_compatibility`.
+Mismatched raw/layout extents require an explicit override and non-empty reason;
+successful structural validation retains a warning for that audited exception.
+
 A syntactically readable JSON scalar or array is structurally `invalid` when a
 mapping is required, not `unreadable`. A newer schema is `unsupported`, because
 it may be valid under a newer reader and is not evidence of corrupt data.

@@ -28,6 +28,7 @@ def main() -> int:
     parser.add_argument("--camera-profile-manifest")
     parser.add_argument("--output-dtype", choices=["float32", "float64"], default="float32")
     parser.add_argument("--allow-camera-frame-extent-mismatch", action="store_true")
+    parser.add_argument("--camera-frame-extent-mismatch-reason")
     parser.add_argument("--notes")
     args = parser.parse_args()
 
@@ -44,6 +45,7 @@ def main() -> int:
         camera_profile_manifest=args.camera_profile_manifest,
         output_dtype=args.output_dtype,
         allow_camera_frame_extent_mismatch=args.allow_camera_frame_extent_mismatch,
+        camera_frame_extent_mismatch_reason=args.camera_frame_extent_mismatch_reason,
         notes=args.notes,
     )
     return 0

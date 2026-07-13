@@ -58,7 +58,7 @@ class SensorEnergyCenterProfile:
         cls,
         data: dict[str, Any],
         *,
-        legacy_mode: bool = True,
+        legacy_mode: bool = False,
     ) -> "SensorEnergyCenterProfile":
         from tasks.artifact_versioning import read_schema_version
 
@@ -214,6 +214,10 @@ class SensorEnergyCenterProfile:
         if len(per_entry_lengths) != 1:
             raise SensorEnergyCenterError(
                 "all per-entry center-profile arrays must have equal length"
+            )
+        if not self.per_entry_center_xy:
+            raise SensorEnergyCenterError(
+                "center profile must contain at least one measured entry"
             )
         for index, center in enumerate(self.per_entry_center_xy):
             _finite_pair(center, f"per_entry_center_xy[{index}]")

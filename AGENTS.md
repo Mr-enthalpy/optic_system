@@ -319,6 +319,10 @@ Detailed operational rules for the profile-driven calibration chain live in
 * Do not accept a declared manifest sidecar unless it matches the primary manifest.
 * Do not equate structural validity with scientific trust.
 * Do not automatically import legacy thesis artifacts.
+* Do not let normal artifact loaders accept missing schema versions; legacy
+  reads must opt in explicitly.
+* Do not infer a derived capture's wavelength/mask identity from numeric values
+  when explicit source indices are available.
 
 Local validators may establish readability and structural consistency only.
 Catalog selection, trust promotion, cleaning, and legacy migration require

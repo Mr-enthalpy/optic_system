@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -62,7 +63,7 @@ class FullFramePSFSurveyManifest:
         cls,
         data: dict[str, Any],
         *,
-        legacy_mode: bool = True,
+        legacy_mode: bool = False,
     ) -> FullFramePSFSurveyManifest:
         from tasks.artifact_versioning import read_schema_version
 
@@ -132,6 +133,35 @@ class FullFramePSFSurveyManifest:
             raise FullFramePSFSurveyError(
                 "entry_mask_ids length must match entry_wavelengths_nm"
             )
+        for index, (illumination_json, wavelength_nm) in enumerate(
+            zip(
+                self.entry_illumination_json,
+                self.entry_wavelengths_nm,
+                strict=True,
+            )
+        ):
+            mode, effective_wavelength_nm = _validate_illumination_json(
+                illumination_json,
+                field=f"entry_illumination_json[{index}]",
+            )
+            if mode != self.illumination_mode:
+                raise FullFramePSFSurveyError(
+                    f"entry_illumination_json[{index}].mode does not match illumination_mode"
+                )
+            if mode == "broadband_passthrough":
+                if not math.isnan(float(wavelength_nm)):
+                    raise FullFramePSFSurveyError(
+                        f"entry_wavelengths_nm[{index}] must use the broadband sentinel"
+                    )
+            elif not math.isclose(
+                float(wavelength_nm),
+                effective_wavelength_nm,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            ):
+                raise FullFramePSFSurveyError(
+                    f"entry_wavelengths_nm[{index}] does not match its illumination identity"
+                )
         if not sequence_equal_nan_aware(
             self.unique_wavelengths_nm,
             unique_preserve_order(self.entry_wavelengths_nm),
@@ -464,6 +494,77 @@ def _wavelength_from_illumination_json(illumination_str: str) -> float:
     if label is not None:
         return float(label)
     return float("nan")
+
+
+def _validate_illumination_json(
+    value: str,
+    *,
+    field: str,
+) -> tuple[str, float]:
+    """Validate one serialized illumination identity without type coercion."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise FullFramePSFSurveyError(f"{field} must be non-empty JSON text")
+
+    def _reject_constant(token: str) -> None:
+        raise ValueError(f"non-standard JSON constant {token}")
+
+    try:
+        data = json.loads(value, parse_constant=_reject_constant)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise FullFramePSFSurveyError(f"{field} must contain readable JSON") from exc
+    if not isinstance(data, dict):
+        raise FullFramePSFSurveyError(f"{field} JSON root must be a mapping")
+    mode = data.get("mode")
+    if mode not in {"monochromatic", "broadband_passthrough"}:
+        raise FullFramePSFSurveyError(f"{field}.mode is not supported")
+
+    def _number(name: str) -> float | None:
+        raw = data.get(name)
+        if raw is None:
+            return None
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise FullFramePSFSurveyError(
+                f"{field}.{name} must be a finite JSON number or null"
+            )
+        number = float(raw)
+        if not math.isfinite(number):
+            raise FullFramePSFSurveyError(
+                f"{field}.{name} must be finite when present"
+            )
+        return number
+
+    effective = _number("effective_wavelength_nm")
+    tls_setpoint = _number("tls_setpoint_nm")
+    wavelength_label = _number("wavelength_label_nm")
+    if mode == "monochromatic":
+        if effective is None or effective <= 0.0:
+            raise FullFramePSFSurveyError(
+                f"{field}.effective_wavelength_nm must be positive for monochromatic illumination"
+            )
+        if tls_setpoint is not None and tls_setpoint <= 0.0:
+            raise FullFramePSFSurveyError(
+                f"{field}.tls_setpoint_nm must be positive or null for monochromatic illumination"
+            )
+        if wavelength_label is not None and wavelength_label <= 0.0:
+            raise FullFramePSFSurveyError(
+                f"{field}.wavelength_label_nm must be positive or null"
+            )
+        return mode, effective
+
+    if effective is not None:
+        raise FullFramePSFSurveyError(
+            f"{field}.effective_wavelength_nm must be null for broadband_passthrough"
+        )
+    if tls_setpoint != 0.0:
+        raise FullFramePSFSurveyError(
+            f"{field}.tls_setpoint_nm must be 0 for broadband_passthrough"
+        )
+    if wavelength_label is not None:
+        raise FullFramePSFSurveyError(
+            f"{field}.wavelength_label_nm must be null for broadband_passthrough"
+        )
+    return mode, float("nan")
 
 
 def _check_survey_size(

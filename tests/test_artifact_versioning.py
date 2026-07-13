@@ -215,7 +215,10 @@ def test_check_validity_validates_full_frame_survey_json_manifest(
         camera_profile_id=None,
         illumination_mode="monochromatic",
         entry_wavelengths_nm=[550.0],
-        entry_illumination_json=['{"mode":"monochromatic"}'],
+        entry_illumination_json=[
+            '{"mode":"monochromatic","effective_wavelength_nm":550.0,'
+            '"tls_setpoint_nm":550.0,"wavelength_label_nm":550.0}'
+        ],
         entry_mask_ids=["mask_001"],
         unique_wavelengths_nm=[550.0],
         unique_mask_ids=["mask_001"],

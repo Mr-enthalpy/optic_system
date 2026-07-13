@@ -10,6 +10,7 @@ generation, promote scientific trust, or infer identity from filenames.
 import importlib
 import json
 import math
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -226,7 +227,7 @@ def _validate_json_artifact(
             artifact_type,
             schema_version=schema_version,
         )
-        _load_and_validate_serialized_artifact(data, loader)
+        artifact = _load_and_validate_serialized_artifact(data, loader)
     except _InvalidArtifact as exc:
         return _result(
             artifact_type,
@@ -239,7 +240,27 @@ def _validate_json_artifact(
         artifact_type,
         ValidityOutcome.VALID,
         schema_version=schema_version,
+        warnings=_artifact_validation_warnings(artifact_type, artifact),
     )
+
+
+def _artifact_validation_warnings(
+    artifact_type: str,
+    artifact: Any,
+) -> tuple[str, ...]:
+    if artifact_type != "peak_patch_psf_dictionary":
+        return ()
+    compatibility = getattr(artifact, "extent_compatibility", None)
+    if not isinstance(compatibility, Mapping):
+        return ()
+    if (
+        compatibility.get("matches") is False
+        and compatibility.get("mismatch_override") is True
+    ):
+        return (
+            "dictionary frame extents differ under an explicit audited override",
+        )
+    return ()
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
@@ -412,7 +433,7 @@ def _load_and_validate_serialized_artifact(
         artifact = loader(data)
         validate = getattr(artifact, "validate", None)
         if not callable(validate):
-            raise _InvalidArtifact(
+            raise _UnsupportedArtifact(
                 "validator_not_implemented",
                 "serialized artifact has no validate() contract",
             )
@@ -496,6 +517,28 @@ def _v1_strict_validation_mapping(
                 )
             except (TypeError, ValueError):
                 pass
+    if (
+        artifact_type == "peak_patch_psf_dictionary"
+        and "extent_compatibility" not in adapted
+    ):
+        dictionary_extent = adapted.get("camera_frame_extent")
+        layout_extent = adapted.get("peak_layout_camera_frame_extent")
+        if isinstance(dictionary_extent, Mapping) and isinstance(
+            layout_extent,
+            Mapping,
+        ):
+            matches = _canonical_mapping(dictionary_extent) == _canonical_mapping(
+                layout_extent
+            )
+            adapted["extent_compatibility"] = {
+                "matches": matches,
+                "mismatch_override": not matches,
+                "reason": (
+                    None
+                    if matches
+                    else "legacy schema v1 did not record the extent mismatch approval"
+                ),
+            }
     return adapted
 
 
@@ -860,6 +903,16 @@ def _validate_serialized_peak_patch_psf_dictionary(data: Mapping[str, Any]) -> N
     _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
     _strict_camera_frame_extent_field(data, "camera_frame_extent")
     _strict_camera_frame_extent_field(data, "peak_layout_camera_frame_extent")
+    extent_compatibility = _strict_required_mapping(data, "extent_compatibility")
+    if set(extent_compatibility) != {"matches", "mismatch_override", "reason"}:
+        _strict_error(
+            "extent_compatibility",
+            "a mapping containing exactly matches, mismatch_override, and reason",
+        )
+    for field in ("matches", "mismatch_override"):
+        if type(extent_compatibility[field]) is not bool:
+            _strict_error(f"extent_compatibility.{field}", "a boolean")
+    _strict_optional_string(extent_compatibility, "reason")
     _strict_string_list(data, "peak_ids")
     _strict_pair_list(data, "patch_shape_hw", integers=True)
     _strict_pair_list(data, "patch_origin_xy", integers=True)
@@ -1279,6 +1332,10 @@ def _validate_hdf_manifest_artifact(
                 artifact_type,
                 ValidityOutcome.VALID,
                 schema_version=schema_version,
+                warnings=_artifact_validation_warnings(
+                    artifact_type,
+                    manifest,
+                ),
             )
     except _InvalidArtifact as exc:
         return _result(
@@ -1492,6 +1549,75 @@ def _require_vector_length(dataset: h5py.Dataset, length: int, *, name: str) -> 
     _require_length(dataset, length, name=name)
 
 
+def _require_numeric_dataset(
+    dataset: h5py.Dataset,
+    *,
+    name: str,
+    finite: bool = False,
+    nonnegative: bool = False,
+) -> np.ndarray | None:
+    """Require a real integer/float HDF5 payload, optionally checking values."""
+    if not (
+        np.issubdtype(dataset.dtype, np.integer)
+        or np.issubdtype(dataset.dtype, np.floating)
+    ):
+        raise _InvalidArtifact(
+            "dataset_dtype_invalid",
+            f"{name} must use a real numeric dtype",
+        )
+    if not finite and not nonnegative:
+        return None
+    values = np.asarray(dataset[()])
+    if finite and np.any(~np.isfinite(values)):
+        raise _InvalidArtifact(
+            "dataset_value_invalid",
+            f"{name} must contain only finite values",
+        )
+    if nonnegative and np.any(values < 0):
+        raise _InvalidArtifact(
+            "dataset_value_invalid",
+            f"{name} must contain only nonnegative values",
+        )
+    return values
+
+
+def _require_integer_dataset(
+    dataset: h5py.Dataset,
+    *,
+    name: str,
+    nonnegative: bool = False,
+    positive: bool = False,
+) -> np.ndarray | None:
+    """Require an integer HDF5 payload without accepting float coercion."""
+    if not np.issubdtype(dataset.dtype, np.integer):
+        raise _InvalidArtifact(
+            "dataset_dtype_invalid",
+            f"{name} must use an integer dtype",
+        )
+    if not nonnegative and not positive:
+        return None
+    values = np.asarray(dataset[()])
+    if nonnegative and np.any(values < 0):
+        raise _InvalidArtifact(
+            "dataset_value_invalid",
+            f"{name} must contain only nonnegative values",
+        )
+    if positive and np.any(values <= 0):
+        raise _InvalidArtifact(
+            "dataset_value_invalid",
+            f"{name} must contain only positive values",
+        )
+    return values
+
+
+def _require_boolean_dataset(dataset: h5py.Dataset, *, name: str) -> None:
+    if not np.issubdtype(dataset.dtype, np.bool_):
+        raise _InvalidArtifact(
+            "dataset_dtype_invalid",
+            f"{name} must use a boolean dtype",
+        )
+
+
 def _read_text_array(dataset: h5py.Dataset, *, name: str) -> list[str]:
     _require_rank(dataset, 1, name=name)
     try:
@@ -1507,6 +1633,7 @@ def _read_int_pair_dataset(dataset: h5py.Dataset, *, name: str) -> tuple[int, in
     _require_rank(dataset, 1, name=name)
     if dataset.shape[0] != 2:
         raise _InvalidArtifact("dataset_shape_mismatch", f"{name} must contain two values")
+    _require_integer_dataset(dataset, name=name)
     values = np.asarray(dataset[()], dtype=np.int64)
     return (int(values[0]), int(values[1]))
 
@@ -2875,6 +3002,7 @@ def _validate_full_frame_psf_survey_payload(
         raise _InvalidArtifact("missing_required_path", "full_frame_survey group is missing")
     frames = _require_dataset(h5, "full_frame_survey/frames_avg")
     _require_rank(frames, 3, name="full_frame_survey/frames_avg")
+    _require_numeric_dataset(frames, name="full_frame_survey/frames_avg")
     entry_count = int(frames.shape[0])
     if tuple(int(v) for v in frames.shape[1:]) != tuple(manifest.frame_shape):
         raise _InvalidArtifact(
@@ -3032,6 +3160,12 @@ def _validate_full_frame_psf_survey_payload(
             capture_index,
             planned_capture_count=len(source_mask_ids) * len(source_illuminations),
         )
+        expected_capture_index = wavelength_index * len(source_mask_ids) + mask_index
+        if capture_index != expected_capture_index:
+            raise _InvalidArtifact(
+                "source_capture_binding_mismatch",
+                "survey capture_index does not match its wavelength_index and mask_index",
+            )
     if "survey_id" in h5.attrs and decode_h5_string(h5.attrs["survey_id"]) != manifest.survey_id:
         raise _InvalidArtifact(
             "manifest_metadata_mismatch",
@@ -3049,6 +3183,17 @@ def _validate_peak_support_analysis_payload(
         raise _InvalidArtifact("missing_required_path", "support_analysis group is missing")
     tau = _require_dataset(h5, "support_analysis/tau_values")
     radii = _require_dataset(h5, "support_analysis/support_radii")
+    _require_numeric_dataset(
+        tau,
+        name="support_analysis/tau_values",
+        finite=True,
+    )
+    _require_numeric_dataset(
+        radii,
+        name="support_analysis/support_radii",
+        finite=True,
+        nonnegative=True,
+    )
     _require_numeric_sequence_match(tau[()], manifest.tau_values, name="tau_values")
     _require_numeric_sequence_match(radii[()], manifest.support_radii, name="support_radii")
     frame_shape = _read_int_pair_dataset(
@@ -3079,6 +3224,37 @@ def _validate_peak_support_analysis_payload(
                 "dataset_shape_mismatch",
                 f"{path} has an unexpected shape",
             )
+    for path in (
+        "support_analysis/background_value",
+        "support_analysis/center_xy",
+    ):
+        _require_numeric_dataset(
+            h5[path],
+            name=path,
+            finite=True,
+        )
+    for path in (
+        "support_analysis/total_corr_energy",
+        "support_analysis/compact_support_energy",
+        "support_analysis/compact_support_fraction",
+        "support_analysis/far_field_noise_energy",
+        "support_analysis/far_field_significant_energy",
+    ):
+        _require_numeric_dataset(
+            h5[path],
+            name=path,
+            finite=True,
+            nonnegative=True,
+        )
+    for path in (
+        "support_analysis/far_field_noise_pixel_count",
+        "support_analysis/far_field_significant_pixel_count",
+    ):
+        _require_integer_dataset(
+            h5[path],
+            name=path,
+            nonnegative=True,
+        )
     component_policy = manifest.component_policy
     analysis_mode = component_policy.get("analysis_mode")
     expected_components = component_policy.get("component_table_written")
@@ -3166,6 +3342,49 @@ def _validate_component_table(
                 "component_table_shape_mismatch",
                 f"components/{name} has an unexpected shape",
             )
+    for name in ("entry_index", "component_id", "bbox_xyxy"):
+        _require_integer_dataset(
+            group[name],
+            name=f"components/{name}",
+            nonnegative=True,
+        )
+    _require_integer_dataset(
+        group["area"],
+        name="components/area",
+        positive=True,
+    )
+    for name in (
+        "tau",
+        "centroid_xy",
+        "centroid_xy_abs",
+        "centroid_xy_rel",
+    ):
+        _require_numeric_dataset(
+            group[name],
+            name=f"components/{name}",
+            finite=True,
+        )
+    for name in (
+        "energy",
+        "peak_value",
+        "mean_value",
+        "max_radius",
+        "max_radius_from_energy_center",
+    ):
+        _require_numeric_dataset(
+            group[name],
+            name=f"components/{name}",
+            finite=True,
+            nonnegative=True,
+        )
+    _require_boolean_dataset(
+        group["is_far_field"],
+        name="components/is_far_field",
+    )
+    _require_numeric_dataset(
+        group["wavelength_nm"],
+        name="components/wavelength_nm",
+    )
     indices = np.asarray(group["entry_index"][()], dtype=np.int64)
     if np.any(indices < 0) or np.any(indices >= entry_count):
         raise _InvalidArtifact(
@@ -3230,6 +3449,7 @@ def _validate_peak_patch_psf_dictionary_payload(
         )
     patches = _require_dataset(h5, "peak_patch_dictionary/patches")
     _require_rank(patches, 4, name="peak_patch_dictionary/patches")
+    _require_numeric_dataset(patches, name="peak_patch_dictionary/patches")
     entry_count = len(manifest.entry_mask_ids)
     peak_count = len(manifest.peak_ids)
     if patches.shape[0] != entry_count or patches.shape[1] != peak_count:
@@ -3243,12 +3463,17 @@ def _validate_peak_patch_psf_dictionary_payload(
                 "patch_shape_mismatch",
                 "patch tensor shape does not match embedded manifest",
             )
-    for required in (
+    required_entry_paths = [
         "peak_patch_dictionary/entry_mask_ids",
         "peak_patch_dictionary/entry_mask_index",
         "peak_patch_dictionary/entry_wavelength_nm",
         "peak_patch_dictionary/entry_capture_indices",
-    ):
+    ]
+    if schema_version >= 2:
+        required_entry_paths.append(
+            "peak_patch_dictionary/entry_wavelength_index"
+        )
+    for required in required_entry_paths:
         _require_vector_length(
             _require_dataset(h5, required), entry_count, name=required
         )
@@ -3309,6 +3534,7 @@ def _validate_peak_patch_psf_dictionary_payload(
                 "dataset_shape_mismatch",
                 f"{name} metadata has an unexpected shape",
             )
+        _require_integer_dataset(dataset, name=path, nonnegative=True)
         if not np.array_equal(np.asarray(dataset[()], dtype=np.int64), np.asarray(values, dtype=np.int64)):
             raise _InvalidArtifact(
                 "manifest_metadata_mismatch",
@@ -3363,6 +3589,16 @@ def _validate_peak_patch_psf_dictionary_payload(
             "manifest_metadata_mismatch",
             "layout frame extent does not match embedded manifest",
         )
+    if schema_version >= 2:
+        extent_compatibility = _read_hdf_json_mapping(
+            h5,
+            "peak_patch_dictionary/extent_compatibility_json",
+        )
+        if extent_compatibility != manifest.extent_compatibility:
+            raise _InvalidArtifact(
+                "manifest_metadata_mismatch",
+                "extent_compatibility_json does not match embedded manifest",
+            )
     background_policy = _read_hdf_json_mapping(
         h5,
         "peak_patch_dictionary/background_policy_json",
@@ -3387,6 +3623,15 @@ def _validate_peak_patch_psf_dictionary_payload(
         "peak_patch_dictionary/entry_mask_index",
         entry_count=entry_count,
     )
+    wavelength_indices = (
+        _read_integer_index_vector(
+            h5,
+            "peak_patch_dictionary/entry_wavelength_index",
+            entry_count=entry_count,
+        )
+        if schema_version >= 2
+        else None
+    )
     capture_index_rows = _read_vlen_integer_index_rows(
         h5,
         "peak_patch_dictionary/entry_capture_indices",
@@ -3404,24 +3649,50 @@ def _validate_peak_patch_psf_dictionary_payload(
                 "entry_mask_id_mismatch",
                 "dictionary entry_mask_ids do not match source plan mask IDs",
             )
-        matching_wavelength_indices = [
-            wavelength_index
-            for wavelength_index, source_illumination in enumerate(source_illuminations)
-            if _entry_wavelength_matches_illumination_identity(
-                float(entry_wavelengths[index]),
-                source_illumination,
+        if wavelength_indices is not None:
+            wavelength_index = int(wavelength_indices[index])
+        else:
+            decoded_wavelength_indices = {
+                int(capture_index) // len(source_mask_ids)
+                for capture_index in capture_index_rows[index]
+            }
+            if len(decoded_wavelength_indices) != 1:
+                raise _InvalidArtifact(
+                    "source_capture_binding_mismatch",
+                    "legacy dictionary entry captures do not share one wavelength index",
+                )
+            wavelength_index = decoded_wavelength_indices.pop()
+        if wavelength_index < 0 or wavelength_index >= len(source_illuminations):
+            raise _InvalidArtifact(
+                "wavelength_index_out_of_bounds",
+                "dictionary entry_wavelength_index is outside the source capture plan",
             )
-        ]
-        if not matching_wavelength_indices:
+        if not _entry_wavelength_matches_illumination_identity(
+            float(entry_wavelengths[index]),
+            source_illuminations[wavelength_index],
+        ):
             raise _InvalidArtifact(
                 "entry_wavelength_mismatch",
                 "dictionary entry wavelengths do not match the source capture plan",
             )
+        if len(set(int(value) for value in capture_index_rows[index])) != len(
+            capture_index_rows[index]
+        ):
+            raise _InvalidArtifact(
+                "source_capture_binding_mismatch",
+                "dictionary entry_capture_indices must not contain duplicates",
+            )
+        expected_capture_index = wavelength_index * len(source_mask_ids) + mask_index
         for capture_index in capture_index_rows[index]:
             _validate_capture_index_in_bounds(
                 int(capture_index),
                 planned_capture_count=len(source_mask_ids) * len(source_illuminations),
             )
+            if int(capture_index) != expected_capture_index:
+                raise _InvalidArtifact(
+                    "source_capture_binding_mismatch",
+                    "dictionary capture index does not match its wavelength and mask indices",
+                )
     if "dictionary_id" in h5.attrs and decode_h5_string(
         h5.attrs["dictionary_id"]
     ) != manifest.dictionary_id:
@@ -3450,7 +3721,16 @@ def _require_numeric_sequence_match(
     *,
     name: str,
 ) -> None:
-    actual_arr = np.asarray(actual, dtype=np.float64)
+    raw_actual = np.asarray(actual)
+    if not (
+        np.issubdtype(raw_actual.dtype, np.integer)
+        or np.issubdtype(raw_actual.dtype, np.floating)
+    ):
+        raise _InvalidArtifact(
+            "dataset_dtype_invalid",
+            f"{name} must use a real numeric dtype",
+        )
+    actual_arr = np.asarray(raw_actual, dtype=np.float64)
     expected_arr = np.asarray(expected, dtype=np.float64)
     if actual_arr.shape != expected_arr.shape or not np.array_equal(
         actual_arr,
@@ -3472,11 +3752,15 @@ def _canonical_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _safe_validation_message(exc: Exception, fallback: str) -> str:
-    """Keep useful contract detail without retaining an absolute Windows path."""
+    """Keep useful contract detail without retaining an absolute local path."""
     message = str(exc).strip()
     if not message:
         return fallback
-    if len(message) > 512 or (":\\" in message and "\n" not in message):
+    absolute_path = re.search(
+        r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\|/)[^\s\"']+",
+        message,
+    )
+    if len(message) > 512 or absolute_path is not None:
         return fallback
     return message
 

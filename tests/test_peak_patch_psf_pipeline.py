@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import pytest
 
+from tasks.artifact_versioning import schema_compat
 from tasks.capture_plan import CapturePlan
 from tasks.artifacts.validation import ValidityOutcome, check_validity
 from tasks.profiles import CameraProfile, PupilProfile
@@ -146,6 +147,8 @@ def _raw_psf_capture(
 def _write_profile_manifests(tmp_path: Path, wavelengths: list[int] | None = None) -> tuple[Path, Path]:
     wavelengths = wavelengths or [450, 550]
     pupil = PupilProfile.from_dict({
+        "artifact_type": "pupil_profile",
+        "schema_version": schema_compat("pupil_profile").current,
         "pupil_profile_id": "pupil_profile_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,
@@ -154,6 +157,8 @@ def _write_profile_manifests(tmp_path: Path, wavelengths: list[int] | None = Non
         "lcd_physical_radius": 5.0,
     })
     camera = CameraProfile.from_dict({
+        "artifact_type": "camera_profile",
+        "schema_version": schema_compat("camera_profile").current,
         "camera_profile_id": "per_band_pupil_open_v1",
         "profile_family": "per_band_pupil_open",
         "depends_on": {"pupil_profile_id": "pupil_profile_v1"},
@@ -329,6 +334,11 @@ def test_builds_peak_patch_dictionary_from_raw_capture_and_layout(tmp_path: Path
     assert manifest.dictionary_id == "peak_patch_dict_v1"
     assert manifest.entry_wavelengths_nm == [450.0, 550.0, 450.0, 550.0]
     assert manifest.unique_mask_ids == ["mask_a", "mask_b"]
+    assert manifest.extent_compatibility == {
+        "matches": True,
+        "mismatch_override": False,
+        "reason": None,
+    }
     assert check_validity(
         "peak_patch_psf_dictionary", dictionary_path
     ).outcome is ValidityOutcome.VALID
@@ -337,6 +347,12 @@ def test_builds_peak_patch_dictionary_from_raw_capture_and_layout(tmp_path: Path
         assert f["peak_patch_dictionary/patches"].dtype == np.float32
         assert "psf_dictionary/frames_avg" not in f
         assert list(f["peak_patch_dictionary/entry_capture_indices"][3]) == [3]
+        assert list(f["peak_patch_dictionary/entry_wavelength_index"][:]) == [
+            0,
+            1,
+            0,
+            1,
+        ]
         assert f["peak_patch_dictionary/patch_origin_xy"].shape == (2, 2)
         assert _h5_str(f["peak_patch_dictionary/coordinate_frame"]) == "sensor_full_frame"
         assert _h5_str(f["source/peak_layout_profile"]) == str(layout_path)
@@ -379,6 +395,60 @@ def test_peak_patch_dictionary_rejects_camera_frame_extent_mismatch(tmp_path: Pa
         )
 
 
+def test_peak_patch_dictionary_persists_audited_extent_mismatch(
+    tmp_path: Path,
+) -> None:
+    raw_path, _, layout_path = _survey_and_layout(tmp_path)
+    layout_data = json.loads(layout_path.read_text(encoding="utf-8"))
+    layout_data["coordinate_frame"] = "acquired_frame"
+    layout_data["camera_frame_extent"] = {
+        "mode": "acquired_frame",
+        "origin_xy": [5, 7],
+        "shape_hw": [20, 20],
+        "sensor_shape_hw": [40, 40],
+    }
+    layout_path.write_text(
+        json.dumps(layout_data, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    pupil_manifest, camera_manifest = _write_profile_manifests(tmp_path)
+
+    with pytest.raises(
+        PeakPatchPSFDictionaryError,
+        match="mismatch_reason",
+    ):
+        build_peak_patch_psf_dictionary(
+            source_raw_capture_h5=raw_path,
+            peak_layout_profile=layout_path,
+            output_h5=tmp_path / "missing_reason.h5",
+            pupil_profile_manifest=pupil_manifest,
+            camera_profile_manifest=camera_manifest,
+            allow_camera_frame_extent_mismatch=True,
+        )
+
+    dictionary_path = tmp_path / "audited_mismatch.h5"
+    manifest = build_peak_patch_psf_dictionary(
+        source_raw_capture_h5=raw_path,
+        peak_layout_profile=layout_path,
+        output_h5=dictionary_path,
+        pupil_profile_manifest=pupil_manifest,
+        camera_profile_manifest=camera_manifest,
+        allow_camera_frame_extent_mismatch=True,
+        camera_frame_extent_mismatch_reason="verified coordinate registration",
+    )
+
+    assert manifest.extent_compatibility == {
+        "matches": False,
+        "mismatch_override": True,
+        "reason": "verified coordinate registration",
+    }
+    validity = check_validity("peak_patch_psf_dictionary", dictionary_path)
+    assert validity.outcome is ValidityOutcome.VALID
+    assert validity.warnings == (
+        "dictionary frame extents differ under an explicit audited override",
+    )
+
+
 def test_publishes_peak_patch_measured_evidence_handoff(tmp_path: Path) -> None:
     raw_path, _, layout_path = _survey_and_layout(tmp_path)
     pupil_manifest, camera_manifest = _write_profile_manifests(tmp_path)
@@ -404,6 +474,7 @@ def test_publishes_peak_patch_measured_evidence_handoff(tmp_path: Path) -> None:
         assert f["peak_table/patch_origin_xy"].shape == (2, 2)
         assert _h5_str(f["peak_table/coordinate_frame"]) == "sensor_full_frame"
         assert list(f["entries/wavelength_nm"][:]) == [450.0, 550.0, 450.0, 550.0]
+        assert list(f["entries/wavelength_index"][:]) == [0, 1, 0, 1]
         assert _h5_str(f["source/raw_capture_h5"]) == str(raw_path)
         assert _h5_str(f["source/dictionary_h5"]) == str(dictionary_path)
         assert f["exports/dense_diagnostic/psf_dense"].shape == (4, 20, 20)

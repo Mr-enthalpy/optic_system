@@ -60,7 +60,7 @@ class PeakLayoutProfileManifest:
         cls,
         data: dict[str, Any],
         *,
-        legacy_mode: bool = True,
+        legacy_mode: bool = False,
     ) -> PeakLayoutProfileManifest:
         from tasks.artifact_versioning import read_schema_version
 
