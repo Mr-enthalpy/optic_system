@@ -308,6 +308,28 @@ No historical task revival is planned. The active module list in
 Detailed operational rules for the profile-driven calibration chain live in
 `docs/profile_task_chain.md`.
 
+## Artifact validation and bundle guardrails
+
+* Do not treat path existence as validity.
+* Do not treat unsupported validation as invalid data.
+* Do not classify an unexpected validator failure as invalid artifact data.
+* Do not infer artifact type from filenames.
+* Do not place absolute paths in tracked artifact records.
+* Do not allow bundle payloads to escape their generation directory.
+* Do not accept a declared manifest sidecar unless it matches the primary manifest.
+* Do not equate structural validity with scientific trust.
+* Do not automatically import legacy thesis artifacts.
+* Do not let normal artifact loaders accept missing schema versions; legacy
+  reads must opt in explicitly.
+* Do not collapse bundle-envelope, JSON manifest, and HDF5 payload versions
+  onto one schema-version axis.
+* Do not infer a derived capture's wavelength/mask identity from numeric values
+  when explicit source indices are available.
+
+Local validators may establish readability and structural consistency only.
+Catalog selection, trust promotion, cleaning, and legacy migration require
+separate explicit workflows.
+
 Hard rules:
 
 * Pass-through uses `TLSService.set_pass_through()` /

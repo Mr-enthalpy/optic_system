@@ -488,6 +488,147 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
         )
 
 
+def read_validated_manifest_mapping(
+    artifact_type: str,
+    path: str | Path,
+    *,
+    require_json: bool = False,
+) -> tuple[dict[str, Any], int] | ValidityResult:
+    """Read one canonical manifest through its exact representation adapter.
+
+    JSON manifests and HDF5-embedded manifests share this entry point, but they
+    do not share a parser or version axis. ``require_json`` is an enforced
+    representation constraint used for canonical JSON sidecars.
+    """
+    if (
+        not isinstance(artifact_type, str)
+        or not artifact_type
+        or artifact_type != artifact_type.strip()
+        or artifact_type not in REGISTERED_ARTIFACT_TYPES
+    ):
+        return _result(
+            str(artifact_type),
+            ValidityOutcome.UNSUPPORTED,
+            reason_codes=("artifact_type.unknown",),
+            errors=("unknown artifact_type",),
+        )
+    if not isinstance(require_json, bool):
+        return _result(
+            artifact_type,
+            ValidityOutcome.INVALID,
+            reason_codes=("representation.require_json_invalid",),
+            errors=("require_json must be a boolean",),
+        )
+    artifact_path = Path(path)
+    if not artifact_path.exists():
+        return _result(
+            artifact_type,
+            ValidityOutcome.UNREADABLE,
+            reason_codes=("location.missing",),
+            errors=("artifact location does not exist",),
+        )
+
+    representation: ArtifactRepresentation | None = None
+    schema_version: int | None = None
+    try:
+        representation = _detect_representation(artifact_path)
+        if representation is ArtifactRepresentation.HDF5:
+            if require_json:
+                raise UnsupportedRepresentationError(
+                    "representation.json_required",
+                    "canonical JSON representation is required",
+                )
+            from .hdf_validation import read_validated_hdf_manifest_mapping
+
+            return read_validated_hdf_manifest_mapping(artifact_type, artifact_path)
+        _load_artifact_adapter_registrations(artifact_type)
+        mapping = parse_json_mapping(artifact_path)
+        found_type = mapping.get("artifact_type")
+        if not isinstance(found_type, str) or not found_type:
+            raise SerializedSchemaError(
+                "schema.artifact_type.missing",
+                "artifact_type is required and must be a non-empty string",
+            )
+        if found_type != artifact_type:
+            raise SerializedSchemaError(
+                "schema.artifact_type.mismatch",
+                f"artifact_type mismatch: expected {artifact_type!r}, "
+                f"found {found_type!r}",
+            )
+        schema_version = read_schema_version(mapping, artifact_type)
+        adapter = get_schema_adapter(
+            artifact_type,
+            ArtifactRepresentation.JSON,
+            schema_version,
+        )
+        if adapter is None:
+            raise UnsupportedRepresentationError(
+                "schema.adapter_not_registered",
+                "validator_not_implemented: no adapter is registered for the "
+                "serialized schema identity",
+            )
+        adapter.parse_and_validate(mapping)
+        return mapping, schema_version
+    except LegacyUnversionedArtifactError:
+        return _result(
+            artifact_type,
+            ValidityOutcome.LEGACY_UNVERSIONED,
+            representation=representation,
+            reason_codes=("schema.version.missing",),
+            errors=("legacy_unversioned: serialized artifact lacks schema_version",),
+        )
+    except NewerSchemaVersionError as exc:
+        return _result(
+            artifact_type,
+            ValidityOutcome.UNSUPPORTED,
+            representation=representation,
+            schema_version=exc.version,
+            manifest_schema_version=exc.version,
+            reason_codes=("schema.version.newer",),
+            errors=(_safe_message(exc, "schema version requires a newer reader"),),
+        )
+    except OlderSchemaVersionError as exc:
+        return _result(
+            artifact_type,
+            ValidityOutcome.INVALID,
+            representation=representation,
+            schema_version=exc.version,
+            manifest_schema_version=exc.version,
+            reason_codes=("schema.version.older",),
+            errors=(_safe_message(exc, "schema version is outside the readable window"),),
+        )
+    except SchemaCompatibilityError as exc:
+        return _result(
+            artifact_type,
+            ValidityOutcome.INVALID,
+            representation=representation,
+            schema_version=schema_version,
+            manifest_schema_version=schema_version,
+            reason_codes=("schema.version.invalid",),
+            errors=(_safe_message(exc, "schema_version is invalid"),),
+        )
+    except ArtifactValidationError as exc:
+        return _result(
+            artifact_type,
+            exc.outcome,
+            representation=representation,
+            schema_version=schema_version,
+            manifest_schema_version=schema_version,
+            reason_codes=(exc.reason_code,),
+            errors=(exc.message,),
+        )
+    except Exception as exc:  # noqa: BLE001 - programming failures fail closed.
+        return _result(
+            artifact_type,
+            ValidityOutcome.UNSUPPORTED,
+            representation=representation,
+            schema_version=schema_version,
+            manifest_schema_version=schema_version,
+            reason_codes=("validator.internal_failure",),
+            errors=(f"validator raised {type(exc).__name__}",),
+        )
+
+
 def _safe_message(exc: Exception, fallback: str) -> str:
     message = str(exc).strip()
     if not message or len(message) > 512:
@@ -509,5 +650,6 @@ __all__ = [
     "check_validity",
     "get_schema_adapter",
     "parse_json_mapping",
+    "read_validated_manifest_mapping",
     "register_schema_adapter",
 ]

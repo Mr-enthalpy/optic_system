@@ -52,6 +52,7 @@ class StorageConfig:
             raise StorageConfigError("storage roots must be a non-empty mapping")
 
         normalized: dict[str, Path] = {}
+        repository = _repo_root().resolve()
         for raw_name, raw_base in self.roots.items():
             if not isinstance(raw_name, str) or not raw_name.strip():
                 raise StorageConfigError(
@@ -72,7 +73,12 @@ class StorageConfig:
                 raise StorageConfigError(
                     f"storage root {name!r} must be an absolute path, got {raw_base!r}"
                 )
-            normalized[name] = base.resolve()
+            root = base.resolve()
+            if _paths_overlap(root, repository):
+                raise StorageConfigError(
+                    f"storage root {name!r} must not overlap the repository directory"
+                )
+            normalized[name] = root
 
         object.__setattr__(self, "roots", MappingProxyType(normalized))
 
@@ -168,6 +174,20 @@ def _require_contained_path(
             f"{field_name} escapes storage_root {storage_root!r} after resolution"
         ) from None
     return candidate
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    """Return whether either resolved directory contains the other."""
+    try:
+        first.relative_to(second)
+        return True
+    except ValueError:
+        pass
+    try:
+        second.relative_to(first)
+        return True
+    except ValueError:
+        return False
 
 
 def _load_yaml_roots(config_path: Path) -> dict[str, Path]:

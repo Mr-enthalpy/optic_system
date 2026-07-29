@@ -231,10 +231,11 @@ them. Do not invent final schemas for external repositories inside
 ### Target data lifecycle: storage config and artifact versioning
 
 This section describes the target data-lifecycle architecture. The storage
-configuration and schema registry exist now, but a catalog and artifact
-bundles do not. Schema-v1 compatibility readers retain task-local source paths
-only as legacy migration input. Current schema-v2 measured manifests persist
-artifact IDs and never copy those paths into canonical provenance.
+configuration, schema registry, structural validators, and local artifact
+bundle primitives exist now, but a catalog does not. Schema-v1 compatibility
+readers retain task-local source paths only as explicit migration input.
+Current schema-v2 measured manifests persist artifact IDs and never copy those
+paths into canonical provenance or catalog locations.
 
 Storage-location config layer (`tasks/storage_config.py`):
 
@@ -246,6 +247,9 @@ Storage-location config layer (`tasks/storage_config.py`):
   `StorageConfig.resolve()`; `relativize()` performs the inverse. Resolution
   checks containment after resolving the real path, so `..` traversal and
   junction/symlink escapes are rejected.
+- A storage root must not overlap the repository in either direction. This
+  prevents generated payloads from becoming tracked source files and prevents
+  a broad storage root from treating the repository as artifact content.
 - No drive letters or absolute data paths are hardcoded anywhere. A missing
   configuration is a hard error.
 
@@ -310,10 +314,26 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   the local serialized contract; it does not promote calibration, optical
   alignment, training readiness, bundle eligibility, or catalog status.
 
-The planned bundle and catalog-location contract is documented in
-[`artifact_bundle_design.md`](artifact_bundle_design.md). It is design work,
-not a claim that current single-file or sidecar artifacts already satisfy that
-contract.
+Artifact bundle foundation (`tasks/artifacts/bundle.py`):
+
+- `ArtifactLocation` identifies a named storage root and relative generation
+  directory. `ArtifactPayload` inventories one generation-relative path with
+  media type, byte size, and streaming SHA-256 digest.
+- Bundle-envelope, JSON manifest, and HDF5 payload versions are independent.
+  The bundle `artifact_id` identifies the immutable generation; it need not
+  equal a payload-native survey, report, or dictionary identifier.
+- Validation enforces resolved generation containment, distinct role paths,
+  symlink/hard-link alias rejection, size and digest agreement, and JSON/HDF5
+  media-type agreement.
+- Bundle schema v1 fixes the primary payload role as `data`. Its validator is
+  selected from the declared `artifact_type`, never from a filename. A declared
+  JSON `manifest_sidecar` must canonically agree with the primary JSON or
+  embedded HDF5 manifest.
+- Bundle validation inventories and verifies one local generation. It does not
+  register, select, promote, invalidate, clean, resume, or migrate artifacts.
+
+The bundle boundary and the intentionally deferred catalog layer are documented
+in [`artifact_bundle_design.md`](artifact_bundle_design.md).
 
 Provenance reconstructibility (valid-pixel-domain records):
 
