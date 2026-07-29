@@ -294,16 +294,14 @@ def inspect_payload(
 def validate_bundle(
     manifest: ArtifactBundleManifest | str | Path,
     generation_dir: str | Path,
-    *,
-    primary_payload_name: str = "data",
 ) -> ValidityResult:
-    """Validate one local bundle and optionally dispatch its primary payload.
+    """Validate one local bundle and dispatch its fixed ``data`` payload.
 
-    The primary payload role is explicit and defaults to ``"data"``.  When it
-    is present, it is validated using the bundle's declared ``artifact_type``;
-    no validator is selected from the filename or media type.  A bundle without
-    that role can still have a sound inventory, but is ``unsupported`` for full
-    artifact validation because no primary payload contract was declared.
+    Bundle schema v1 fixes the primary payload role as ``"data"``. It is
+    validated using the bundle's declared ``artifact_type``; no validator is
+    selected from a filename or media type. A bundle without that role can
+    still have a sound inventory, but is ``unsupported`` for full artifact
+    validation because no primary payload contract was declared.
     """
     loaded = _load_bundle_for_validation(manifest)
     if isinstance(loaded, ValidityResult):
@@ -417,15 +415,7 @@ def validate_bundle(
         if sidecar_media_result is not None:
             return sidecar_media_result
 
-    if not isinstance(primary_payload_name, str) or not primary_payload_name.strip():
-        return _bundle_result(
-            artifact_type,
-            ValidityOutcome.INVALID,
-            bundle.schema_version,
-            "primary_payload_name_invalid",
-            "primary_payload_name must be a non-empty string",
-        )
-    primary = resolved_payloads.get(primary_payload_name)
+    primary = resolved_payloads.get("data")
     if primary is None:
         return _bundle_result(
             artifact_type,
@@ -436,8 +426,8 @@ def validate_bundle(
         )
     primary_media_result = _validate_declared_payload_media_type(
         bundle,
-        payload_name=primary_payload_name,
-        payload=bundle.payloads[primary_payload_name],
+        payload_name="data",
+        payload=bundle.payloads["data"],
         path=primary,
     )
     if primary_media_result is not None:

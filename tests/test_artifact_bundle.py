@@ -219,6 +219,17 @@ def test_bundle_validates_matching_hdf5_embedded_manifest_sidecar(tmp_path: Path
     assert result.outcome is ValidityOutcome.VALID
 
 
+def test_bundle_cannot_validate_sidecar_as_primary(tmp_path: Path) -> None:
+    bundle, generation, _ = _bundle_for_survey(tmp_path)
+
+    with pytest.raises(TypeError, match="primary_payload_name"):
+        validate_bundle(
+            bundle,
+            generation,
+            primary_payload_name="manifest_sidecar",
+        )
+
+
 def test_bundle_rejects_hdf5_primary_with_wrong_declared_media_type(
     tmp_path: Path,
 ) -> None:

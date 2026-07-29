@@ -302,18 +302,6 @@ _V1_BROADBAND_WAVELENGTH_FIELDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-_V1_COMPAT_CAMERA_EXTENT_FIELDS: dict[str, tuple[str, ...]] = {
-    "full_frame_psf_survey": ("camera_frame_extent",),
-    "sensor_energy_center_profile": ("camera_frame_extent",),
-    "peak_support_analysis_report": ("camera_frame_extent",),
-    "peak_layout_profile": ("camera_frame_extent",),
-    "peak_patch_psf_dictionary": (
-        "camera_frame_extent",
-        "peak_layout_camera_frame_extent",
-    ),
-}
-
-
 def _normalize_artifact_manifest_json(
     data: dict[str, Any],
     *,
@@ -496,50 +484,13 @@ def _validate_strict_serialized_mapping(
             "validator_not_implemented",
             "strict serialized validator is not registered",
         )
-    validator_data = data
-    if schema_version == 1:
-        validator_data = _v1_strict_validation_mapping(data, artifact_type)
-    validator(validator_data)
-
-
-def _v1_strict_validation_mapping(
-    data: Mapping[str, Any],
-    artifact_type: str,
-) -> Mapping[str, Any]:
-    """Adapt legacy-coercive extent fields only for the strict type pass."""
-    adapted = dict(data)
-    for field in _V1_COMPAT_CAMERA_EXTENT_FIELDS.get(artifact_type, ()):
-        value = adapted.get(field)
-        if isinstance(value, Mapping):
-            try:
-                adapted[field] = camera_frame_extent_to_dict(
-                    camera_frame_extent_from_dict(value)
-                )
-            except (TypeError, ValueError):
-                pass
-    if (
-        artifact_type == "peak_patch_psf_dictionary"
-        and "extent_compatibility" not in adapted
-    ):
-        dictionary_extent = adapted.get("camera_frame_extent")
-        layout_extent = adapted.get("peak_layout_camera_frame_extent")
-        if isinstance(dictionary_extent, Mapping) and isinstance(
-            layout_extent,
-            Mapping,
-        ):
-            matches = _canonical_mapping(dictionary_extent) == _canonical_mapping(
-                layout_extent
-            )
-            adapted["extent_compatibility"] = {
-                "matches": matches,
-                "mismatch_override": not matches,
-                "reason": (
-                    None
-                    if matches
-                    else "legacy schema v1 did not record the extent mismatch approval"
-                ),
-            }
-    return adapted
+    if schema_version == 1 and artifact_type == "peak_patch_psf_dictionary":
+        _validate_serialized_peak_patch_psf_dictionary(
+            data,
+            require_extent_compatibility=False,
+        )
+        return
+    validator(data)
 
 
 def _strict_error(field: str, expected: str) -> None:
@@ -571,10 +522,10 @@ def _strict_required_mapping(data: Mapping[str, Any], field: str) -> Mapping[str
 def _strict_camera_frame_extent_field(
     data: Mapping[str, Any],
     field: str,
-) -> None:
+) -> Any:
     mapping = _strict_required_mapping(data, field)
     try:
-        strict_camera_frame_extent_from_mapping(mapping, field_name=field)
+        return strict_camera_frame_extent_from_mapping(mapping, field_name=field)
     except ValueError as exc:
         raise _InvalidArtifact("serialized_type_invalid", str(exc)) from exc
 
@@ -883,7 +834,11 @@ def _validate_serialized_peak_support_analysis_report(data: Mapping[str, Any]) -
         _strict_mapping(data["valid_pixel_domain"], "valid_pixel_domain")
 
 
-def _validate_serialized_peak_patch_psf_dictionary(data: Mapping[str, Any]) -> None:
+def _validate_serialized_peak_patch_psf_dictionary(
+    data: Mapping[str, Any],
+    *,
+    require_extent_compatibility: bool = True,
+) -> None:
     for field in (
         "dictionary_id",
         "source_raw_capture_h5",
@@ -901,18 +856,37 @@ def _validate_serialized_peak_patch_psf_dictionary(data: Mapping[str, Any]) -> N
     _strict_wavelength_list(data, "unique_wavelengths_nm")
     _strict_string_list(data, "unique_mask_ids")
     _strict_pair(_strict_required(data, "frame_shape"), "frame_shape", integers=True)
-    _strict_camera_frame_extent_field(data, "camera_frame_extent")
-    _strict_camera_frame_extent_field(data, "peak_layout_camera_frame_extent")
-    extent_compatibility = _strict_required_mapping(data, "extent_compatibility")
-    if set(extent_compatibility) != {"matches", "mismatch_override", "reason"}:
-        _strict_error(
-            "extent_compatibility",
-            "a mapping containing exactly matches, mismatch_override, and reason",
-        )
-    for field in ("matches", "mismatch_override"):
-        if type(extent_compatibility[field]) is not bool:
-            _strict_error(f"extent_compatibility.{field}", "a boolean")
-    _strict_optional_string(extent_compatibility, "reason")
+    dictionary_extent = _strict_camera_frame_extent_field(
+        data,
+        "camera_frame_extent",
+    )
+    layout_extent = _strict_camera_frame_extent_field(
+        data,
+        "peak_layout_camera_frame_extent",
+    )
+    if "extent_compatibility" not in data:
+        if not require_extent_compatibility:
+            if dictionary_extent != layout_extent:
+                raise _UnsupportedArtifact(
+                    "legacy_extent_compatibility_unverifiable",
+                    "schema-v1 dictionary frame extents differ without a persisted approval",
+                )
+        else:
+            raise _InvalidArtifact(
+                "serialized_field_missing",
+                "extent_compatibility is required in the serialized artifact",
+            )
+    else:
+        extent_compatibility = _strict_required_mapping(data, "extent_compatibility")
+        if set(extent_compatibility) != {"matches", "mismatch_override", "reason"}:
+            _strict_error(
+                "extent_compatibility",
+                "a mapping containing exactly matches, mismatch_override, and reason",
+            )
+        for field in ("matches", "mismatch_override"):
+            if type(extent_compatibility[field]) is not bool:
+                _strict_error(f"extent_compatibility.{field}", "a boolean")
+        _strict_optional_string(extent_compatibility, "reason")
     _strict_string_list(data, "peak_ids")
     _strict_pair_list(data, "patch_shape_hw", integers=True)
     _strict_pair_list(data, "patch_origin_xy", integers=True)
@@ -3032,11 +3006,10 @@ def _validate_full_frame_psf_survey_payload(
         )
     extent = _read_hdf_json_mapping(h5, "full_frame_survey/camera_frame_extent_json")
     try:
-        if schema_version >= 2:
-            strict_camera_frame_extent_from_mapping(
-                extent,
-                field_name="full_frame_survey.camera_frame_extent",
-            )
+        strict_camera_frame_extent_from_mapping(
+            extent,
+            field_name="full_frame_survey.camera_frame_extent",
+        )
         validate_coordinate_frame_extent(
             "sensor_full_frame",
             extent,
@@ -3565,18 +3538,17 @@ def _validate_peak_patch_psf_dictionary_payload(
         h5,
         "peak_patch_dictionary/peak_layout_camera_frame_extent_json",
     )
-    if schema_version >= 2:
-        try:
-            strict_camera_frame_extent_from_mapping(
-                dictionary_extent,
-                field_name="peak_patch_dictionary.camera_frame_extent",
-            )
-            strict_camera_frame_extent_from_mapping(
-                layout_extent,
-                field_name="peak_patch_dictionary.peak_layout_camera_frame_extent",
-            )
-        except ValueError as exc:
-            raise _InvalidArtifact("frame_extent_invalid", str(exc)) from exc
+    try:
+        strict_camera_frame_extent_from_mapping(
+            dictionary_extent,
+            field_name="peak_patch_dictionary.camera_frame_extent",
+        )
+        strict_camera_frame_extent_from_mapping(
+            layout_extent,
+            field_name="peak_patch_dictionary.peak_layout_camera_frame_extent",
+        )
+    except ValueError as exc:
+        raise _InvalidArtifact("frame_extent_invalid", str(exc)) from exc
     if _canonical_mapping(dictionary_extent) != _canonical_mapping(manifest.camera_frame_extent):
         raise _InvalidArtifact(
             "manifest_metadata_mismatch",

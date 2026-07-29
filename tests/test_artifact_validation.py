@@ -1053,7 +1053,7 @@ def test_schema_v2_rejects_coercive_camera_frame_extent_fields(
     assert result.reason_codes == ("serialized_type_invalid",)
 
 
-def test_schema_v1_retains_compatibility_camera_extent_coercion(
+def test_schema_v1_rejects_coercive_camera_extent_fields(
     tmp_path: Path,
 ) -> None:
     data = _survey_manifest().to_dict()
@@ -1070,7 +1070,8 @@ def test_schema_v1_retains_compatibility_camera_extent_coercion(
 
     result = check_validity("full_frame_psf_survey", path)
 
-    assert result.outcome is ValidityOutcome.VALID
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("serialized_type_invalid",)
     assert result.schema_version == 1
 
 
@@ -1159,7 +1160,7 @@ def test_schema_v2_survey_hdf_rejects_coercive_payload_extent(
     assert result.reason_codes == ("frame_extent_invalid",)
 
 
-def test_schema_v1_survey_hdf_retains_compatibility_payload_extent(
+def test_schema_v1_survey_hdf_rejects_coercive_payload_extent(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "survey_coercive_extent_v1.h5"
@@ -1180,8 +1181,8 @@ def test_schema_v1_survey_hdf_retains_compatibility_payload_extent(
 
     result = check_validity("full_frame_psf_survey", path)
 
-    assert result.outcome is ValidityOutcome.VALID
-    assert result.schema_version == 1
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("frame_extent_invalid",)
 
 
 def test_raw_capture_validator_rejects_invalid_completed_index(tmp_path: Path) -> None:
@@ -1744,6 +1745,34 @@ def test_schema_v1_dictionary_hdf_remains_readable_without_v2_fields(
 
     assert result.outcome is ValidityOutcome.VALID
     assert result.schema_version == 1
+
+
+def test_schema_v1_dictionary_rejects_unverifiable_extent_mismatch(
+    tmp_path: Path,
+) -> None:
+    data = _dictionary_manifest().to_dict()
+    data["schema_version"] = 1
+    data.pop("extent_compatibility")
+    data["peak_layout_coordinate_frame"] = "acquired_frame"
+    data["camera_frame_extent"] = {
+        "mode": "acquired_frame",
+        "origin_xy": [0, 0],
+        "shape_hw": [2, 3],
+        "sensor_shape_hw": [3, 4],
+    }
+    data["peak_layout_camera_frame_extent"] = {
+        "mode": "acquired_frame",
+        "origin_xy": [1, 0],
+        "shape_hw": [2, 3],
+        "sensor_shape_hw": [3, 4],
+    }
+    path = tmp_path / "dictionary_v1_unverifiable_extent.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = check_validity("peak_patch_psf_dictionary", path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("legacy_extent_compatibility_unverifiable",)
 
 
 def test_survey_validator_rejects_hdf5_manifest_disagreement(tmp_path: Path) -> None:

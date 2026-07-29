@@ -70,12 +70,12 @@ and streaming SHA-256. It also verifies the primary payload's declared media
 type against actual JSON or HDF5 bytes without using a filename suffix:
 JSON-primary artifacts must declare `application/json`, HDF5-primary artifacts
 must declare `application/x-hdf5`, and `manifest_sidecar` must declare
-`application/json`. When the explicit `data` payload role is present, it
-dispatches to `check_validity(bundle.artifact_type, data_path)` and requires the
-payload schema version to agree with the bundle. It does not infer an artifact
-type from a filename or media type. A bundle with inventory but without an
-explicit primary payload is `unsupported` for full artifact validation, not
-silently treated as valid.
+`application/json`. Bundle schema v1 fixes `data` as its only primary payload
+role: callers cannot select another role for artifact validation. It dispatches
+to `check_validity(bundle.artifact_type, data_path)` and requires the payload
+schema version to agree with the bundle. It does not infer an artifact type
+from a filename or media type. A bundle with inventory but without `data` is
+`unsupported` for full artifact validation, not silently treated as valid.
 
 ### Bundle And Native Identity
 
