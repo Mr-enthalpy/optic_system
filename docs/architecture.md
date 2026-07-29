@@ -298,8 +298,17 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   recovered. In particular, missing center diagnostics remain unknown and
   dictionary extent compatibility is never synthesized.
 - Survey, support-report, and dictionary HDF5 writers record both
-  `manifest_schema_version` and `payload_schema_version`. A later HDF5 adapter
-  can evolve payload validation without redefining the JSON manifest contract.
+  `manifest_schema_version` and `payload_schema_version`. HDF5 payload adapters
+  are keyed independently by artifact type and payload version, so payload
+  validation can evolve without redefining the JSON manifest contract.
+- The measured-HDF5 layer validates raw-capture payload v2/v3 and payload v1
+  for full-frame survey, support-report, and peak-patch dictionary. It checks
+  original dtypes before conversion, embedded-manifest agreement, root
+  identity, source-index bindings, and raw completion metadata. HDF5 supplied
+  for an artifact without an HDF5 representation remains unsupported.
+- Structural validity is not scientific trust. A `valid` result proves only
+  the local serialized contract; it does not promote calibration, optical
+  alignment, training readiness, bundle eligibility, or catalog status.
 
 The planned bundle and catalog-location contract is documented in
 [`artifact_bundle_design.md`](artifact_bundle_design.md). It is design work,

@@ -8,6 +8,11 @@ import h5py
 
 
 SUPPORTED_COORDINATE_FRAMES = {"sensor_full_frame", "acquired_frame"}
+SUPPORTED_CAMERA_FRAME_EXTENT_MODES = {
+    "full_sensor",
+    "acquired_frame",
+    "unknown",
+}
 CAMERA_FRAME_EXTENT_DATASET_PRIORITY = (
     "frame_extent_json",
     "acquired_frame_extent_json",
@@ -51,6 +56,57 @@ def camera_frame_extent_from_dict(
             if sensor_shape is not None else None
         ),
         source=_optional_str(data.get("source")),
+    )
+
+
+def strict_camera_frame_extent_from_mapping(
+    data: Mapping[str, Any],
+    *,
+    field_name: str = "camera_frame_extent",
+) -> CameraFrameExtent:
+    """Parse a serialized extent without compatibility coercion."""
+    if not isinstance(data, Mapping):
+        raise ValueError(f"{field_name} must be a mapping")
+    allowed_fields = {
+        "mode", "origin_xy", "shape_hw", "sensor_shape_hw", "source"
+    }
+    if any(not isinstance(key, str) for key in data):
+        raise ValueError(f"{field_name} field names must be strings")
+    unknown_fields = set(data) - allowed_fields
+    if unknown_fields:
+        raise ValueError(
+            f"{field_name} contains unknown fields: {sorted(unknown_fields)}"
+        )
+    for required in ("mode", "origin_xy", "shape_hw"):
+        if required not in data:
+            raise ValueError(f"{field_name}.{required} is required")
+    mode = data["mode"]
+    if not isinstance(mode, str) or mode not in SUPPORTED_CAMERA_FRAME_EXTENT_MODES:
+        raise ValueError(
+            f"{field_name}.mode must be one of "
+            f"{sorted(SUPPORTED_CAMERA_FRAME_EXTENT_MODES)}"
+        )
+    origin_xy = _strict_int_pair(data["origin_xy"], f"{field_name}.origin_xy")
+    shape_hw = _strict_int_pair(data["shape_hw"], f"{field_name}.shape_hw")
+    sensor_shape_value = data.get("sensor_shape_hw")
+    sensor_shape_hw = (
+        _strict_int_pair(sensor_shape_value, f"{field_name}.sensor_shape_hw")
+        if sensor_shape_value is not None
+        else None
+    )
+    source = data.get("source")
+    if source is not None and (
+        not isinstance(source, str) or not source.strip() or source != source.strip()
+    ):
+        raise ValueError(
+            f"{field_name}.source must be a canonical non-empty string or null"
+        )
+    return CameraFrameExtent(
+        mode=mode,
+        origin_xy=origin_xy,
+        shape_hw=shape_hw,
+        sensor_shape_hw=sensor_shape_hw,
+        source=source,
     )
 
 
@@ -193,10 +249,69 @@ def validate_coordinate_frame_descriptor(
         raise ValueError("frame_shape does not match")
 
 
+def validate_coordinate_frame_extent(
+    coordinate_frame: str,
+    camera_frame_extent: Mapping[str, Any],
+    frame_shape: tuple[int, int],
+    *,
+    require_full_sensor: bool = False,
+) -> CameraFrameExtent:
+    """Validate representational agreement between frame, extent, and shape."""
+    if coordinate_frame not in SUPPORTED_COORDINATE_FRAMES:
+        raise ValueError(f"unsupported coordinate_frame {coordinate_frame!r}")
+    frame_hw = _positive_int_pair(frame_shape, "frame_shape")
+    extent = camera_frame_extent_from_dict(
+        camera_frame_extent,
+        fallback_shape=frame_hw,
+    )
+    if extent.shape_hw != frame_hw:
+        raise ValueError("camera_frame_extent.shape_hw does not match frame_shape")
+    if extent.origin_xy[0] < 0 or extent.origin_xy[1] < 0:
+        raise ValueError("camera_frame_extent.origin_xy must be non-negative")
+    if extent.sensor_shape_hw is not None:
+        sensor_hw = _positive_int_pair(
+            extent.sensor_shape_hw,
+            "camera_frame_extent.sensor_shape_hw",
+        )
+        if (
+            extent.origin_xy[0] + extent.shape_hw[1] > sensor_hw[1]
+            or extent.origin_xy[1] + extent.shape_hw[0] > sensor_hw[0]
+        ):
+            raise ValueError("camera_frame_extent lies outside sensor_shape_hw")
+    if coordinate_frame == "sensor_full_frame":
+        if extent.mode != "full_sensor" or extent.origin_xy != (0, 0):
+            raise ValueError(
+                "sensor_full_frame requires full_sensor extent at origin [0, 0]"
+            )
+        if extent.sensor_shape_hw is not None and extent.sensor_shape_hw != frame_hw:
+            raise ValueError(
+                "sensor_full_frame sensor_shape_hw does not match frame_shape"
+            )
+    if require_full_sensor and extent.mode != "full_sensor":
+        raise ValueError("full_sensor camera frame extent is required")
+    return extent
+
+
 def _int_pair(value: Any, name: str) -> tuple[int, int]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ValueError(f"{name} must contain two integers")
     return (int(value[0]), int(value[1]))
+
+
+def _strict_int_pair(value: Any, name: str) -> tuple[int, int]:
+    if not isinstance(value, list) or len(value) != 2:
+        raise ValueError(f"{name} must be a two-element JSON array")
+    for index, item in enumerate(value):
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValueError(f"{name}[{index}] must be an integer")
+    return (value[0], value[1])
+
+
+def _positive_int_pair(value: Any, name: str) -> tuple[int, int]:
+    pair = _int_pair(value, name)
+    if pair[0] <= 0 or pair[1] <= 0:
+        raise ValueError(f"{name} dimensions must be positive")
+    return pair
 
 
 def _optional_str(value: Any) -> str | None:

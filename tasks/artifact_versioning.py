@@ -75,6 +75,12 @@ MIN_READABLE_MANIFEST_SCHEMA_VERSIONS: dict[str, int] = {
 }
 
 CURRENT_PAYLOAD_SCHEMA_VERSIONS: dict[str, int] = {
+    "raw_capture": 3,
+    "full_frame_psf_survey": 1,
+    "peak_support_analysis_report": 1,
+    "peak_patch_psf_dictionary": 1,
+}
+MIN_READABLE_PAYLOAD_SCHEMA_VERSIONS: dict[str, int] = {
     "raw_capture": 2,
     "full_frame_psf_survey": 1,
     "peak_support_analysis_report": 1,
@@ -114,6 +120,26 @@ def payload_schema_version(artifact_type: str) -> int:
         raise SchemaCompatibilityError(
             f"unknown payload artifact_type {artifact_type!r}"
         ) from exc
+
+
+def read_payload_schema_version(value: Any, artifact_type: str) -> int:
+    """Validate one HDF5/container version on the payload version axis."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SchemaCompatibilityError(
+            f"{artifact_type} payload_schema_version must be an integer"
+        )
+    try:
+        current = CURRENT_PAYLOAD_SCHEMA_VERSIONS[artifact_type]
+        minimum = MIN_READABLE_PAYLOAD_SCHEMA_VERSIONS[artifact_type]
+    except KeyError as exc:
+        raise SchemaCompatibilityError(
+            f"unknown payload artifact_type {artifact_type!r}"
+        ) from exc
+    if value < minimum:
+        raise OlderSchemaVersionError(artifact_type, value, minimum)
+    if value > current:
+        raise NewerSchemaVersionError(artifact_type, value, current)
+    return value
 
 
 def emit_schema_version(data: dict[str, Any], artifact_type: str) -> dict[str, Any]:
@@ -190,6 +216,7 @@ __all__ = [
     "LegacyUnversionedArtifactError",
     "MIN_READABLE_SCHEMA_VERSIONS",
     "MIN_READABLE_MANIFEST_SCHEMA_VERSIONS",
+    "MIN_READABLE_PAYLOAD_SCHEMA_VERSIONS",
     "REGISTERED_ARTIFACT_TYPES",
     "NewerSchemaVersionError",
     "OlderSchemaVersionError",
@@ -200,6 +227,7 @@ __all__ = [
     "check_validity",
     "emit_schema_version",
     "read_schema_version",
+    "read_payload_schema_version",
     "payload_schema_version",
     "schema_compat",
 ]

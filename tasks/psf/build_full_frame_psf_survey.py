@@ -371,6 +371,7 @@ def build_full_frame_psf_survey(
                 notes=notes,
             )
             manifest.validate()
+            manifest_json = manifest.to_json()
         except PSFArtifactError as exc:
             raise FullFramePSFSurveyError(str(exc)) from exc
         except ValueError as exc:
@@ -380,6 +381,7 @@ def build_full_frame_psf_survey(
             output_path=output_path,
             src=src,
             manifest=manifest,
+            manifest_json=manifest_json,
             valid_rows=valid_rows,
             capture_indices=capture_indices[valid_rows],
             wavelength_indices=wavelength_indices[valid_rows],
@@ -387,7 +389,7 @@ def build_full_frame_psf_survey(
             source_plan_json=source_plan_json,
         )
 
-    manifest.to_json(manifest_path)
+    Path(manifest_path).write_text(manifest_json + "\n", encoding="utf-8")
     return manifest
 
 
@@ -396,6 +398,7 @@ def _write_survey_h5(
     output_path: Path,
     src: h5py.File,
     manifest: FullFramePSFSurveyManifest,
+    manifest_json: str,
     valid_rows: list[int],
     capture_indices: np.ndarray,
     wavelength_indices: np.ndarray,
@@ -443,7 +446,7 @@ def _write_survey_h5(
         grp.create_dataset("frame_shape", data=np.asarray(manifest.frame_shape, dtype=np.int64))
         grp.create_dataset("camera_frame_extent_json", data=json.dumps(manifest.camera_frame_extent, sort_keys=True))
         grp.create_dataset("survey_policy_json", data=json.dumps(manifest.survey_policy, sort_keys=True))
-        grp.create_dataset("manifest_json", data=manifest.to_json())
+        grp.create_dataset("manifest_json", data=manifest_json)
 
         masks = read_mask_arrays(src)
         if masks is not None:

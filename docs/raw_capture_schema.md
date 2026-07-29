@@ -1,7 +1,12 @@
 # Raw Capture HDF5 Schema
 
 Canonical schema as written by `RawCaptureWriter` (`tasks/raw_capture_h5.py`).
-Schema version: 2.
+Schema version: 3. The structural validator continues to read historical
+schema version 2 through its original compatibility contract.
+
+`raw_capture_schema_version` is the raw-capture HDF5 payload/container version.
+It is registered on `CURRENT_PAYLOAD_SCHEMA_VERSIONS`; raw capture has no JSON
+manifest version and is intentionally absent from the manifest version axis.
 
 ## Deleted fields (do not reintroduce)
 
@@ -20,7 +25,8 @@ Schema version: 2.
 | `plan_id` | string | Capture plan identifier |
 | `created_at_ns` | int64 | Writer creation timestamp (monotonic ns) |
 | `software_version` | string | `"optic_system"` |
-| `raw_capture_schema_version` | int | Schema version (currently 2) |
+| `artifact_type` | string | `"raw_capture"` (required in schema v3) |
+| `raw_capture_schema_version` | int | Schema version (currently 3) |
 | `capture_role` | string | One of `minimal_capture`, `profile_capture`, `psf_capture`, `survey_capture` |
 | `hdf5_writer_version` | string | Writer version (`"1.0"`) |
 
@@ -28,11 +34,11 @@ Schema version: 2.
 
 | Dataset | Shape | Dtype | Description |
 |---------|-------|-------|-------------|
-| `frames_avg` | `[N_capture, H, W]` | policy dtype (default float32) | Per-capture averaged frames |
+| `frames_avg` | `[N_capture, H, W]` | real integer or floating (default float32) | Per-capture averaged frames |
 
 | Dataset | Shape | Dtype | Description |
 |---------|-------|-------|-------------|
-| `frames` | `[N_capture, K, H, W]` | policy dtype | Raw burst frames (only if `store_burst=True`) |
+| `frames` | `[N_capture, K, H, W]` | real integer or floating | Raw burst frames (only if `store_burst=True`) |
 
 ### `/raw` attributes
 
@@ -125,3 +131,56 @@ Schema version: 2.
 | `runtime_mode` | scalar | string | Runtime mode (`hardware`, `no_hardware`, etc.) |
 | `runtime_policy_json` | scalar | string | Full runtime policy as JSON |
 | `processing_flags_json` | scalar | string | Processing flags (scientific validity, training readiness) |
+
+Schema v3 uses the wavelength-major schedule:
+
+```text
+capture_index = wavelength_index * n_masks + mask_index
+```
+
+Completed rows must have unique capture indices and unique wavelength/mask
+combinations. In schema v3, the storage-row bitmap must be a contiguous true
+prefix followed by a false suffix. Empty, partial, and complete examples are:
+
+```text
+[False, False, False]
+[True, False, False]
+[True, True, False]
+[True, True, True]
+```
+
+Sparse patterns such as `[True, False, True]` are invalid. The committed
+`capture_index` values inside that prefix need not be numerically sorted; they
+may refer to correctly bound capture-plan entries in any order. A complete
+capture must exactly cover the full Cartesian product. The writer sets
+`capture/completed[row]` only after the frame and all row metadata have been
+written. Processing flags record `n_captures_written` and `n_captures_total`,
+which must agree with the capture bitmap and planned frame rows. They also
+separate:
+
+- `capture_complete`: whether committed rows exactly cover the planned schedule;
+- `run_succeeded`: whether finalization recorded no task error;
+- `error`: the task error string, or null when `run_succeeded` is true.
+- `last_completed_capture_index`: the capture index stored on the final row
+  whose `capture/completed` commit marker is true, or `-1` when none are true.
+
+A run may therefore have `capture_complete: true` and `run_succeeded: false`
+when all captures were committed before a later task failure. These fields, the
+root `artifact_type`, and complete initialized mask/LCD metadata are v3
+requirements; they are not retroactively imposed on schema v2 files.
+
+This v3 writer contract is exception-safe when `finalize()` runs. It does not
+provide a crash-durable transaction between row completion and processing-flag
+updates, and it does not implement resume. Crash recovery and explicit
+finalized/in-progress state remain a later durability task.
+
+All `/tls` vectors, including `tls/status_json`, must have exactly
+`N_wavelength` entries. A TLS status referenced by a completed capture must be
+readable JSON. Raw-v3 `camera/frame_extent_json` rows are validated without
+coercion: coordinate arrays contain exactly two JSON integers, booleans,
+strings, and non-integer floats are rejected, and unknown extent fields are not
+accepted.
+
+Historical schema v2 keeps its original field set, but compatibility does not
+coerce malformed types: `capture_index`, `wavelength_index`, and `mask_index`
+must still use stored integer dtypes.

@@ -397,16 +397,21 @@ def analyze_diffraction_support(
             "frame_read_policy": "hdf5_entry_streaming",
         },
         entry_mask_ids=survey.mask_ids,
-        entry_wavelengths_nm=survey.entry_wavelengths_nm,
+        entry_wavelengths_nm=[
+            None if not np.isfinite(value) else float(value)
+            for value in survey.entry_wavelengths_nm
+        ],
         notes=notes,
         valid_pixel_domain=valid_pixel_domain_record,
     )
     manifest.validate()
+    manifest_json = manifest.to_json_text()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     _write_report_h5(
         out_path,
         manifest=manifest,
+        manifest_json=manifest_json,
         source_survey_artifact_id=source_survey_artifact_id,
         tau_values=tau,
         support_radii=radii,
@@ -732,6 +737,7 @@ def _write_report_h5(
     path: Path,
     *,
     manifest: PeakSupportAnalysisManifest,
+    manifest_json: str,
     source_survey_artifact_id: str,
     tau_values: list[float],
     support_radii: list[float],
@@ -834,7 +840,7 @@ def _write_report_h5(
             )
 
         metadata = f.require_group("metadata")
-        metadata.create_dataset("manifest_json", data=manifest.to_json_text(), dtype=string_dtype)
+        metadata.create_dataset("manifest_json", data=manifest_json, dtype=string_dtype)
         source = f.require_group("source")
         source.create_dataset(
             "survey_artifact_id", data=source_survey_artifact_id, dtype=string_dtype

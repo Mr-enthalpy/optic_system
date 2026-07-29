@@ -52,6 +52,9 @@ class ValidityResult:
     outcome: ValidityOutcome
     representation: ArtifactRepresentation | None = None
     schema_version: int | None = None
+    manifest_schema_version: int | None = None
+    payload_schema_version: int | None = None
+    bundle_schema_version: int | None = None
     reason_codes: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -88,6 +91,27 @@ class ReaderLimitError(ArtifactValidationError):
     """The local reader deliberately does not support this resource scale."""
 
     outcome = ValidityOutcome.UNSUPPORTED
+
+
+class _InvalidArtifact(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class _UnreadableArtifact(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class _UnsupportedArtifact(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 SerializedValidator = Callable[[Mapping[str, Any]], None]
@@ -216,7 +240,7 @@ def _detect_representation(path: Path) -> ArtifactRepresentation:
             "location.unreadable",
             "artifact location could not be read",
         ) from exc
-    if prefix == _HDF5_SIGNATURE:
+    if prefix == _HDF5_SIGNATURE or _is_hdf5_payload(path):
         return ArtifactRepresentation.HDF5
     return ArtifactRepresentation.JSON
 
@@ -284,6 +308,9 @@ def _result(
     *,
     representation: ArtifactRepresentation | None = None,
     schema_version: int | None = None,
+    manifest_schema_version: int | None = None,
+    payload_schema_version: int | None = None,
+    bundle_schema_version: int | None = None,
     reason_codes: tuple[str, ...] = (),
     errors: tuple[str, ...] = (),
     warnings: tuple[str, ...] = (),
@@ -293,10 +320,23 @@ def _result(
         outcome=outcome,
         representation=representation,
         schema_version=schema_version,
+        manifest_schema_version=manifest_schema_version,
+        payload_schema_version=payload_schema_version,
+        bundle_schema_version=bundle_schema_version,
         reason_codes=reason_codes,
         errors=errors,
         warnings=warnings,
     )
+
+
+def _is_hdf5_payload(path: Path) -> bool:
+    """Recognize HDF5 representation without validating its contract."""
+    try:
+        import h5py
+
+        return bool(h5py.is_hdf5(path))
+    except (ImportError, OSError):
+        return False
 
 
 def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
@@ -327,6 +367,24 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
     schema_version: int | None = None
     try:
         representation = _detect_representation(artifact_path)
+        if representation is ArtifactRepresentation.HDF5:
+            from .hdf_validation import validate_hdf_artifact
+
+            result = validate_hdf_artifact(artifact_type, artifact_path)
+            if result.representation is None:
+                return ValidityResult(
+                    artifact_type=result.artifact_type,
+                    outcome=result.outcome,
+                    representation=ArtifactRepresentation.HDF5,
+                    schema_version=result.schema_version,
+                    manifest_schema_version=result.manifest_schema_version,
+                    payload_schema_version=result.payload_schema_version,
+                    bundle_schema_version=result.bundle_schema_version,
+                    reason_codes=result.reason_codes,
+                    errors=result.errors,
+                    warnings=result.warnings,
+                )
+            return result
         _load_artifact_adapter_registrations(artifact_type)
         has_representation_adapter = any(
             key[0] == artifact_type and key[1] is representation
@@ -373,6 +431,7 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
             ValidityOutcome.VALID,
             representation=representation,
             schema_version=schema_version,
+            manifest_schema_version=schema_version,
         )
     except LegacyUnversionedArtifactError:
         return _result(

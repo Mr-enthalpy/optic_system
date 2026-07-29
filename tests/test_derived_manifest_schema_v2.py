@@ -104,7 +104,7 @@ def test_manifest_payload_and_bundle_versions_are_independent() -> None:
     assert CURRENT_MANIFEST_SCHEMA_VERSIONS["full_frame_psf_survey"] == 2
     assert CURRENT_PAYLOAD_SCHEMA_VERSIONS["full_frame_psf_survey"] == 1
     assert "raw_capture" not in CURRENT_MANIFEST_SCHEMA_VERSIONS
-    assert CURRENT_PAYLOAD_SCHEMA_VERSIONS["raw_capture"] == 2
+    assert CURRENT_PAYLOAD_SCHEMA_VERSIONS["raw_capture"] == 3
     assert CURRENT_BUNDLE_SCHEMA_VERSION == 1
 
 

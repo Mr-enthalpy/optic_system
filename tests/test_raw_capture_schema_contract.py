@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from tasks.capture_plan import CapturePlan
+from tasks.artifacts.validation import ValidityOutcome, check_validity
 from tasks.raw_capture_h5 import RawCaptureWriter
 
 
@@ -132,8 +133,15 @@ def test_root_attrs_present(tmp_path: Path) -> None:
     path = _minimal_h5(tmp_path)
     with h5py.File(path, "r") as f:
         assert f.attrs["software_version"] == "optic_system"
-        assert f.attrs["raw_capture_schema_version"] == 2
+        assert f.attrs["raw_capture_schema_version"] == 3
         assert f.attrs["capture_role"] == "minimal_capture"
         assert "plan_id" in f.attrs
         assert "created_at_ns" in f.attrs
         assert "hdf5_writer_version" in f.attrs
+        assert f.attrs["artifact_type"] == "raw_capture"
+
+
+def test_minimal_raw_capture_is_structurally_valid(tmp_path: Path) -> None:
+    result = check_validity("raw_capture", _minimal_h5(tmp_path))
+
+    assert result.outcome is ValidityOutcome.VALID

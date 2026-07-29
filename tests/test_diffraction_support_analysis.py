@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import pytest
 
+from tasks.artifacts.validation import ValidityOutcome, check_validity
 from tasks.psf.analyze_diffraction_support import (
     DiffractionSupportAnalysisError,
     PeakSupportAnalysisManifest,
@@ -36,6 +37,49 @@ def _write_synthetic_survey(path: Path) -> None:
             data=np.asarray([
                 json.dumps({"mode": "monochromatic", "effective_wavelength_nm": 550.0}),
             ], dtype=object),
+            dtype=string_dtype,
+        )
+        g.create_dataset(
+            "camera_frame_extent_json",
+            data=json.dumps({
+                "mode": "full_sensor",
+                "origin_xy": [0, 0],
+                "shape_hw": [64, 64],
+                "sensor_shape_hw": [64, 64],
+            }),
+            dtype=string_dtype,
+        )
+
+
+def _write_broadband_synthetic_survey(path: Path) -> None:
+    frame = np.full((64, 64), 0.02, dtype=np.float64)
+    frame[20:24, 20:24] += 4.0
+    illumination = json.dumps(
+        {
+            "mode": "broadband_passthrough",
+            "effective_wavelength_nm": None,
+            "tls_setpoint_nm": 0.0,
+            "wavelength_label_nm": None,
+        },
+        sort_keys=True,
+    )
+    with h5py.File(str(path), "w") as f:
+        f.attrs["survey_id"] = "broadband_synthetic_survey"
+        string_dtype = h5py.string_dtype(encoding="utf-8")
+        g = f.require_group("full_frame_survey")
+        g.create_dataset("frames_avg", data=np.stack([frame, frame]))
+        g.create_dataset(
+            "entry_wavelength_nm",
+            data=np.asarray([float("nan"), float("nan")], dtype=np.float64),
+        )
+        g.create_dataset(
+            "entry_mask_ids",
+            data=np.asarray(["mask_a", "mask_b"], dtype=object),
+            dtype=string_dtype,
+        )
+        g.create_dataset(
+            "entry_illumination_json",
+            data=np.asarray([illumination, illumination], dtype=object),
             dtype=string_dtype,
         )
         g.create_dataset(
@@ -93,6 +137,9 @@ def test_builds_peak_support_analysis_report_from_synthetic_survey(tmp_path: Pat
     assert manifest.coordinate_frame == "sensor_full_frame"
     assert manifest.entry_mask_ids == ["mask_a"]
     assert report_h5.exists()
+    assert check_validity(
+        "peak_support_analysis_report", report_h5
+    ).outcome is ValidityOutcome.VALID
 
     with h5py.File(str(report_h5), "r") as f:
         assert f.attrs["manifest_schema_version"] == 2
@@ -103,6 +150,26 @@ def test_builds_peak_support_analysis_report_from_synthetic_survey(tmp_path: Pat
         assert f["support_analysis/far_field_significant_energy"].shape == (1, 1)
         assert f["components/bbox_xyxy"].shape[1] == 4
         assert _decode(f["source/survey_artifact_id"][()]) == "synthetic_survey"
+
+
+def test_component_table_policy_requires_components_group(tmp_path: Path) -> None:
+    survey_h5 = tmp_path / "survey.h5"
+    report_h5 = tmp_path / "support_without_components.h5"
+    _write_synthetic_survey(survey_h5)
+    analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[10],
+        min_component_area=2,
+    )
+    with h5py.File(report_h5, "r+") as h5:
+        del h5["components"]
+
+    result = check_validity("peak_support_analysis_report", report_h5)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("component_table_presence_mismatch",)
 
 
 def test_uses_fifth_percentile_background_and_corr_clip(tmp_path: Path) -> None:
@@ -175,6 +242,36 @@ def test_component_table_detects_far_field_significant_component(tmp_path: Path)
     assert np.max(energies) >= 12.0
     assert np.any(far)
     assert centroids.shape[1] == 2
+
+
+def test_broadband_survey_component_table_validates_nan_wavelengths(
+    tmp_path: Path,
+) -> None:
+    survey_h5 = tmp_path / "broadband_survey.h5"
+    report_h5 = tmp_path / "broadband_support.h5"
+    _write_broadband_synthetic_survey(survey_h5)
+
+    manifest = analyze_diffraction_support(
+        survey_h5,
+        report_h5,
+        tau_values=[0.5],
+        support_radii=[100],
+        far_field_radius=20,
+        min_component_area=2,
+    )
+
+    assert len(manifest.entry_wavelengths_nm) == 2
+    assert manifest.entry_wavelengths_nm == [None, None]
+    with h5py.File(str(report_h5), "r") as f:
+        assert f["components/entry_index"].shape[0] > 0
+        assert np.isnan(f["components/wavelength_nm"][()]).all()
+        manifest_text = _decode(f["metadata/manifest_json"][()])
+        assert "NaN" not in manifest_text
+        assert json.loads(manifest_text)["entry_wavelengths_nm"] == [None, None]
+    assert (
+        check_validity("peak_support_analysis_report", report_h5).outcome
+        is ValidityOutcome.VALID
+    )
 
 
 def test_manifest_round_trips_and_p99_is_visualization_only(tmp_path: Path) -> None:

@@ -87,8 +87,9 @@ class TestCaptureForwardDatasetDryRun:
             assert "raw/frames_avg" in f
             assert f["raw/frames_avg"].shape[0] == 4
 
-            pf = _h5_str(f["capture/processing_flags_json"])
-            assert "completed" in pf
+            pf = json.loads(_h5_str(f["capture/processing_flags_json"]))
+            assert pf["capture_complete"] is True
+            assert pf["run_succeeded"] is True
 
             assert f["capture/capture_index"][0] >= 0
             assert f["capture/completed"][:].all()

@@ -35,6 +35,7 @@ def publish_measured_evidence_handoff(
             [
                 "peak_patch_dictionary/patches",
                 "peak_patch_dictionary/entry_wavelength_nm",
+                "peak_patch_dictionary/entry_wavelength_index",
                 "peak_patch_dictionary/entry_mask_index",
                 "peak_patch_dictionary/entry_capture_indices",
                 "peak_patch_dictionary/peak_id",
@@ -67,6 +68,7 @@ def publish_measured_evidence_handoff(
 
             entries = dst.require_group("entries")
             entries.create_dataset("wavelength_nm", data=src["peak_patch_dictionary/entry_wavelength_nm"][()])
+            entries.create_dataset("wavelength_index", data=src["peak_patch_dictionary/entry_wavelength_index"][()])
             entries.create_dataset("mask_index", data=src["peak_patch_dictionary/entry_mask_index"][()])
             _copy_dataset(src, dst, "peak_patch_dictionary/entry_mask_ids", "entries/mask_ids")
             _copy_dataset(src, dst, "peak_patch_dictionary/entry_capture_indices", "entries/capture_indices")

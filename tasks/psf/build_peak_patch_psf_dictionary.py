@@ -392,6 +392,7 @@ def build_peak_patch_psf_dictionary(
                 notes=notes,
             )
             manifest.validate()
+            manifest_json = manifest.to_json()
         except PSFArtifactError as exc:
             raise PeakPatchPSFDictionaryError(str(exc)) from exc
         except ValueError as exc:
@@ -402,15 +403,20 @@ def build_peak_patch_psf_dictionary(
             src=src,
             layout=layout,
             manifest=manifest,
+            manifest_json=manifest_json,
             sorted_keys=sorted_keys,
             groups=groups,
             capture_indices=capture_indices,
             entry_mask_indices=np.asarray([key[0] for key in sorted_keys], dtype=np.int64),
+            entry_wavelength_indices=np.asarray(
+                [key[1] for key in sorted_keys],
+                dtype=np.int64,
+            ),
             dtype=dtype,
             source_plan_json=source_plan_json,
         )
 
-    manifest.to_json(manifest_path)
+    Path(manifest_path).write_text(manifest_json + "\n", encoding="utf-8")
     return manifest
 
 
@@ -420,10 +426,12 @@ def _write_dictionary_h5(
     src: h5py.File,
     layout: PeakLayoutProfileManifest,
     manifest: PeakPatchPSFDictionaryManifest,
+    manifest_json: str,
     sorted_keys: list[tuple[int, int]],
     groups: dict[tuple[int, int], list[int]],
     capture_indices: np.ndarray,
     entry_mask_indices: np.ndarray,
+    entry_wavelength_indices: np.ndarray,
     dtype: np.dtype,
     source_plan_json: str,
 ) -> None:
@@ -461,6 +469,7 @@ def _write_dictionary_h5(
 
         grp.create_dataset("entry_mask_ids", data=np.asarray(manifest.entry_mask_ids, dtype=object), dtype=string_dtype)
         grp.create_dataset("entry_mask_index", data=entry_mask_indices)
+        grp.create_dataset("entry_wavelength_index", data=entry_wavelength_indices)
         grp.create_dataset("entry_wavelength_nm", data=np.asarray(manifest.entry_wavelengths_nm, dtype=np.float64))
         grp.create_dataset("unique_mask_ids", data=np.asarray(manifest.unique_mask_ids, dtype=object), dtype=string_dtype)
         grp.create_dataset("unique_wavelength_nm", data=np.asarray(manifest.unique_wavelengths_nm, dtype=np.float64))
@@ -478,9 +487,13 @@ def _write_dictionary_h5(
             "peak_layout_camera_frame_extent_json",
             data=json.dumps(manifest.peak_layout_camera_frame_extent, sort_keys=True),
         )
+        grp.create_dataset(
+            "extent_compatibility_json",
+            data=json.dumps(manifest.extent_compatibility, sort_keys=True),
+        )
         grp.create_dataset("normalization_policy_json", data=json.dumps({"applied": manifest.applied_normalization_policy}))
         grp.create_dataset("background_policy_json", data=json.dumps({"applied": manifest.applied_background_policy}))
-        grp.create_dataset("manifest_json", data=manifest.to_json())
+        grp.create_dataset("manifest_json", data=manifest_json)
 
         masks = read_mask_arrays(src)
         if masks is not None:
