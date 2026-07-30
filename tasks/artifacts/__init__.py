@@ -32,15 +32,28 @@ from .manifest import (
     read_manifest_json,
     write_manifest_json,
 )
+from .validation import (
+    ArtifactRepresentation,
+    SchemaAdapter,
+    ValidityOutcome,
+    ValidityResult,
+    check_validity,
+    get_schema_adapter,
+    register_schema_adapter,
+)
 
 __all__ = [
     "ArtifactManifestBase",
+    "ArtifactRepresentation",
     "ArtifactRef",
     "CameraFrameExtent",
     "CoordinateFrameDescriptor",
     "FrameSource",
     "FrameSourceDescriptor",
     "MeasuredArtifactManifestBase",
+    "SchemaAdapter",
+    "ValidityOutcome",
+    "ValidityResult",
     "camera_frame_extent_from_camera_metadata",
     "camera_frame_extent_from_dict",
     "camera_frame_extent_json_dict",
@@ -58,6 +71,9 @@ __all__ = [
     "read_manifest_json",
     "resolve_coordinate_frame",
     "validate_coordinate_frame_descriptor",
+    "check_validity",
+    "get_schema_adapter",
+    "register_schema_adapter",
     "write_json_dataset",
     "write_manifest_json",
 ]

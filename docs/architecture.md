@@ -259,14 +259,29 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   `schema_version` via `emit_schema_version`. Strict reads reject a missing
   version as `legacy_unversioned`; compatibility loaders opt into legacy mode
   explicitly. Legacy compatibility is not catalog eligibility.
-- `check_validity(artifact_type, path)` is a strict local JSON-artifact check:
-  it requires an explicit artifact type and schema version, a readable loader,
-  and an implemented `.validate()` method. Types without a complete validator,
-  including current HDF5-only types, fail closed with
-  `validator_not_implemented`; path existence is never valid by itself.
-- `ValidityResult` intentionally does not retain the input path. A future
+- Local validation dispatch is keyed by
+  `(artifact_type, representation, schema_version)`. Each `SchemaAdapter`
+  declares its exact allowed and required fields, serialized validator, typed
+  constructor, semantic validator, and optional migration target. Registering a
+  new reader cannot widen an older version's field contract.
+- One adapter invocation follows a single non-recursive pipeline: parse the
+  representation once, validate the serialized mapping once, construct from
+  that validated mapping, then validate semantic invariants once. Compatibility
+  bridge adapters are explicitly marked when a historical `from_dict()` method
+  still owns semantic validation.
+- `check_validity(artifact_type, path)` detects the representation and selects
+  one exact adapter. Missing HDF5 or artifact-version adapters fail closed with
+  `unsupported`; path existence is never validity evidence.
+- `ValidityResult` records the representation, version, stable reason codes and
+  a closed outcome vocabulary. It intentionally does not retain the input path. A future
   catalog owns `(storage_root, rel_path)` separately, so machine-specific
   absolute paths cannot leak into tracked catalog records.
+- The JSON integer digit cap is a local reader implementation limit and is
+  reported as `unsupported / reader_limit.json_integer_digits`, not as a claim
+  that the abstract artifact schema is mathematically invalid.
+- This foundation change does not revise any artifact schema. Camera and pupil
+  remain schema v1; the other measured manifests also remain schema v1 until
+  their version-specific adapters and migrations are introduced separately.
 
 The planned bundle and catalog-location contract is documented in
 [`artifact_bundle_design.md`](artifact_bundle_design.md). It is design work,
