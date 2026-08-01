@@ -27,6 +27,13 @@ broadband pass-through camera calibration
   PSF-producing tasks.
 - Downstream tasks should load persisted profiles and should not require the
   earlier calibration stages to be rerun.
+- Canonical `CameraProfile` and `PupilProfile` artifacts are JSON schema v2.
+  YAML is accepted only by the explicit `import_camera_profile_yaml()` and
+  `import_pupil_profile_yaml()` authoring import functions, which always create
+  a new canonical JSON artifact.
+- Schema-v1 compatibility reads retain `source_schema_version = 1` and cannot
+  be written or used by hardware/PSF tasks. Use the explicit v1-to-v2 migration
+  function first; compatibility read is not migration.
 
 ## Pass-Through Semantics
 
@@ -193,6 +200,14 @@ parameter changes.
   selected monochromatic wavelength.
 - `PupilScanPlan.scan_range_xyxy` uses conventional physical LCD coordinate
   order: `x0, y0, x1, y1`.
+- `PupilProfile` schema v2 uses the same `[x0, y0, x1, y1]` convention for
+  `aperture_window` and `recommended_roi`. Its v1 adapter preserves the former
+  `[x, y, width, height]` meaning, and the explicit migration converts it.
+- Camera schema v2 requires explicit `gain_db` in every per-wavelength record
+  and makes scalar and per-wavelength settings mutually exclusive. Its v1
+  adapter preserves the historical missing-gain default and mixed-mode read
+  behavior; ambiguous mixed-mode v1 profiles require an author decision before
+  migration.
 - The broadband pupil scan uses bar profiles, then radius scan, then
   ellipse/circle overlap fitting. The effective circular pupil radius is based
   on the fitted ellipse semi-minor axis.

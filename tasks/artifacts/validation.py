@@ -123,6 +123,19 @@ class SchemaAdapter:
 
     def parse_and_validate(self, mapping: Mapping[str, Any]) -> Any:
         """Run the version contract exactly once over an already parsed mapping."""
+        self.validate_serialized_mapping(mapping)
+        artifact = self.construct(mapping)
+        if self.validate_semantics is not None:
+            if self.constructor_validates_semantics:
+                raise RuntimeError(
+                    "adapter cannot validate semantics in both constructor and "
+                    "validate_semantics"
+                )
+            self.validate_semantics(artifact)
+        return artifact
+
+    def validate_serialized_mapping(self, mapping: Mapping[str, Any]) -> None:
+        """Validate fields and serialized values without constructing an object."""
         non_string = [key for key in mapping if not isinstance(key, str)]
         if non_string:
             raise SerializedSchemaError(
@@ -143,15 +156,6 @@ class SchemaAdapter:
             )
         if self.validate_serialized is not None:
             self.validate_serialized(mapping)
-        artifact = self.construct(mapping)
-        if self.validate_semantics is not None:
-            if self.constructor_validates_semantics:
-                raise RuntimeError(
-                    "adapter cannot validate semantics in both constructor and "
-                    "validate_semantics"
-                )
-            self.validate_semantics(artifact)
-        return artifact
 
 
 AdapterKey = tuple[str, ArtifactRepresentation, int]
@@ -178,6 +182,13 @@ def get_schema_adapter(
     return SCHEMA_ADAPTER_REGISTRY.get(
         (artifact_type, representation, schema_version)
     )
+
+
+def _load_artifact_adapter_registrations(artifact_type: str) -> None:
+    if artifact_type in {"camera_profile", "pupil_profile"}:
+        from tasks.profiles.schema_adapters import register_profile_schema_adapters
+
+        register_profile_schema_adapters()
 
 
 _HDF5_SIGNATURE = b"\x89HDF\r\n\x1a\n"
@@ -220,7 +231,8 @@ def _reject_duplicate_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _parse_json_mapping(path: Path) -> dict[str, Any]:
+def parse_json_mapping(path: str | Path) -> dict[str, Any]:
+    path = Path(path)
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeError as exc:
@@ -303,6 +315,7 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
     schema_version: int | None = None
     try:
         representation = _detect_representation(artifact_path)
+        _load_artifact_adapter_registrations(artifact_type)
         has_representation_adapter = any(
             key[0] == artifact_type and key[1] is representation
             for key in SCHEMA_ADAPTER_REGISTRY
@@ -317,7 +330,7 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
                 "representation.adapter_not_registered",
                 "validator_not_implemented: representation adapter is not registered",
             )
-        mapping = _parse_json_mapping(artifact_path)
+        mapping = parse_json_mapping(artifact_path)
         found_type = mapping.get("artifact_type")
         if not isinstance(found_type, str) or not found_type:
             raise SerializedSchemaError(
@@ -413,111 +426,6 @@ def _safe_message(exc: Exception, fallback: str) -> str:
     return message
 
 
-_CAMERA_PROFILE_V1_FIELDS = frozenset(
-    {
-        "artifact_type",
-        "schema_version",
-        "camera_profile_id",
-        "profile_family",
-        "illumination",
-        "lcd_state",
-        "valid_for",
-        "depends_on",
-        "depends_on_pupil_profile_id",
-        "camera",
-        "per_wavelength",
-        "exposure_us",
-        "gain_db",
-        "peak_pixel",
-        "saturation_margin",
-        "frames_per_capture",
-        "peak_pixel_domain",
-        "full_frame_peak_pixel",
-        "full_frame_saturated_pixel_count",
-        "source_raw_capture_file",
-        "created_at",
-        "software_version",
-        "extra",
-    }
-)
-_PUPIL_PROFILE_V1_FIELDS = frozenset(
-    {
-        "artifact_type",
-        "schema_version",
-        "pupil_profile_id",
-        "lcd_coordinate_convention",
-        "lcd_display_index",
-        "subpixel_axis",
-        "lcd_physical_center",
-        "lcd_physical_radius",
-        "aperture_window",
-        "camera_psf_center",
-        "recommended_roi",
-        "fit_quality",
-        "source_raw_capture_file",
-        "created_at",
-        "software_version",
-        "extra",
-    }
-)
-
-
-def _construct_camera_profile_v1(mapping: Mapping[str, Any]) -> Any:
-    from tasks.profiles.camera_profile import CameraProfile
-
-    return CameraProfile.from_dict(dict(mapping))
-
-
-def _construct_pupil_profile_v1(mapping: Mapping[str, Any]) -> Any:
-    from tasks.profiles.pupil_profile import PupilProfile
-
-    return PupilProfile.from_dict(dict(mapping))
-
-
-register_schema_adapter(
-    SchemaAdapter(
-        artifact_type="camera_profile",
-        representation=ArtifactRepresentation.JSON,
-        schema_version=1,
-        allowed_fields=_CAMERA_PROFILE_V1_FIELDS,
-        required_fields=frozenset(
-            {
-                "artifact_type",
-                "schema_version",
-                "camera_profile_id",
-                "profile_family",
-                "illumination",
-                "lcd_state",
-                "valid_for",
-            }
-        ),
-        construct=_construct_camera_profile_v1,
-        constructor_validates_semantics=True,
-    )
-)
-register_schema_adapter(
-    SchemaAdapter(
-        artifact_type="pupil_profile",
-        representation=ArtifactRepresentation.JSON,
-        schema_version=1,
-        allowed_fields=_PUPIL_PROFILE_V1_FIELDS,
-        required_fields=frozenset(
-            {
-                "artifact_type",
-                "schema_version",
-                "pupil_profile_id",
-                "lcd_coordinate_convention",
-                "lcd_display_index",
-                "subpixel_axis",
-                "lcd_physical_center",
-            }
-        ),
-        construct=_construct_pupil_profile_v1,
-        constructor_validates_semantics=True,
-    )
-)
-
-
 __all__ = [
     "ArtifactRepresentation",
     "ArtifactValidationError",
@@ -529,5 +437,6 @@ __all__ = [
     "ValidityResult",
     "check_validity",
     "get_schema_adapter",
+    "parse_json_mapping",
     "register_schema_adapter",
 ]

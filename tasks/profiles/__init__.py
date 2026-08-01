@@ -6,6 +6,8 @@ from .camera_profile import (
     CameraProfileIllumination,
     PerWavelengthCameraSettings,
     ProfileError,
+    import_camera_profile_yaml,
+    migrate_camera_profile_v1_to_v2,
 )
 from .calibrate_broadband_camera_profile import (
     BroadbandCalibrationError,
@@ -35,7 +37,11 @@ from .exposure_search import (
     safe_exposure_profiles_by_gain,
     select_recommended_probe,
 )
-from .pupil_profile import PupilProfile
+from .pupil_profile import (
+    PupilProfile,
+    import_pupil_profile_yaml,
+    migrate_pupil_profile_v1_to_v2,
+)
 from .scan_pupil_broadband import (
     EllipseOverlapFit,
     PupilScanError,
@@ -46,6 +52,9 @@ from .scan_pupil_broadband import (
     fit_radius_overlap_function,
     run_broadband_pupil_scan,
 )
+from .schema_adapters import register_profile_schema_adapters
+
+register_profile_schema_adapters()
 
 __all__ = [
     "BROADBAND_PASSTHROUGH",
@@ -83,6 +92,10 @@ __all__ = [
     "evaluate_exposure_candidates",
     "evaluate_gain_binary_search",
     "fit_radius_overlap_function",
+    "import_camera_profile_yaml",
+    "import_pupil_profile_yaml",
+    "migrate_camera_profile_v1_to_v2",
+    "migrate_pupil_profile_v1_to_v2",
     "run_broadband_pupil_scan",
     "safe_exposure_profiles_by_gain",
     "select_recommended_probe",

@@ -24,6 +24,7 @@ def validate_broadband_pupil_scan_dependencies(
     *,
     camera_profile: CameraProfile,
 ) -> None:
+    _require_current_profile(camera_profile, "CameraProfile")
     requires = _requires(plan)
     required_camera = _require_str(requires, "camera_profile_id")
     if required_camera != camera_profile.camera_profile_id:
@@ -56,6 +57,8 @@ def validate_psf_profile_dependencies(
     pupil_profile: PupilProfile,
     camera_profile: CameraProfile,
 ) -> None:
+    _require_current_profile(pupil_profile, "PupilProfile")
+    _require_current_profile(camera_profile, "CameraProfile")
     requires = _requires(plan)
     required_pupil = _require_str(requires, "pupil_profile_id")
     required_camera = _require_str(requires, "camera_profile_id")
@@ -211,5 +214,16 @@ def validate_profile_manifests(
 def _load_profile_manifest(cls: Any, path: str | Path) -> Any:
     profile_path = Path(path)
     if profile_path.suffix.lower() in {".yaml", ".yml"}:
-        return cls.load_yaml(profile_path)
+        raise PSFArtifactError(
+            "YAML is a profile authoring/import format, not an artifact "
+            "representation; import it to canonical JSON first"
+        )
     return cls.load_json(profile_path)
+
+
+def _require_current_profile(profile: Any, name: str) -> None:
+    if getattr(profile, "source_schema_version", None) != 2:
+        raise ProfileDependencyError(
+            f"{name} schema v1 is compatibility-read only; migrate it to v2 "
+            "before hardware or PSF task use"
+        )

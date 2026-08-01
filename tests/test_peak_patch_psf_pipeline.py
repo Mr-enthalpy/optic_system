@@ -145,6 +145,8 @@ def _raw_psf_capture(
 def _write_profile_manifests(tmp_path: Path, wavelengths: list[int] | None = None) -> tuple[Path, Path]:
     wavelengths = wavelengths or [450, 550]
     pupil = PupilProfile.from_dict({
+        "artifact_type": "pupil_profile",
+        "schema_version": 2,
         "pupil_profile_id": "pupil_profile_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,
@@ -153,6 +155,8 @@ def _write_profile_manifests(tmp_path: Path, wavelengths: list[int] | None = Non
         "lcd_physical_radius": 5.0,
     })
     camera = CameraProfile.from_dict({
+        "artifact_type": "camera_profile",
+        "schema_version": 2,
         "camera_profile_id": "per_band_pupil_open_v1",
         "profile_family": "per_band_pupil_open",
         "depends_on": {"pupil_profile_id": "pupil_profile_v1"},

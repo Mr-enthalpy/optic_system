@@ -20,6 +20,8 @@ from tasks.psf import (
 
 def broadband_camera_profile_dict() -> dict:
     return {
+        "artifact_type": "camera_profile",
+        "schema_version": 2,
         "camera_profile_id": "broadband_passthrough_safe_v1",
         "profile_family": BROADBAND_PASSTHROUGH,
         "illumination": {
@@ -41,6 +43,8 @@ def broadband_camera_profile_dict() -> dict:
 
 def pupil_profile_dict() -> dict:
     return {
+        "artifact_type": "pupil_profile",
+        "schema_version": 2,
         "pupil_profile_id": "pupil_profile_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,
@@ -48,13 +52,15 @@ def pupil_profile_dict() -> dict:
         "lcd_physical_center": [1065.25, 1871.54],
         "lcd_physical_radius": 52.8,
         "camera_psf_center": [1149.13, 934.51],
-        "recommended_roi": [893, 679, 512, 512],
+        "recommended_roi": [893, 679, 1405, 1191],
         "fit_quality": {"r2": 0.9992},
     }
 
 
 def per_band_camera_profile_dict() -> dict:
     return {
+        "artifact_type": "camera_profile",
+        "schema_version": 2,
         "camera_profile_id": "per_band_pupil_open_v1",
         "profile_family": PER_BAND_PUPIL_OPEN,
         "depends_on": {"pupil_profile_id": "pupil_profile_v1"},
@@ -131,7 +137,7 @@ def test_pupil_profile_roundtrip_json(tmp_path: Path) -> None:
 
     assert loaded.pupil_profile_id == "pupil_profile_v1"
     assert loaded.subpixel_axis == 1
-    assert loaded.recommended_roi == (893, 679, 512, 512)
+    assert loaded.recommended_roi == (893, 679, 1405, 1191)
 
 
 def test_camera_profile_rejects_unknown_peak_pixel_domain() -> None:

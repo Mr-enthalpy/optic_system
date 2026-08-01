@@ -484,6 +484,8 @@ def test_broadband_pupil_scan_outputs_pupil_profile() -> None:
     lcd = SyntheticLCD(shape=(80, 120))
     camera = SyntheticCamera(lcd, pupil_center=(62.0, 37.0), pupil_axes=(24.0, 16.0))
     camera_profile = CameraProfile.from_dict({
+        "artifact_type": "camera_profile",
+        "schema_version": 2,
         "camera_profile_id": "broadband_scan_safe_v1",
         "profile_family": BROADBAND_PASSTHROUGH,
         "illumination": {
@@ -567,13 +569,15 @@ def test_per_band_pupil_open_calibration_outputs_profile() -> None:
     camera = SyntheticCamera(lcd)
     tls = FakePassThroughTLS()
     pupil = PupilProfile.from_dict({
+        "artifact_type": "pupil_profile",
+        "schema_version": 2,
         "pupil_profile_id": "pupil_profile_scan_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,
         "subpixel_axis": 1,
         "lcd_physical_center": [62.0, 37.0],
         "lcd_physical_radius": 16.0,
-        "aperture_window": [46, 21, 32, 32],
+        "aperture_window": [46, 21, 78, 53],
         "extra": {"physical_shape": [80, 120]},
     })
     plan = PerBandPupilOpenCalibrationPlan.from_dict({
@@ -638,6 +642,8 @@ def test_per_band_calibration_records_domain_and_dual_peak() -> None:
     camera = TopRowStuckCamera(lcd=lcd, frame_shape=(200, 240))
     tls = FakePassThroughTLS()
     pupil = PupilProfile.from_dict({
+        "artifact_type": "pupil_profile",
+        "schema_version": 2,
         "pupil_profile_id": "pupil_profile_scan_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,
@@ -728,6 +734,8 @@ def test_per_band_rejects_frame_shape_change_across_wavelengths() -> None:
     camera = TwoShapeCamera(lcd=lcd, frame_shape=(200, 240))
     tls = FakePassThroughTLS()
     pupil = PupilProfile.from_dict({
+        "artifact_type": "pupil_profile",
+        "schema_version": 2,
         "pupil_profile_id": "pupil_profile_scan_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,
@@ -881,6 +889,8 @@ def test_per_band_calibration_rejects_zero_wavelength() -> None:
     lcd = SyntheticLCD(shape=(80, 120))
     camera = SyntheticCamera(lcd)
     pupil = PupilProfile.from_dict({
+        "artifact_type": "pupil_profile",
+        "schema_version": 2,
         "pupil_profile_id": "pupil_profile_scan_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,
@@ -1114,6 +1124,8 @@ def test_per_band_calibration_rejects_numeric_valid_pixel_mask() -> None:
     camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
     tls = FakePassThroughTLS()
     pupil = PupilProfile.from_dict({
+        "artifact_type": "pupil_profile",
+        "schema_version": 2,
         "pupil_profile_id": "pupil_profile_scan_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,
@@ -1186,6 +1198,8 @@ def test_per_band_preflight_rejects_before_hardware_actions() -> None:
     camera = SyntheticCamera(lcd=lcd, frame_shape=(200, 240))
     tls = FakePassThroughTLS()
     pupil = PupilProfile.from_dict({
+        "artifact_type": "pupil_profile",
+        "schema_version": 2,
         "pupil_profile_id": "pupil_profile_scan_v1",
         "lcd_coordinate_convention": "physical_mono_xy",
         "lcd_display_index": 1,

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -32,7 +33,12 @@ class CameraProfileIllumination:
     source: str | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> CameraProfileIllumination:
+    def from_dict(
+        cls,
+        d: dict[str, Any],
+        *,
+        validate: bool = True,
+    ) -> CameraProfileIllumination:
         wavelengths = d.get("wavelengths_nm") or []
         if not isinstance(wavelengths, list):
             raise ProfileError("illumination.wavelengths_nm must be a list")
@@ -43,7 +49,8 @@ class CameraProfileIllumination:
             wavelengths_nm=[float(w) for w in wavelengths],
             source=_optional_str(d.get("source")),
         )
-        spec.validate()
+        if validate:
+            spec.validate()
         return spec
 
     def validate(self) -> None:
@@ -105,7 +112,15 @@ class PerWavelengthCameraSettings:
     full_frame_saturated_pixel_count: int | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> PerWavelengthCameraSettings:
+    def from_dict(
+        cls,
+        d: dict[str, Any],
+        *,
+        require_gain: bool = False,
+        validate: bool = True,
+    ) -> PerWavelengthCameraSettings:
+        if require_gain and "gain_db" not in d:
+            raise ProfileError("gain_db is required for schema v2 settings")
         settings = cls(
             exposure_us=float(_require_key(d, "exposure_us")),
             gain_db=float(d.get("gain_db", 0.0)),
@@ -121,7 +136,8 @@ class PerWavelengthCameraSettings:
                 "full_frame_saturated_pixel_count",
             ),
         )
-        settings.validate()
+        if validate:
+            settings.validate()
         return settings
 
     def validate(self) -> None:
@@ -176,70 +192,119 @@ class CameraProfile:
     created_at: str | None = None
     software_version: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    source_schema_version: int = field(default=2, repr=False, compare=False)
+    legacy_gain_default_keys: tuple[str, ...] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> CameraProfile:
-        from tasks.artifact_versioning import read_schema_version
+    def from_dict(
+        cls,
+        d: dict[str, Any],
+        *,
+        legacy_mode: bool = False,
+    ) -> CameraProfile:
+        from tasks.artifacts.validation import ArtifactValidationError
+        from tasks.profiles.schema_adapters import parse_profile_mapping
 
-        read_schema_version(d, "camera_profile", legacy_mode=True)
-        profile_family = _require_str(d, "profile_family")
+        try:
+            return parse_profile_mapping(
+                "camera_profile",
+                d,
+                legacy_mode=legacy_mode,
+            )
+        except ArtifactValidationError as exc:
+            raise ProfileError(str(exc)) from exc
+
+    @classmethod
+    def _from_validated_mapping(
+        cls,
+        d: Mapping[str, Any],
+        *,
+        source_schema_version: int,
+    ) -> CameraProfile:
+        data = dict(d)
+        profile_family = _require_str(data, "profile_family")
         illumination = CameraProfileIllumination.from_dict(
-            _require_dict(d, "illumination")
+            _require_dict(data, "illumination"),
+            validate=False,
         )
-        camera_block = _optional_dict(d.get("camera")) or {}
+        camera_block = _optional_dict(data.get("camera")) or {}
         per_wavelength_raw = (
-            d.get("per_wavelength")
+            data.get("per_wavelength")
             or camera_block.get("per_wavelength")
             or {}
         )
         if not isinstance(per_wavelength_raw, dict):
             raise ProfileError("per_wavelength must be a mapping")
         profile = cls(
-            camera_profile_id=_require_str(d, "camera_profile_id"),
+            camera_profile_id=_require_str(data, "camera_profile_id"),
             profile_family=profile_family,
             illumination=illumination,
-            lcd_state=_require_dict(d, "lcd_state"),
-            valid_for=_require_str_list(d, "valid_for"),
+            lcd_state=_require_dict(data, "lcd_state"),
+            valid_for=_require_str_list(data, "valid_for"),
             per_wavelength={
-                str(k): PerWavelengthCameraSettings.from_dict(v)
+                str(k): PerWavelengthCameraSettings.from_dict(
+                    v,
+                    require_gain=source_schema_version >= 2,
+                    validate=False,
+                )
                 for k, v in per_wavelength_raw.items()
             },
-            exposure_us=_optional_float(d.get("exposure_us", camera_block.get("exposure_us"))),
-            gain_db=_optional_float(d.get("gain_db", camera_block.get("gain_db"))),
-            peak_pixel=_optional_float(d.get("peak_pixel", camera_block.get("peak_pixel"))),
+            exposure_us=_optional_float(data.get("exposure_us", camera_block.get("exposure_us"))),
+            gain_db=_optional_float(data.get("gain_db", camera_block.get("gain_db"))),
+            peak_pixel=_optional_float(data.get("peak_pixel", camera_block.get("peak_pixel"))),
             saturation_margin=_optional_float(
-                d.get("saturation_margin", camera_block.get("saturation_margin"))
+                data.get("saturation_margin", camera_block.get("saturation_margin"))
             ),
             frames_per_capture=_optional_int(
-                d.get("frames_per_capture", camera_block.get("frames_per_capture"))
+                data.get("frames_per_capture", camera_block.get("frames_per_capture"))
             ),
             peak_pixel_domain=_optional_str(
-                d.get("peak_pixel_domain", camera_block.get("peak_pixel_domain"))
+                data.get("peak_pixel_domain", camera_block.get("peak_pixel_domain"))
             ),
             full_frame_peak_pixel=_optional_finite_number(
-                d.get("full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel")),
+                data.get("full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel")),
                 "full_frame_peak_pixel",
             ),
             full_frame_saturated_pixel_count=_optional_count(
-                d.get(
+                data.get(
                     "full_frame_saturated_pixel_count",
                     camera_block.get("full_frame_saturated_pixel_count"),
                 ),
                 "full_frame_saturated_pixel_count",
             ),
             depends_on_pupil_profile_id=_optional_str(
-                d.get("depends_on_pupil_profile_id")
-                or (_optional_dict(d.get("depends_on")) or {}).get("pupil_profile_id")
+                data.get("depends_on_pupil_profile_id")
+                or (_optional_dict(data.get("depends_on")) or {}).get("pupil_profile_id")
             ),
-            source_raw_capture_file=_optional_str(d.get("source_raw_capture_file")),
-            created_at=_optional_str(d.get("created_at")),
-            software_version=_optional_str(d.get("software_version")),
-            extra=_optional_dict(d.get("extra")) or {},
+            source_raw_capture_file=_optional_str(data.get("source_raw_capture_file")),
+            created_at=_optional_str(data.get("created_at")),
+            software_version=_optional_str(data.get("software_version")),
+            extra=_optional_dict(data.get("extra")) or {},
+            source_schema_version=source_schema_version,
+            legacy_gain_default_keys=tuple(
+                sorted(
+                    str(key)
+                    for key, value in per_wavelength_raw.items()
+                    if source_schema_version == 1
+                    and isinstance(value, Mapping)
+                    and "gain_db" not in value
+                )
+            ),
         )
-        profile.validate()
         return profile
 
     def validate(self) -> None:
+        self._validate_for_schema(self.source_schema_version)
+
+    def _validate_for_schema(self, schema_version: int) -> None:
+        if schema_version not in {1, 2}:
+            raise ProfileError(
+                f"unsupported camera profile schema_version {schema_version}"
+            )
         self.illumination.validate()
         if not self.camera_profile_id:
             raise ProfileError("camera_profile_id must not be empty")
@@ -269,6 +334,11 @@ class CameraProfile:
                 raise ProfileError(
                     "broadband_passthrough camera profile must not depend on a PupilProfile"
                 )
+            if schema_version >= 2 and self.per_wavelength:
+                raise ProfileError(
+                    "schema v2 broadband profile must not contain per_wavelength "
+                    "settings"
+                )
             _validate_single_camera_settings(self)
             return
 
@@ -290,6 +360,11 @@ class CameraProfile:
                 raise ProfileError(
                     "per_band_pupil_open camera profile requires lcd_state.mode selected_pupil_open"
                 )
+            if schema_version >= 2 and _has_scalar_camera_settings(self):
+                raise ProfileError(
+                    "schema v2 per-band profile must not contain scalar camera "
+                    "settings"
+                )
             missing = [
                 str(int(w)) if float(w).is_integer() else str(w)
                 for w in self.illumination.wavelengths_nm
@@ -306,6 +381,8 @@ class CameraProfile:
     def to_dict(self) -> dict[str, Any]:
         from tasks.artifact_versioning import emit_schema_version
 
+        self._assert_current_source()
+        self._validate_for_schema(2)
         result: dict[str, Any] = {
             "artifact_type": "camera_profile",
             "camera_profile_id": self.camera_profile_id,
@@ -351,31 +428,108 @@ class CameraProfile:
         if self.extra:
             result["extra"] = self.extra
         emit_schema_version(result, "camera_profile")
+        from tasks.profiles.schema_adapters import (
+            validate_current_profile_serialized,
+        )
+
+        try:
+            validate_current_profile_serialized("camera_profile", result)
+        except ValueError as exc:
+            raise ProfileError(str(exc)) from exc
         return result
 
     def to_json(self, path: str | Path | None = None) -> str:
-        text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        text = json.dumps(
+            self.to_dict(),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
         if path is not None:
             Path(path).write_text(text + "\n", encoding="utf-8")
         return text
 
     @classmethod
     def load_json(cls, path: str | Path) -> CameraProfile:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ProfileError("camera profile JSON root must be a mapping")
-        return cls.from_dict(data)
+        from tasks.artifacts.validation import (
+            ArtifactValidationError,
+            parse_json_mapping,
+        )
 
-    @classmethod
-    def load_yaml(cls, path: str | Path) -> CameraProfile:
         try:
-            import yaml
-        except ImportError as exc:
-            raise ProfileError("PyYAML is required for YAML profile loading") from exc
-        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ProfileError("camera profile YAML root must be a mapping")
-        return cls.from_dict(data)
+            return cls.from_dict(parse_json_mapping(path))
+        except ArtifactValidationError as exc:
+            raise ProfileError(str(exc)) from exc
+
+    def _assert_current_source(self) -> None:
+        if self.source_schema_version != 2:
+            raise ProfileError(
+                "compatibility-read camera profile cannot be written as schema "
+                "v2; call migrate_camera_profile_v1_to_v2() explicitly"
+            )
+
+
+def migrate_camera_profile_v1_to_v2(profile: CameraProfile) -> CameraProfile:
+    """Explicitly migrate a compatibility-read v1 profile into a v2 generation."""
+    if profile.source_schema_version != 1:
+        raise ProfileError("camera profile migration requires a schema v1 source")
+    if (
+        profile.profile_family == BROADBAND_PASSTHROUGH
+        and profile.per_wavelength
+    ):
+        raise ProfileError(
+            "cannot migrate mixed v1 broadband scalar/per_wavelength settings "
+            "without an explicit author decision"
+        )
+    if (
+        profile.profile_family == PER_BAND_PUPIL_OPEN
+        and _has_scalar_camera_settings(profile)
+    ):
+        raise ProfileError(
+            "cannot migrate mixed v1 per-band/scalar settings without an "
+            "explicit author decision"
+        )
+    migrated_extra = dict(profile.extra)
+    migrated_extra["migration"] = {
+        "name": "camera_profile_v1_to_v2",
+        "source_schema_version": 1,
+        "historical_gain_default_keys": list(
+            profile.legacy_gain_default_keys
+        ),
+    }
+    migrated = replace(
+        profile,
+        extra=migrated_extra,
+        source_schema_version=2,
+        legacy_gain_default_keys=(),
+    )
+    migrated._validate_for_schema(2)
+    return migrated
+
+
+def import_camera_profile_yaml(
+    source_yaml: str | Path,
+    output_json: str | Path,
+) -> CameraProfile:
+    """Import YAML authoring input into a new canonical schema-v2 JSON artifact."""
+    from tasks.profiles.schema_adapters import parse_profile_yaml_mapping
+
+    data = parse_profile_yaml_mapping(source_yaml)
+    if data.get("artifact_type", "camera_profile") != "camera_profile":
+        raise ProfileError("YAML import artifact_type must be camera_profile")
+    if data.get("schema_version", 2) != 2:
+        raise ProfileError("YAML import only produces camera_profile schema v2")
+    data["artifact_type"] = "camera_profile"
+    data["schema_version"] = 2
+    extra = dict(data.get("extra") or {})
+    extra["import"] = {
+        "format": "yaml",
+        "canonical_representation": "json",
+    }
+    data["extra"] = extra
+    profile = CameraProfile.from_dict(data)
+    profile.to_json(output_json)
+    return profile
 
 
 def _validate_peak_domain_fields(
@@ -420,6 +574,22 @@ def _validate_single_camera_settings(profile: CameraProfile) -> None:
         raise ProfileError("camera.gain_db is required")
     if profile.frames_per_capture is not None and profile.frames_per_capture < 1:
         raise ProfileError("camera.frames_per_capture must be >= 1")
+
+
+def _has_scalar_camera_settings(profile: CameraProfile) -> bool:
+    return any(
+        getattr(profile, field) is not None
+        for field in (
+            "exposure_us",
+            "gain_db",
+            "peak_pixel",
+            "saturation_margin",
+            "frames_per_capture",
+            "peak_pixel_domain",
+            "full_frame_peak_pixel",
+            "full_frame_saturated_pixel_count",
+        )
+    )
 
 
 def _wavelength_key(wavelength_nm: float) -> str:

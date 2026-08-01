@@ -238,6 +238,12 @@ crop, pad, interpolate, or infer placement. Mask-family definition, rendering
 semantics, parameters, grid policy, projection policy, and stable mask identity
 remain owned by `lcd_mask_families`.
 
+Current camera and pupil artifacts are canonical JSON schema v2.
+`PupilProfile.aperture_window` is `[x0, y0, x1, y1]`; schema-v1 XYWH files are
+compatibility-read only and require explicit migration before hardware use.
+Profile YAML is an authoring/import format, not a catalog-valid artifact
+representation; the profile import APIs materialize a new canonical JSON file.
+
 ## Development roadmap
 
 The active roadmap is maintained in [`docs/roadmap.md`](docs/roadmap.md).

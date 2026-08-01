@@ -279,9 +279,19 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
 - The JSON integer digit cap is a local reader implementation limit and is
   reported as `unsupported / reader_limit.json_integer_digits`, not as a claim
   that the abstract artifact schema is mathematically invalid.
-- This foundation change does not revise any artifact schema. Camera and pupil
-  remain schema v1; the other measured manifests also remain schema v1 until
-  their version-specific adapters and migrations are introduced separately.
+- Camera and pupil profiles use schema v2 for current JSON artifacts. Their v1
+  adapters remain exact historical readers: pupil `aperture_window` is XYWH,
+  and camera per-wavelength `gain_db` may use the historical `0.0` default.
+  Loaded objects retain `source_schema_version`; current writers reject v1
+  objects until an explicit `migrate_*_v1_to_v2()` function creates a new,
+  migration-audited generation.
+- YAML profile files are authoring/import input, not artifact representations.
+  `import_camera_profile_yaml()` and `import_pupil_profile_yaml()` write a new
+  canonical schema-v2 JSON artifact. Catalog validation never treats the YAML
+  source as an eligible profile artifact.
+- Other measured manifests remain schema v1 until their version-specific
+  adapters, portable provenance references, and migrations are introduced in
+  the next schema layer.
 
 The planned bundle and catalog-location contract is documented in
 [`artifact_bundle_design.md`](artifact_bundle_design.md). It is design work,

@@ -335,8 +335,8 @@ def _physical_shape_from_pupil(pupil_profile: PupilProfile) -> tuple[int, int]:
         r = float(pupil_profile.lcd_physical_radius or 1.0)
         cx, cy = pupil_profile.lcd_physical_center
         return (int(np.ceil(cy + r + 2)), int(np.ceil(cx + r + 2)))
-    x, y, w, h = pupil_profile.aperture_window
-    return (int(y + h), int(x + w))
+    _, _, x1, y1 = pupil_profile.aperture_window
+    return (int(y1), int(x1))
 
 
 def _wavelength_key(wavelength_nm: float) -> str:

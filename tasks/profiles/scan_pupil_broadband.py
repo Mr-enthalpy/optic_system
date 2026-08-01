@@ -724,7 +724,7 @@ def _aperture_window(center: tuple[float, float], radius: float, shape: tuple[in
     y0 = max(0, int(np.floor(float(center[1]) - float(radius))))
     x1 = min(w, int(np.ceil(float(center[0]) + float(radius))))
     y1 = min(h, int(np.ceil(float(center[1]) + float(radius))))
-    return (x0, y0, max(1, x1 - x0), max(1, y1 - y0))
+    return (x0, y0, max(x0 + 1, x1), max(y0 + 1, y1))
 
 
 def _tls_status_dict(tls: PupilScanTLS | None) -> dict[str, Any]:
