@@ -22,12 +22,14 @@ def main() -> int:
     parser.add_argument("source_raw_capture_h5")
     parser.add_argument("peak_layout_profile")
     parser.add_argument("output_h5")
+    parser.add_argument("--source-raw-capture-artifact-id", required=True)
     parser.add_argument("--dictionary-id")
     parser.add_argument("--manifest-path")
     parser.add_argument("--pupil-profile-manifest")
     parser.add_argument("--camera-profile-manifest")
     parser.add_argument("--output-dtype", choices=["float32", "float64"], default="float32")
     parser.add_argument("--allow-camera-frame-extent-mismatch", action="store_true")
+    parser.add_argument("--camera-frame-extent-mismatch-reason")
     parser.add_argument("--notes")
     args = parser.parse_args()
 
@@ -36,6 +38,7 @@ def main() -> int:
 
     build_peak_patch_psf_dictionary(
         source_raw_capture_h5=args.source_raw_capture_h5,
+        source_raw_capture_artifact_id=args.source_raw_capture_artifact_id,
         peak_layout_profile=args.peak_layout_profile,
         output_h5=args.output_h5,
         dictionary_id=args.dictionary_id,
@@ -44,6 +47,7 @@ def main() -> int:
         camera_profile_manifest=args.camera_profile_manifest,
         output_dtype=args.output_dtype,
         allow_camera_frame_extent_mismatch=args.allow_camera_frame_extent_mismatch,
+        camera_frame_extent_mismatch_reason=args.camera_frame_extent_mismatch_reason,
         notes=args.notes,
     )
     return 0

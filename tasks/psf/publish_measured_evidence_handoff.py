@@ -92,8 +92,12 @@ def publish_measured_evidence_handoff(
 
             source = dst.require_group("source")
             source.create_dataset("dictionary_h5", data=str(dictionary_path))
-            _copy_scalar_if_present(src, source, "source/raw_capture_h5", "raw_capture_h5")
-            _copy_scalar_if_present(src, source, "source/peak_layout_profile", "peak_layout_profile")
+            _copy_scalar_if_present(
+                src, source, "source/raw_capture_artifact_id", "raw_capture_artifact_id"
+            )
+            _copy_scalar_if_present(
+                src, source, "source/peak_layout_artifact_id", "peak_layout_artifact_id"
+            )
 
             metadata: dict[str, Any] = {
                 "source_dictionary_h5": str(dictionary_path),

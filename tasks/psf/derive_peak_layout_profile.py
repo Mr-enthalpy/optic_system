@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ class PeakLayoutProfileError(PSFArtifactError):
 @dataclass
 class PeakLayoutProfileManifest:
     peak_layout_id: str
-    source_survey_h5: str
+    source_survey_artifact_id: str | None
     frame_shape: tuple[int, int]
     coordinate_frame: str
     camera_frame_extent: dict[str, Any]
@@ -40,9 +40,9 @@ class PeakLayoutProfileManifest:
     stability_score: list[float]
     amplitude_range: list[list[float]]
     local_background_stats: list[dict[str, float]]
-    survey_wavelengths_nm: list[float]
+    survey_wavelengths_nm: list[float | None]
     survey_mask_ids: list[str]
-    valid_wavelengths_nm: list[float]
+    valid_wavelengths_nm: list[float | None]
     valid_mask_ids: list[str]
     validity_scope: dict[str, str]
     detection_policy: dict[str, Any]
@@ -50,18 +50,44 @@ class PeakLayoutProfileManifest:
     center_profile_id: str | None = None
     energy_center_xy: list[float] | None = None
     center_xy_rel: list[list[float]] | None = None
+    migration: dict[str, Any] | None = None
+    source_schema_version: int = 2
+    legacy_source_survey_h5: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PeakLayoutProfileManifest:
-        from tasks.artifact_versioning import read_schema_version
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        legacy_mode: bool = False,
+    ) -> PeakLayoutProfileManifest:
+        from tasks.artifacts.derived_manifest_adapters import (
+            parse_derived_manifest_mapping,
+        )
 
-        read_schema_version(data, "peak_layout_profile", legacy_mode=True)
+        return parse_derived_manifest_mapping(
+            "peak_layout_profile",
+            data,
+            legacy_mode=legacy_mode,
+        )
+
+    @classmethod
+    def _from_validated_mapping(
+        cls,
+        data: dict[str, Any],
+        *,
+        source_schema_version: int,
+    ) -> PeakLayoutProfileManifest:
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise PeakLayoutProfileError("frame_shape must contain [H, W]")
         return cls(
             peak_layout_id=_require_str(data, "peak_layout_id"),
-            source_survey_h5=_require_str(data, "source_survey_h5"),
+            source_survey_artifact_id=(
+                _require_str(data, "source_survey_artifact_id")
+                if source_schema_version >= 2
+                else None
+            ),
             frame_shape=(int(frame_shape[0]), int(frame_shape[1])),
             coordinate_frame=_require_str(data, "coordinate_frame"),
             camera_frame_extent=_require_dict(data, "camera_frame_extent"),
@@ -75,7 +101,7 @@ class PeakLayoutProfileManifest:
                 dict(v) for v in _require_list(data, "local_background_stats")
             ],
             survey_wavelengths_nm=[
-                float(v)
+                None if v is None else float(v)
                 for v in _require_list(
                     data,
                     "survey_wavelengths_nm",
@@ -91,7 +117,8 @@ class PeakLayoutProfileManifest:
                 )
             ],
             valid_wavelengths_nm=[
-                float(v) for v in _require_list(data, "valid_wavelengths_nm")
+                None if v is None else float(v)
+                for v in _require_list(data, "valid_wavelengths_nm")
             ],
             valid_mask_ids=[str(v) for v in _require_list(data, "valid_mask_ids")],
             validity_scope=_require_dict(data, "validity_scope"),
@@ -106,33 +133,134 @@ class PeakLayoutProfileManifest:
                 _float_pairs(data, "center_xy_rel")
                 if data.get("center_xy_rel") is not None else None
             ),
+            migration=(
+                _require_dict(data, "migration")
+                if data.get("migration") is not None
+                else None
+            ),
+            source_schema_version=source_schema_version,
+            legacy_source_survey_h5=(
+                _require_str(data, "source_survey_h5")
+                if source_schema_version == 1
+                else None
+            ),
         )
+
+    def validate(self) -> None:
+        from tasks.artifacts.identity import validate_artifact_id
+
+        if self.source_schema_version not in {1, 2}:
+            raise PeakLayoutProfileError("unsupported source schema version")
+        if self.source_schema_version == 2 and not self.source_survey_artifact_id:
+            raise PeakLayoutProfileError(
+                "schema v2 requires source_survey_artifact_id"
+            )
+        if self.source_schema_version == 2:
+            validate_artifact_id(
+                self.source_survey_artifact_id,
+                "source_survey_artifact_id",
+            )
+        count = len(self.peak_ids)
+        for field, values in (
+            ("center_xy", self.center_xy),
+            ("patch_shape_hw", self.patch_shape_hw),
+            ("patch_origin_xy", self.patch_origin_xy),
+            ("stability_score", self.stability_score),
+            ("amplitude_range", self.amplitude_range),
+            ("local_background_stats", self.local_background_stats),
+        ):
+            if len(values) != count:
+                raise PeakLayoutProfileError(
+                    f"{field} length must match peak_ids"
+                )
+        if self.center_xy_rel is not None and len(self.center_xy_rel) != count:
+            raise PeakLayoutProfileError(
+                "center_xy_rel length must match peak_ids"
+            )
+        if len(self.frame_shape) != 2 or min(self.frame_shape) <= 0:
+            raise PeakLayoutProfileError("frame_shape must be positive [H, W]")
 
     def to_dict(self) -> dict[str, Any]:
         from tasks.artifact_versioning import emit_schema_version
 
-        data = asdict(self)
-        data["artifact_type"] = "peak_layout_profile"
-        data["frame_shape"] = list(self.frame_shape)
+        if self.source_schema_version != 2:
+            raise PeakLayoutProfileError(
+                "compatibility-read layout cannot be written; call "
+                "migrate_peak_layout_profile_v1_to_v2()"
+            )
+        self.validate()
+        data: dict[str, Any] = {
+            "artifact_type": "peak_layout_profile",
+            "peak_layout_id": self.peak_layout_id,
+            "source_survey_artifact_id": self.source_survey_artifact_id,
+            "frame_shape": list(self.frame_shape),
+            "coordinate_frame": self.coordinate_frame,
+            "camera_frame_extent": dict(self.camera_frame_extent),
+            "peak_ids": list(self.peak_ids),
+            "center_xy": self.center_xy,
+            "patch_shape_hw": self.patch_shape_hw,
+            "patch_origin_xy": self.patch_origin_xy,
+            "stability_score": list(self.stability_score),
+            "amplitude_range": self.amplitude_range,
+            "local_background_stats": self.local_background_stats,
+            "survey_wavelengths_nm": list(self.survey_wavelengths_nm),
+            "survey_mask_ids": list(self.survey_mask_ids),
+            "valid_wavelengths_nm": list(self.valid_wavelengths_nm),
+            "valid_mask_ids": list(self.valid_mask_ids),
+            "validity_scope": dict(self.validity_scope),
+            "detection_policy": dict(self.detection_policy),
+            "notes": self.notes,
+            "center_profile_id": self.center_profile_id,
+            "energy_center_xy": self.energy_center_xy,
+            "center_xy_rel": self.center_xy_rel,
+        }
+        if self.migration is not None:
+            data["migration"] = dict(self.migration)
         emit_schema_version(data, "peak_layout_profile")
+        from tasks.artifacts.derived_manifest_adapters import (
+            validate_current_derived_manifest_serialized,
+        )
+
+        validate_current_derived_manifest_serialized("peak_layout_profile", data)
         return data
 
     def to_json(self, path: str | Path | None = None) -> str:
-        text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        text = json.dumps(self.to_dict(), indent=2, sort_keys=True, allow_nan=False)
         if path is not None:
             Path(path).write_text(text + "\n", encoding="utf-8")
         return text
 
     @classmethod
     def load_json(cls, path: str | Path) -> PeakLayoutProfileManifest:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise PeakLayoutProfileError("profile JSON root must be a mapping")
-        return cls.from_dict(data)
+        from tasks.artifacts.validation import parse_json_mapping
+
+        return cls.from_dict(parse_json_mapping(path))
 
     @property
     def n_peaks(self) -> int:
         return len(self.peak_ids)
+
+
+def migrate_peak_layout_profile_v1_to_v2(
+    manifest: PeakLayoutProfileManifest,
+    *,
+    source_survey_artifact_id: str,
+) -> PeakLayoutProfileManifest:
+    if manifest.source_schema_version != 1:
+        raise PeakLayoutProfileError("layout migration requires schema v1")
+    migrated = replace(
+        manifest,
+        source_survey_artifact_id=source_survey_artifact_id,
+        source_schema_version=2,
+        legacy_source_survey_h5=None,
+        migration={
+            "name": "peak_layout_profile_v1_to_v2",
+            "source_schema_version": 1,
+            "legacy_source_reference_discarded": True,
+        },
+    )
+    migrated.validate()
+    return migrated
 
 
 def derive_peak_layout_profile(
@@ -164,6 +292,7 @@ def derive_peak_layout_profile(
     with h5py.File(survey_path, "r") as src:
         if "full_frame_survey/frames_avg" not in src:
             raise PeakLayoutProfileError("survey missing full_frame_survey/frames_avg")
+        source_survey_artifact_id = _required_survey_id(src)
         frames_dset = src["full_frame_survey/frames_avg"]
         if frames_dset.ndim != 3:
             raise PeakLayoutProfileError("survey frames must have shape [N, H, W]")
@@ -230,6 +359,7 @@ def derive_peak_layout_profile(
                 coordinate_frame=coordinate_frame,
                 camera_frame_extent=camera_extent,
                 frame_shape=(int(h), int(w)),
+                source_survey_artifact_id=source_survey_artifact_id,
             )
         except SensorEnergyCenterError as exc:
             raise PeakLayoutProfileError(str(exc)) from exc
@@ -246,7 +376,7 @@ def derive_peak_layout_profile(
         ]
         manifest = PeakLayoutProfileManifest(
             peak_layout_id=str(peak_layout_id),
-            source_survey_h5=str(survey_path),
+            source_survey_artifact_id=source_survey_artifact_id,
             frame_shape=(int(h), int(w)),
             coordinate_frame=coordinate_frame,
             camera_frame_extent=camera_extent,
@@ -394,6 +524,17 @@ def _require_str(data: dict[str, Any], key: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
         raise PeakLayoutProfileError(f"{key} must be a non-empty string")
+    return value.strip()
+
+
+def _required_survey_id(src: h5py.File) -> str:
+    value = src.attrs.get("survey_id")
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    if not isinstance(value, str) or not value.strip():
+        raise PeakLayoutProfileError(
+            "source survey is missing required survey_id artifact identity"
+        )
     return value.strip()
 
 

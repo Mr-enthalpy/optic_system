@@ -25,6 +25,7 @@ def _write_synthetic_survey(path: Path) -> None:
     frame[5:7, 56:58] += 3.0
     frame[40, 3] += 0.04
     with h5py.File(str(path), "w") as f:
+        f.attrs["survey_id"] = "synthetic_survey"
         string_dtype = h5py.string_dtype(encoding="utf-8")
         g = f.require_group("full_frame_survey")
         g.create_dataset("frames_avg", data=frame[np.newaxis, :, :])
@@ -87,19 +88,21 @@ def test_builds_peak_support_analysis_report_from_synthetic_survey(tmp_path: Pat
     )
 
     assert manifest.report_id == "support_v1"
-    assert manifest.source_survey_h5 == str(survey_h5)
+    assert manifest.source_survey_artifact_id == "synthetic_survey"
     assert manifest.frame_shape == (64, 64)
     assert manifest.coordinate_frame == "sensor_full_frame"
     assert manifest.entry_mask_ids == ["mask_a"]
     assert report_h5.exists()
 
     with h5py.File(str(report_h5), "r") as f:
+        assert f.attrs["manifest_schema_version"] == 2
+        assert f.attrs["payload_schema_version"] == 1
         assert f["support_analysis/frame_shape"][()].tolist() == [64, 64]
         assert f["support_analysis/background_value"].shape == (1,)
         assert f["support_analysis/compact_support_energy"].shape == (1, 2)
         assert f["support_analysis/far_field_significant_energy"].shape == (1, 1)
         assert f["components/bbox_xyxy"].shape[1] == 4
-        assert _decode(f["source/survey_h5"][()]) == str(survey_h5)
+        assert _decode(f["source/survey_artifact_id"][()]) == "synthetic_survey"
 
 
 def test_uses_fifth_percentile_background_and_corr_clip(tmp_path: Path) -> None:

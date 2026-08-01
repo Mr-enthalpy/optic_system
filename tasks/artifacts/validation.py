@@ -20,7 +20,7 @@ import re
 from typing import Any
 
 from tasks.artifact_versioning import (
-    CURRENT_SCHEMA_VERSIONS,
+    REGISTERED_ARTIFACT_TYPES,
     LegacyUnversionedArtifactError,
     NewerSchemaVersionError,
     OlderSchemaVersionError,
@@ -189,6 +189,18 @@ def _load_artifact_adapter_registrations(artifact_type: str) -> None:
         from tasks.profiles.schema_adapters import register_profile_schema_adapters
 
         register_profile_schema_adapters()
+    if artifact_type in {
+        "full_frame_psf_survey",
+        "sensor_energy_center_profile",
+        "peak_layout_profile",
+        "peak_support_analysis_report",
+        "peak_patch_psf_dictionary",
+    }:
+        from tasks.artifacts.derived_manifest_adapters import (
+            register_derived_manifest_adapters,
+        )
+
+        register_derived_manifest_adapters()
 
 
 _HDF5_SIGNATURE = b"\x89HDF\r\n\x1a\n"
@@ -293,7 +305,7 @@ def check_validity(artifact_type: str, path: str | Path) -> ValidityResult:
         not isinstance(artifact_type, str)
         or not artifact_type
         or artifact_type != artifact_type.strip()
-        or artifact_type not in CURRENT_SCHEMA_VERSIONS
+        or artifact_type not in REGISTERED_ARTIFACT_TYPES
     ):
         return _result(
             str(artifact_type),

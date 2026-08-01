@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +28,7 @@ class SensorEnergyCenterError(ValueError):
 @dataclass
 class SensorEnergyCenterProfile:
     center_profile_id: str
-    source_survey_h5: str
+    source_survey_artifact_id: str | None
     coordinate_frame: str
     camera_frame_extent: dict[str, Any]
     center_xy: tuple[float, float]
@@ -38,9 +38,9 @@ class SensorEnergyCenterProfile:
     aggregation_policy: dict[str, Any]
     per_entry_center_xy: list[tuple[float, float]]
     per_entry_mask_ids: list[str]
-    per_entry_wavelengths_nm: list[float]
-    per_entry_background_value: list[float]
-    per_entry_total_corr_energy: list[float]
+    per_entry_wavelengths_nm: list[float | None]
+    per_entry_background_value: list[float | None]
+    per_entry_total_corr_energy: list[float | None]
     per_entry_fallback_used: list[bool]
     per_wavelength_mean_center_xy: dict[str, tuple[float, float]]
     per_wavelength_center_std_xy: dict[str, tuple[float, float]]
@@ -48,19 +48,42 @@ class SensorEnergyCenterProfile:
     max_center_deviation_px: float
     camera_frame_shape: tuple[int, int] | None = None
     notes: str | None = None
+    migration: dict[str, Any] | None = None
+    source_schema_version: int = 2
+    legacy_source_survey_h5: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SensorEnergyCenterProfile":
-        from tasks.artifact_versioning import read_schema_version
-
-        read_schema_version(
-            data,
-            "sensor_energy_center_profile",
-            legacy_mode=True,
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        legacy_mode: bool = False,
+    ) -> "SensorEnergyCenterProfile":
+        from tasks.artifacts.derived_manifest_adapters import (
+            parse_derived_manifest_mapping,
         )
+
+        return parse_derived_manifest_mapping(
+            "sensor_energy_center_profile",
+            mapping=data,
+            legacy_mode=legacy_mode,
+        )
+
+    @classmethod
+    def _from_validated_mapping(
+        cls,
+        data: dict[str, Any],
+        *,
+        source_schema_version: int,
+    ) -> "SensorEnergyCenterProfile":
+        entry_count = len(data.get("per_entry_center_xy", []))
         return cls(
             center_profile_id=_require_str(data, "center_profile_id"),
-            source_survey_h5=_require_str(data, "source_survey_h5"),
+            source_survey_artifact_id=(
+                _require_str(data, "source_survey_artifact_id")
+                if source_schema_version >= 2
+                else None
+            ),
             coordinate_frame=_require_str(data, "coordinate_frame"),
             camera_frame_extent=_require_dict(data, "camera_frame_extent"),
             center_xy=_float_pair(data.get("center_xy"), "center_xy"),
@@ -74,20 +97,21 @@ class SensorEnergyCenterProfile:
             ],
             per_entry_mask_ids=[str(x) for x in _require_list(data, "per_entry_mask_ids")],
             per_entry_wavelengths_nm=[
-                float(x) for x in _require_list(data, "per_entry_wavelengths_nm")
+                _nullable_float(x)
+                for x in _require_list(data, "per_entry_wavelengths_nm")
             ],
             per_entry_background_value=[
-                float(x)
+                _nullable_float(x)
                 for x in data.get(
                     "per_entry_background_value",
-                    [float("nan")] * len(data.get("per_entry_center_xy", [])),
+                    [None] * entry_count,
                 )
             ],
             per_entry_total_corr_energy=[
-                float(x)
+                _nullable_float(x)
                 for x in data.get(
                     "per_entry_total_corr_energy",
-                    [float("nan")] * len(data.get("per_entry_center_xy", [])),
+                    [None] * entry_count,
                 )
             ],
             per_entry_fallback_used=[
@@ -115,14 +139,82 @@ class SensorEnergyCenterProfile:
                 if data.get("camera_frame_shape") is not None else None
             ),
             notes=_optional_str(data.get("notes")),
+            migration=(
+                _require_dict(data, "migration")
+                if data.get("migration") is not None
+                else None
+            ),
+            source_schema_version=source_schema_version,
+            legacy_source_survey_h5=(
+                _require_str(data, "source_survey_h5")
+                if source_schema_version == 1
+                else None
+            ),
         )
+
+    def validate(self) -> None:
+        from tasks.artifacts.identity import validate_artifact_id
+
+        if self.source_schema_version not in {1, 2}:
+            raise SensorEnergyCenterError("unsupported source schema version")
+        if self.source_schema_version == 2 and not self.source_survey_artifact_id:
+            raise SensorEnergyCenterError(
+                "schema v2 requires source_survey_artifact_id"
+            )
+        if self.source_schema_version == 2:
+            validate_artifact_id(
+                self.source_survey_artifact_id,
+                "source_survey_artifact_id",
+            )
+        count = len(self.per_entry_center_xy)
+        if count < 1:
+            raise SensorEnergyCenterError("center profile requires entries")
+        for field, values in (
+            ("per_entry_mask_ids", self.per_entry_mask_ids),
+            ("per_entry_wavelengths_nm", self.per_entry_wavelengths_nm),
+            ("per_entry_background_value", self.per_entry_background_value),
+            ("per_entry_total_corr_energy", self.per_entry_total_corr_energy),
+            ("per_entry_fallback_used", self.per_entry_fallback_used),
+        ):
+            if len(values) != count:
+                raise SensorEnergyCenterError(
+                    f"{field} length must match per_entry_center_xy"
+                )
+        if self.source_schema_version == 2:
+            if any(value is None for value in self.per_entry_background_value):
+                raise SensorEnergyCenterError(
+                    "schema v2 requires known per-entry background values"
+                )
+            if any(value is None for value in self.per_entry_total_corr_energy):
+                raise SensorEnergyCenterError(
+                    "schema v2 requires known corrected-energy values"
+                )
 
     def to_dict(self) -> dict[str, Any]:
         from tasks.artifact_versioning import emit_schema_version
 
-        data = asdict(self)
-        data["artifact_type"] = "sensor_energy_center_profile"
-        emit_schema_version(data, "sensor_energy_center_profile")
+        if self.source_schema_version != 2:
+            raise SensorEnergyCenterError(
+                "compatibility-read center profile cannot be written; call "
+                "migrate_sensor_energy_center_profile_v1_to_v2()"
+            )
+        self.validate()
+        data: dict[str, Any] = {
+            "artifact_type": "sensor_energy_center_profile",
+            "center_profile_id": self.center_profile_id,
+            "source_survey_artifact_id": self.source_survey_artifact_id,
+            "coordinate_frame": self.coordinate_frame,
+            "camera_frame_extent": dict(self.camera_frame_extent),
+            "center_xy": [float(self.center_xy[0]), float(self.center_xy[1])],
+            "estimator_name": self.estimator_name,
+            "bg_policy": dict(self.bg_policy),
+            "corr_policy": dict(self.corr_policy),
+            "aggregation_policy": dict(self.aggregation_policy),
+            "per_entry_mask_ids": list(self.per_entry_mask_ids),
+            "per_entry_wavelengths_nm": list(self.per_entry_wavelengths_nm),
+            "max_center_deviation_px": float(self.max_center_deviation_px),
+            "notes": self.notes,
+        }
         data["center_xy"] = [float(self.center_xy[0]), float(self.center_xy[1])]
         data["per_entry_center_xy"] = [
             [float(x), float(y)] for x, y in self.per_entry_center_xy
@@ -153,25 +245,71 @@ class SensorEnergyCenterProfile:
                 int(self.camera_frame_shape[0]),
                 int(self.camera_frame_shape[1]),
             ]
+        if self.migration is not None:
+            data["migration"] = dict(self.migration)
+        emit_schema_version(data, "sensor_energy_center_profile")
+        from tasks.artifacts.derived_manifest_adapters import (
+            validate_current_derived_manifest_serialized,
+        )
+
+        validate_current_derived_manifest_serialized(
+            "sensor_energy_center_profile",
+            data,
+        )
         return data
 
     def to_json(self, path: str | Path | None = None) -> str:
-        text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        text = json.dumps(self.to_dict(), indent=2, sort_keys=True, allow_nan=False)
         if path is not None:
             Path(path).write_text(text + "\n", encoding="utf-8")
         return text
 
     @classmethod
     def load_json(cls, path: str | Path) -> "SensorEnergyCenterProfile":
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise SensorEnergyCenterError("center profile JSON root must be a mapping")
-        artifact_type = data.get("artifact_type")
-        if artifact_type not in {None, "sensor_energy_center_profile"}:
-            raise SensorEnergyCenterError(
-                f"expected sensor_energy_center_profile, got {artifact_type!r}"
-            )
-        return cls.from_dict(data)
+        from tasks.artifacts.validation import parse_json_mapping
+
+        return cls.from_dict(parse_json_mapping(path))
+
+
+def migrate_sensor_energy_center_profile_v1_to_v2(
+    profile: SensorEnergyCenterProfile,
+    *,
+    source_survey_artifact_id: str,
+    per_entry_background_value: list[float] | None = None,
+    per_entry_total_corr_energy: list[float] | None = None,
+) -> SensorEnergyCenterProfile:
+    if profile.source_schema_version != 1:
+        raise SensorEnergyCenterError("center migration requires schema v1")
+    backgrounds = (
+        list(per_entry_background_value)
+        if per_entry_background_value is not None
+        else list(profile.per_entry_background_value)
+    )
+    energies = (
+        list(per_entry_total_corr_energy)
+        if per_entry_total_corr_energy is not None
+        else list(profile.per_entry_total_corr_energy)
+    )
+    if any(value is None for value in backgrounds + energies):
+        raise SensorEnergyCenterError(
+            "v1 diagnostics are unknown; explicit background and corrected-energy "
+            "arrays are required for migration"
+        )
+    migrated = replace(
+        profile,
+        source_survey_artifact_id=source_survey_artifact_id,
+        per_entry_background_value=[float(value) for value in backgrounds],
+        per_entry_total_corr_energy=[float(value) for value in energies],
+        source_schema_version=2,
+        legacy_source_survey_h5=None,
+        migration={
+            "name": "sensor_energy_center_profile_v1_to_v2",
+            "source_schema_version": 1,
+            "legacy_source_reference_discarded": True,
+        },
+    )
+    migrated.validate()
+    return migrated
 
 
 @dataclass(frozen=True)
@@ -256,6 +394,7 @@ def derive_sensor_energy_center_profile(
                 "SensorEnergyCenterProfile requires FullFramePSFSurvey; "
                 "convert raw capture to survey first"
             ) from exc
+        source_survey_artifact_id = _required_h5_artifact_id(f, "survey_id")
         descriptor = source.descriptor
         try:
             resolved_domain = resolve_valid_pixel_domain(
@@ -302,7 +441,7 @@ def derive_sensor_energy_center_profile(
 
     profile = SensorEnergyCenterProfile(
         center_profile_id=str(center_profile_id),
-        source_survey_h5=str(source_path),
+        source_survey_artifact_id=source_survey_artifact_id,
         coordinate_frame=descriptor.coordinate_frame,
         camera_frame_extent=descriptor.camera_frame_extent_dict(),
         camera_frame_shape=descriptor.frame_shape,
@@ -331,7 +470,10 @@ def derive_sensor_energy_center_profile(
         notes=notes,
         per_entry_center_xy=[(float(x), float(y)) for x, y in centers],
         per_entry_mask_ids=list(descriptor.mask_ids),
-        per_entry_wavelengths_nm=[float(v) for v in descriptor.entry_wavelengths_nm],
+        per_entry_wavelengths_nm=[
+            _finite_wavelength_or_none(v)
+            for v in descriptor.entry_wavelengths_nm
+        ],
         per_entry_background_value=[float(v) for v in background_values],
         per_entry_total_corr_energy=[float(v) for v in total_energy],
         per_entry_fallback_used=[bool(v) for v in fallback_used],
@@ -350,7 +492,15 @@ def validate_center_profile_for_frame_source(
     coordinate_frame: str,
     camera_frame_extent: dict[str, Any],
     frame_shape: tuple[int, int] | None = None,
+    source_survey_artifact_id: str | None = None,
 ) -> None:
+    if (
+        source_survey_artifact_id is not None
+        and profile.source_survey_artifact_id != source_survey_artifact_id
+    ):
+        raise SensorEnergyCenterError(
+            "center profile source survey artifact ID does not match analyzed data"
+        )
     actual_shape = (
         tuple(int(v) for v in frame_shape)
         if frame_shape is not None else tuple(int(v) for v in (profile.camera_frame_shape or (0, 0)))
@@ -453,6 +603,28 @@ def _require_list(data: dict[str, Any], key: str) -> list[Any]:
     if not isinstance(value, list):
         raise SensorEnergyCenterError(f"{key} must be a list")
     return value
+
+
+def _nullable_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _finite_wavelength_or_none(value: Any) -> float | None:
+    number = float(value)
+    return number if np.isfinite(number) else None
+
+
+def _required_h5_artifact_id(src: h5py.File, attribute: str) -> str:
+    value = src.attrs.get(attribute)
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    if not isinstance(value, str) or not value.strip():
+        raise SensorEnergyCenterError(
+            f"source survey is missing required {attribute} artifact identity"
+        )
+    return value.strip()
 
 
 def _float_pair(value: Any, name: str) -> tuple[float, float]:

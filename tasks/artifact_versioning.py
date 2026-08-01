@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-"""Central schema-version registry for measured artifacts.
+"""Independent manifest, HDF5 payload, and bundle version registries.
 
-This module is the single source of truth for artifact ``schema_version`` values
-and their read compatibility windows. Artifact modules import the light-weight
+The manifest registry is the source of truth for JSON ``schema_version`` values
+and their read compatibility windows. Payload and bundle versions use separate
+axes and must not be passed to ``read_schema_version``. Artifact modules import the light-weight
 ``emit_schema_version`` / ``read_schema_version`` helpers so that every serialized
 artifact carries a round-trippable ``schema_version``. Local structural
 validation lives in :mod:`tasks.artifacts.validation`; compatibility re-exports
@@ -49,20 +50,21 @@ class OlderSchemaVersionError(SchemaCompatibilityError):
         self.min_readable = min_readable
 
 
-# Current schema version emitted when writing each artifact type.
-CURRENT_SCHEMA_VERSIONS: dict[str, int] = {
+# Canonical JSON manifest version axis.  Container/payload and bundle versions
+# are deliberately independent: a manifest revision must never redefine HDF5
+# layout or bundle-envelope semantics.
+CURRENT_MANIFEST_SCHEMA_VERSIONS: dict[str, int] = {
     "camera_profile": 2,
     "pupil_profile": 2,
-    "peak_layout_profile": 1,
-    "full_frame_psf_survey": 1,
-    "peak_patch_psf_dictionary": 1,
-    "sensor_energy_center_profile": 1,
-    "peak_support_analysis_report": 1,
-    "raw_capture": 2,
+    "peak_layout_profile": 2,
+    "full_frame_psf_survey": 2,
+    "peak_patch_psf_dictionary": 2,
+    "sensor_energy_center_profile": 2,
+    "peak_support_analysis_report": 2,
 }
 
 # Oldest schema version this codebase can still read for each artifact type.
-MIN_READABLE_SCHEMA_VERSIONS: dict[str, int] = {
+MIN_READABLE_MANIFEST_SCHEMA_VERSIONS: dict[str, int] = {
     "camera_profile": 1,
     "pupil_profile": 1,
     "peak_layout_profile": 1,
@@ -70,8 +72,22 @@ MIN_READABLE_SCHEMA_VERSIONS: dict[str, int] = {
     "peak_patch_psf_dictionary": 1,
     "sensor_energy_center_profile": 1,
     "peak_support_analysis_report": 1,
-    "raw_capture": 2,
 }
+
+CURRENT_PAYLOAD_SCHEMA_VERSIONS: dict[str, int] = {
+    "raw_capture": 2,
+    "full_frame_psf_survey": 1,
+    "peak_support_analysis_report": 1,
+    "peak_patch_psf_dictionary": 1,
+}
+CURRENT_BUNDLE_SCHEMA_VERSION = 1
+
+# Compatibility names for callers that deal specifically with JSON manifests.
+CURRENT_SCHEMA_VERSIONS = CURRENT_MANIFEST_SCHEMA_VERSIONS
+MIN_READABLE_SCHEMA_VERSIONS = MIN_READABLE_MANIFEST_SCHEMA_VERSIONS
+REGISTERED_ARTIFACT_TYPES = frozenset(
+    CURRENT_MANIFEST_SCHEMA_VERSIONS | CURRENT_PAYLOAD_SCHEMA_VERSIONS
+)
 
 
 @dataclass(frozen=True)
@@ -89,6 +105,15 @@ def schema_compat(artifact_type: str) -> SchemaCompat:
         current=CURRENT_SCHEMA_VERSIONS[artifact_type],
         min_readable=MIN_READABLE_SCHEMA_VERSIONS[artifact_type],
     )
+
+
+def payload_schema_version(artifact_type: str) -> int:
+    try:
+        return CURRENT_PAYLOAD_SCHEMA_VERSIONS[artifact_type]
+    except KeyError as exc:
+        raise SchemaCompatibilityError(
+            f"unknown payload artifact_type {artifact_type!r}"
+        ) from exc
 
 
 def emit_schema_version(data: dict[str, Any], artifact_type: str) -> dict[str, Any]:
@@ -159,8 +184,13 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "CURRENT_SCHEMA_VERSIONS",
+    "CURRENT_MANIFEST_SCHEMA_VERSIONS",
+    "CURRENT_PAYLOAD_SCHEMA_VERSIONS",
+    "CURRENT_BUNDLE_SCHEMA_VERSION",
     "LegacyUnversionedArtifactError",
     "MIN_READABLE_SCHEMA_VERSIONS",
+    "MIN_READABLE_MANIFEST_SCHEMA_VERSIONS",
+    "REGISTERED_ARTIFACT_TYPES",
     "NewerSchemaVersionError",
     "OlderSchemaVersionError",
     "SchemaCompat",
@@ -170,5 +200,6 @@ __all__ = [
     "check_validity",
     "emit_schema_version",
     "read_schema_version",
+    "payload_schema_version",
     "schema_compat",
 ]

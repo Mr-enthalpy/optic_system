@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -38,44 +38,72 @@ class FullFramePSFSurveyError(PSFArtifactError):
 @dataclass
 class FullFramePSFSurveyManifest:
     survey_id: str
-    source_raw_capture_h5: str
+    source_raw_capture_artifact_id: str | None
     pupil_profile_id: str | None
     camera_profile_id: str | None
     illumination_mode: str
-    entry_wavelengths_nm: list[float]
+    entry_wavelengths_nm: list[float | None]
     entry_illumination_json: list[str]
     entry_mask_ids: list[str]
-    unique_wavelengths_nm: list[float]
+    unique_wavelengths_nm: list[float | None]
     unique_mask_ids: list[str]
     frame_shape: tuple[int, int]
     camera_frame_extent: dict[str, Any]
     survey_policy: dict[str, Any]
     full_frame_role: str = "scout"
     notes: str | None = None
+    migration: dict[str, Any] | None = None
+    source_schema_version: int = 2
+    legacy_source_raw_capture_h5: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FullFramePSFSurveyManifest:
-        from tasks.artifact_versioning import read_schema_version
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        legacy_mode: bool = False,
+    ) -> FullFramePSFSurveyManifest:
+        from tasks.artifacts.derived_manifest_adapters import (
+            parse_derived_manifest_mapping,
+        )
 
-        read_schema_version(data, "full_frame_psf_survey", legacy_mode=True)
+        return parse_derived_manifest_mapping(
+            "full_frame_psf_survey",
+            data,
+            legacy_mode=legacy_mode,
+        )
+
+    @classmethod
+    def _from_validated_mapping(
+        cls,
+        data: dict[str, Any],
+        *,
+        source_schema_version: int,
+    ) -> FullFramePSFSurveyManifest:
         frame_shape = data.get("frame_shape")
         if not isinstance(frame_shape, (list, tuple)) or len(frame_shape) != 2:
             raise FullFramePSFSurveyError("frame_shape must contain [H, W]")
         return cls(
             survey_id=_require_str(data, "survey_id"),
-            source_raw_capture_h5=_require_str(data, "source_raw_capture_h5"),
+            source_raw_capture_artifact_id=(
+                _require_str(data, "source_raw_capture_artifact_id")
+                if source_schema_version >= 2
+                else None
+            ),
             pupil_profile_id=_optional_str(data.get("pupil_profile_id")),
             camera_profile_id=_optional_str(data.get("camera_profile_id")),
             illumination_mode=_require_str(data, "illumination_mode"),
             entry_wavelengths_nm=[
-                float(v) for v in _require_list(data, "entry_wavelengths_nm")
+                None if v is None else float(v)
+                for v in _require_list(data, "entry_wavelengths_nm")
             ],
             entry_illumination_json=[
                 str(v) for v in data.get("entry_illumination_json", [])
             ],
             entry_mask_ids=[str(v) for v in _require_list(data, "entry_mask_ids")],
             unique_wavelengths_nm=[
-                float(v) for v in _require_list(data, "unique_wavelengths_nm")
+                None if v is None else float(v)
+                for v in _require_list(data, "unique_wavelengths_nm")
             ],
             unique_mask_ids=[str(v) for v in _require_list(data, "unique_mask_ids")],
             frame_shape=(int(frame_shape[0]), int(frame_shape[1])),
@@ -83,34 +111,130 @@ class FullFramePSFSurveyManifest:
             survey_policy=_require_dict(data, "survey_policy"),
             full_frame_role=_require_str(data, "full_frame_role"),
             notes=_optional_str(data.get("notes")),
+            migration=(
+                _require_dict(data, "migration")
+                if data.get("migration") is not None
+                else None
+            ),
+            source_schema_version=source_schema_version,
+            legacy_source_raw_capture_h5=(
+                _require_str(data, "source_raw_capture_h5")
+                if source_schema_version == 1
+                else None
+            ),
         )
+
+    def validate(self) -> None:
+        from tasks.artifacts.identity import validate_artifact_id
+
+        if self.source_schema_version not in {1, 2}:
+            raise FullFramePSFSurveyError("unsupported source schema version")
+        if self.source_schema_version == 2 and not self.source_raw_capture_artifact_id:
+            raise FullFramePSFSurveyError(
+                "schema v2 requires source_raw_capture_artifact_id"
+            )
+        if self.source_schema_version == 2:
+            validate_artifact_id(
+                self.source_raw_capture_artifact_id,
+                "source_raw_capture_artifact_id",
+            )
+        entry_count = len(self.entry_mask_ids)
+        if entry_count < 1:
+            raise FullFramePSFSurveyError("survey manifest requires entries")
+        checked_fields = [("entry_wavelengths_nm", self.entry_wavelengths_nm)]
+        if self.source_schema_version == 2:
+            checked_fields.append(
+                ("entry_illumination_json", self.entry_illumination_json)
+            )
+        for field, values in checked_fields:
+            if len(values) != entry_count:
+                raise FullFramePSFSurveyError(
+                    f"{field} length must match entry_mask_ids"
+                )
+        if self.full_frame_role != "scout":
+            raise FullFramePSFSurveyError("full_frame_role must equal scout")
+        if len(self.frame_shape) != 2 or min(self.frame_shape) <= 0:
+            raise FullFramePSFSurveyError("frame_shape must be positive [H, W]")
 
     def to_dict(self) -> dict[str, Any]:
         from tasks.artifact_versioning import emit_schema_version
 
-        data = asdict(self)
-        data["artifact_type"] = "full_frame_psf_survey"
-        data["frame_shape"] = list(self.frame_shape)
+        if self.source_schema_version != 2:
+            raise FullFramePSFSurveyError(
+                "compatibility-read survey cannot be written; call "
+                "migrate_full_frame_psf_survey_v1_to_v2()"
+            )
+        self.validate()
+        data: dict[str, Any] = {
+            "artifact_type": "full_frame_psf_survey",
+            "survey_id": self.survey_id,
+            "source_raw_capture_artifact_id": self.source_raw_capture_artifact_id,
+            "pupil_profile_id": self.pupil_profile_id,
+            "camera_profile_id": self.camera_profile_id,
+            "illumination_mode": self.illumination_mode,
+            "entry_wavelengths_nm": list(self.entry_wavelengths_nm),
+            "entry_illumination_json": list(self.entry_illumination_json),
+            "entry_mask_ids": list(self.entry_mask_ids),
+            "unique_wavelengths_nm": list(self.unique_wavelengths_nm),
+            "unique_mask_ids": list(self.unique_mask_ids),
+            "frame_shape": list(self.frame_shape),
+            "camera_frame_extent": dict(self.camera_frame_extent),
+            "survey_policy": dict(self.survey_policy),
+            "full_frame_role": self.full_frame_role,
+            "notes": self.notes,
+        }
+        if self.migration is not None:
+            data["migration"] = dict(self.migration)
         emit_schema_version(data, "full_frame_psf_survey")
+        from tasks.artifacts.derived_manifest_adapters import (
+            validate_current_derived_manifest_serialized,
+        )
+
+        validate_current_derived_manifest_serialized(
+            "full_frame_psf_survey",
+            data,
+        )
         return data
 
     def to_json(self, path: str | Path | None = None) -> str:
-        text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        text = json.dumps(self.to_dict(), indent=2, sort_keys=True, allow_nan=False)
         if path is not None:
             Path(path).write_text(text + "\n", encoding="utf-8")
         return text
 
     @classmethod
     def load_json(cls, path: str | Path) -> FullFramePSFSurveyManifest:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise FullFramePSFSurveyError("manifest JSON root must be a mapping")
-        return cls.from_dict(data)
+        from tasks.artifacts.validation import parse_json_mapping
+
+        return cls.from_dict(parse_json_mapping(path))
+
+
+def migrate_full_frame_psf_survey_v1_to_v2(
+    manifest: FullFramePSFSurveyManifest,
+    *,
+    source_raw_capture_artifact_id: str,
+) -> FullFramePSFSurveyManifest:
+    if manifest.source_schema_version != 1:
+        raise FullFramePSFSurveyError("survey migration requires schema v1")
+    migrated = replace(
+        manifest,
+        source_raw_capture_artifact_id=source_raw_capture_artifact_id,
+        source_schema_version=2,
+        legacy_source_raw_capture_h5=None,
+        migration={
+            "name": "full_frame_psf_survey_v1_to_v2",
+            "source_schema_version": 1,
+            "legacy_source_reference_discarded": True,
+        },
+    )
+    migrated.validate()
+    return migrated
 
 
 def build_full_frame_psf_survey(
     *,
     source_raw_capture_h5: str | Path,
+    source_raw_capture_artifact_id: str,
     output_h5: str | Path,
     survey_id: str | None = None,
     manifest_path: str | Path | None = None,
@@ -225,7 +349,7 @@ def build_full_frame_psf_survey(
 
             manifest = FullFramePSFSurveyManifest(
                 survey_id=str(survey_id),
-                source_raw_capture_h5=str(source_path),
+                source_raw_capture_artifact_id=source_raw_capture_artifact_id,
                 pupil_profile_id=pupil_profile_id,
                 camera_profile_id=camera_profile_id,
                 illumination_mode=illum_mode,
@@ -246,6 +370,7 @@ def build_full_frame_psf_survey(
                 },
                 notes=notes,
             )
+            manifest.validate()
         except PSFArtifactError as exc:
             raise FullFramePSFSurveyError(str(exc)) from exc
         except ValueError as exc:
@@ -279,8 +404,16 @@ def _write_survey_h5(
 ) -> None:
     string_dtype = h5_string_dtype()
     with h5py.File(output_path, "w") as dst:
+        from tasks.artifact_versioning import payload_schema_version, schema_compat
+
         dst.attrs["artifact_type"] = "full_frame_psf_survey"
         dst.attrs["survey_id"] = manifest.survey_id
+        dst.attrs["manifest_schema_version"] = schema_compat(
+            "full_frame_psf_survey"
+        ).current
+        dst.attrs["payload_schema_version"] = payload_schema_version(
+            "full_frame_psf_survey"
+        )
         grp = dst.require_group("full_frame_survey")
         frames = grp.create_dataset(
             "frames_avg",
@@ -332,7 +465,10 @@ def _write_survey_h5(
         profiles.create_dataset("pupil_profile_id", data=manifest.pupil_profile_id or "")
         profiles.create_dataset("camera_profile_id", data=manifest.camera_profile_id or "")
         source = dst.require_group("source")
-        source.create_dataset("raw_capture_h5", data=manifest.source_raw_capture_h5)
+        source.create_dataset(
+            "raw_capture_artifact_id",
+            data=manifest.source_raw_capture_artifact_id,
+        )
         source.create_dataset("plan_json", data=source_plan_json)
 
 

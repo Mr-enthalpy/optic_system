@@ -29,7 +29,9 @@ payloads. A representative future manifest is:
 {
   "artifact_id": "survey_20260712_001",
   "artifact_type": "full_frame_psf_survey",
-  "schema_version": 1,
+  "bundle_schema_version": 1,
+  "manifest_schema_version": 2,
+  "payload_schema_version": 1,
   "payloads": {
     "data": {
       "rel_path": "survey.h5",
@@ -54,11 +56,13 @@ types fail closed until those validators are implemented.
 ## References And Legacy Paths
 
 Future `ArtifactRef` values identify dependencies by artifact type, artifact
-ID, and schema version only. A separate `ArtifactLocation` record owns
-`storage_root` plus `rel_path`. Task-local legacy fields such as
-`source_raw_capture_h5`, `source_survey_h5`, and `peak_layout_profile` remain
-readable during migration, but they are not portable catalog references and
-must not be copied into catalog records.
+ID, and manifest schema version only. A separate `ArtifactLocation` record
+owns `storage_root` plus `rel_path`. Task-local legacy fields such as
+`source_raw_capture_h5`, `source_survey_h5`, and `peak_layout_profile` are
+readable only through exact schema-v1 adapters. Current schema-v2 manifests use
+artifact IDs. Explicit migrations discard the old location after the caller
+supplies the dependency identity; a legacy path is never promoted into a
+catalog reference.
 
 There is no automatic lookup by artifact ID in the current task APIs. Callers
 continue to pass explicit paths or objects until a catalog contract is added.

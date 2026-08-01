@@ -147,7 +147,7 @@ def test_check_validity_requires_artifact_type(tmp_path: Path):
     assert any("artifact_type is required" in error for error in result.errors)
 
 
-@pytest.mark.parametrize("artifact_type", ["raw_capture", "peak_support_analysis_report"])
+@pytest.mark.parametrize("artifact_type", ["raw_capture"])
 def test_check_validity_fails_closed_without_implemented_validator(
     tmp_path: Path,
     artifact_type: str,
@@ -161,12 +161,12 @@ def test_check_validity_fails_closed_without_implemented_validator(
     assert any("validator_not_implemented" in error for error in result.errors)
 
 
-def test_check_validity_fails_closed_for_json_loader_without_validate(
+def test_check_validity_uses_registered_derived_manifest_adapter(
     tmp_path: Path,
 ):
     manifest = FullFramePSFSurveyManifest(
         survey_id="survey_001",
-        source_raw_capture_h5="raw_capture.h5",
+        source_raw_capture_artifact_id="raw_capture_001",
         pupil_profile_id=None,
         camera_profile_id=None,
         illumination_mode="monochromatic",
@@ -189,5 +189,5 @@ def test_check_validity_fails_closed_for_json_loader_without_validate(
 
     result = check_validity("full_frame_psf_survey", path)
 
-    assert not result.ok
-    assert any("validator_not_implemented" in error for error in result.errors)
+    assert result.ok
+    assert result.schema_version == 2

@@ -231,11 +231,10 @@ them. Do not invent final schemas for external repositories inside
 ### Target data lifecycle: storage config and artifact versioning
 
 This section describes the target data-lifecycle architecture. The storage
-configuration and schema registry exist now, but a catalog, artifact bundles,
-and migration of legacy manifest path fields do not. Existing artifacts may
-still contain task-local source paths such as `source_raw_capture_h5`; those
-fields are not catalog locations and must not be treated as portable storage
-references.
+configuration and schema registry exist now, but a catalog and artifact
+bundles do not. Schema-v1 compatibility readers retain task-local source paths
+only as legacy migration input. Current schema-v2 measured manifests persist
+artifact IDs and never copy those paths into canonical provenance.
 
 Storage-location config layer (`tasks/storage_config.py`):
 
@@ -252,9 +251,11 @@ Storage-location config layer (`tasks/storage_config.py`):
 
 Artifact schema versioning (`tasks/artifact_versioning.py`):
 
-- `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` are the single
-  source of truth for each artifact type's version and read-compatibility
-  window.
+- `CURRENT_MANIFEST_SCHEMA_VERSIONS`, `CURRENT_PAYLOAD_SCHEMA_VERSIONS`, and
+  `CURRENT_BUNDLE_SCHEMA_VERSION` are independent version axes. The manifest
+  registry and its minimum-readable registry are the source of truth for JSON
+  compatibility; payload versions describe HDF5/container layout and the
+  bundle version describes only the envelope.
 - Every new serialized artifact emits a round-trippable integer
   `schema_version` via `emit_schema_version`. Strict reads reject a missing
   version as `legacy_unversioned`; compatibility loaders opt into legacy mode
@@ -289,9 +290,16 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   `import_camera_profile_yaml()` and `import_pupil_profile_yaml()` write a new
   canonical schema-v2 JSON artifact. Catalog validation never treats the YAML
   source as an eligible profile artifact.
-- Other measured manifests remain schema v1 until their version-specific
-  adapters, portable provenance references, and migrations are introduced in
-  the next schema layer.
+- Survey, sensor-center, peak-layout, support-report, and peak-patch dictionary
+  manifests use schema v2. Their exact v1 adapters retain historical path
+  fields, while v2 uses `*_artifact_id` references. Compatibility-read objects
+  cannot be written by current writers; each explicit v1-to-v2 migration
+  requires the caller to supply identities and any facts that cannot be
+  recovered. In particular, missing center diagnostics remain unknown and
+  dictionary extent compatibility is never synthesized.
+- Survey, support-report, and dictionary HDF5 writers record both
+  `manifest_schema_version` and `payload_schema_version`. A later HDF5 adapter
+  can evolve payload validation without redefining the JSON manifest contract.
 
 The planned bundle and catalog-location contract is documented in
 [`artifact_bundle_design.md`](artifact_bundle_design.md). It is design work,

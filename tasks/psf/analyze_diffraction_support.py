@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,7 @@ class DiffractionSupportAnalysisError(ValueError):
 @dataclass
 class PeakSupportAnalysisManifest:
     report_id: str
-    source_survey_h5: str
+    source_survey_artifact_id: str | None
     frame_shape: tuple[int, int]
     coordinate_frame: str
     camera_frame_extent: dict[str, Any]
@@ -67,22 +67,33 @@ class PeakSupportAnalysisManifest:
     radial_policy: dict[str, Any]
     component_policy: dict[str, Any]
     entry_mask_ids: list[str]
-    entry_wavelengths_nm: list[float]
+    entry_wavelengths_nm: list[float | None]
     notes: str | None = None
     valid_pixel_domain: dict[str, Any] | None = None
+    migration: dict[str, Any] | None = None
+    source_schema_version: int = 2
+    legacy_source_survey_h5: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PeakSupportAnalysisManifest":
-        from tasks.artifact_versioning import read_schema_version
+    def from_dict(
+        cls, data: dict[str, Any], *, legacy_mode: bool = False
+    ) -> "PeakSupportAnalysisManifest":
+        from tasks.artifacts.derived_manifest_adapters import parse_derived_manifest_mapping
 
-        read_schema_version(
-            data,
-            "peak_support_analysis_report",
-            legacy_mode=True,
+        return parse_derived_manifest_mapping(
+            "peak_support_analysis_report", data, legacy_mode=legacy_mode
         )
+
+    @classmethod
+    def _from_validated_mapping(
+        cls, data: dict[str, Any], *, source_schema_version: int
+    ) -> "PeakSupportAnalysisManifest":
         return cls(
             report_id=str(data["report_id"]),
-            source_survey_h5=str(data["source_survey_h5"]),
+            source_survey_artifact_id=(
+                str(data["source_survey_artifact_id"])
+                if source_schema_version >= 2 else None
+            ),
             frame_shape=_int_pair(data["frame_shape"], "frame_shape"),
             coordinate_frame=str(data["coordinate_frame"]),
             camera_frame_extent=dict(data.get("camera_frame_extent") or {}),
@@ -93,25 +104,101 @@ class PeakSupportAnalysisManifest:
             radial_policy=dict(data["radial_policy"]),
             component_policy=dict(data["component_policy"]),
             entry_mask_ids=[str(x) for x in data["entry_mask_ids"]],
-            entry_wavelengths_nm=[float(x) for x in data["entry_wavelengths_nm"]],
+            entry_wavelengths_nm=[
+                None if x is None else float(x)
+                for x in data["entry_wavelengths_nm"]
+            ],
             notes=data.get("notes"),
             valid_pixel_domain=(
                 dict(data["valid_pixel_domain"])
                 if data.get("valid_pixel_domain") is not None else None
             ),
+            migration=(dict(data["migration"]) if data.get("migration") is not None else None),
+            source_schema_version=source_schema_version,
+            legacy_source_survey_h5=(
+                str(data["source_survey_h5"])
+                if source_schema_version == 1 else None
+            ),
         )
+
+    def validate(self) -> None:
+        from tasks.artifacts.identity import validate_artifact_id
+
+        if self.source_schema_version not in {1, 2}:
+            raise DiffractionSupportAnalysisError("unsupported source schema version")
+        if self.source_schema_version == 2 and not self.source_survey_artifact_id:
+            raise DiffractionSupportAnalysisError(
+                "schema v2 requires source_survey_artifact_id"
+            )
+        if self.source_schema_version == 2:
+            validate_artifact_id(
+                self.source_survey_artifact_id,
+                "source_survey_artifact_id",
+            )
+        if len(self.frame_shape) != 2 or min(self.frame_shape) <= 0:
+            raise DiffractionSupportAnalysisError("frame_shape must be positive [H, W]")
+        if len(self.entry_mask_ids) != len(self.entry_wavelengths_nm):
+            raise DiffractionSupportAnalysisError(
+                "entry wavelength count must match entry mask count"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         from tasks.artifact_versioning import emit_schema_version
 
-        out = asdict(self)
-        out["artifact_type"] = "peak_support_analysis_report"
+        if self.source_schema_version != 2:
+            raise DiffractionSupportAnalysisError(
+                "compatibility-read report cannot be written; call "
+                "migrate_peak_support_analysis_report_v1_to_v2()"
+            )
+        self.validate()
+        out = {
+            "artifact_type": "peak_support_analysis_report",
+            "report_id": self.report_id,
+            "source_survey_artifact_id": self.source_survey_artifact_id,
+            "frame_shape": [int(self.frame_shape[0]), int(self.frame_shape[1])],
+            "coordinate_frame": self.coordinate_frame,
+            "camera_frame_extent": dict(self.camera_frame_extent),
+            "tau_values": list(self.tau_values),
+            "support_radii": list(self.support_radii),
+            "bg_policy": dict(self.bg_policy),
+            "corr_policy": dict(self.corr_policy),
+            "radial_policy": dict(self.radial_policy),
+            "component_policy": dict(self.component_policy),
+            "entry_mask_ids": list(self.entry_mask_ids),
+            "entry_wavelengths_nm": list(self.entry_wavelengths_nm),
+            "notes": self.notes,
+            "valid_pixel_domain": self.valid_pixel_domain,
+        }
+        if self.migration is not None:
+            out["migration"] = dict(self.migration)
         emit_schema_version(out, "peak_support_analysis_report")
-        out["frame_shape"] = [int(self.frame_shape[0]), int(self.frame_shape[1])]
+        from tasks.artifacts.derived_manifest_adapters import validate_current_derived_manifest_serialized
+
+        validate_current_derived_manifest_serialized("peak_support_analysis_report", out)
         return out
 
     def to_json_text(self) -> str:
-        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True, allow_nan=False)
+
+
+def migrate_peak_support_analysis_report_v1_to_v2(
+    manifest: PeakSupportAnalysisManifest, *, source_survey_artifact_id: str
+) -> PeakSupportAnalysisManifest:
+    if manifest.source_schema_version != 1:
+        raise DiffractionSupportAnalysisError("support report migration requires schema v1")
+    migrated = replace(
+        manifest,
+        source_survey_artifact_id=source_survey_artifact_id,
+        source_schema_version=2,
+        legacy_source_survey_h5=None,
+        migration={
+            "name": "peak_support_analysis_report_v1_to_v2",
+            "source_schema_version": 1,
+            "legacy_source_reference_discarded": True,
+        },
+    )
+    migrated.validate()
+    return migrated
 
 
 @dataclass
@@ -190,6 +277,7 @@ def analyze_diffraction_support(
     component_rows: list[dict[str, Any]] = []
     with h5py.File(str(source_path), "r") as source_file:
         frames, survey = _open_survey_frame_source(source_file)
+        source_survey_artifact_id = _required_survey_artifact_id(source_file)
         if center_profile_obj is not None:
             try:
                 validate_center_profile_for_frame_source(
@@ -197,6 +285,7 @@ def analyze_diffraction_support(
                     coordinate_frame=survey.coordinate_frame,
                     camera_frame_extent=survey.camera_frame_extent,
                     frame_shape=survey.frame_shape,
+                    source_survey_artifact_id=source_survey_artifact_id,
                 )
             except SensorEnergyCenterError as exc:
                 raise DiffractionSupportAnalysisError(str(exc)) from exc
@@ -275,7 +364,7 @@ def analyze_diffraction_support(
 
     manifest = PeakSupportAnalysisManifest(
         report_id=report_id or out_path.with_suffix("").name,
-        source_survey_h5=str(source_path),
+        source_survey_artifact_id=source_survey_artifact_id,
         frame_shape=survey.frame_shape,
         coordinate_frame=survey.coordinate_frame,
         camera_frame_extent=survey.camera_frame_extent,
@@ -312,12 +401,13 @@ def analyze_diffraction_support(
         notes=notes,
         valid_pixel_domain=valid_pixel_domain_record,
     )
+    manifest.validate()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     _write_report_h5(
         out_path,
         manifest=manifest,
-        source_survey_h5=str(source_path),
+        source_survey_artifact_id=source_survey_artifact_id,
         tau_values=tau,
         support_radii=radii,
         background=background,
@@ -642,7 +732,7 @@ def _write_report_h5(
     path: Path,
     *,
     manifest: PeakSupportAnalysisManifest,
-    source_survey_h5: str,
+    source_survey_artifact_id: str,
     tau_values: list[float],
     support_radii: list[float],
     background: np.ndarray,
@@ -659,6 +749,16 @@ def _write_report_h5(
 ) -> None:
     string_dtype = h5py.string_dtype(encoding="utf-8")
     with h5py.File(str(path), "w") as f:
+        from tasks.artifact_versioning import payload_schema_version, schema_compat
+
+        f.attrs["artifact_type"] = "peak_support_analysis_report"
+        f.attrs["report_id"] = manifest.report_id
+        f.attrs["manifest_schema_version"] = schema_compat(
+            "peak_support_analysis_report"
+        ).current
+        f.attrs["payload_schema_version"] = payload_schema_version(
+            "peak_support_analysis_report"
+        )
         support = f.require_group("support_analysis")
         support.create_dataset("tau_values", data=np.asarray(tau_values, dtype=np.float64))
         support.create_dataset("support_radii", data=np.asarray(support_radii, dtype=np.float64))
@@ -736,7 +836,20 @@ def _write_report_h5(
         metadata = f.require_group("metadata")
         metadata.create_dataset("manifest_json", data=manifest.to_json_text(), dtype=string_dtype)
         source = f.require_group("source")
-        source.create_dataset("survey_h5", data=str(source_survey_h5), dtype=string_dtype)
+        source.create_dataset(
+            "survey_artifact_id", data=source_survey_artifact_id, dtype=string_dtype
+        )
+
+
+def _required_survey_artifact_id(f: h5py.File) -> str:
+    value = f.attrs.get("survey_id")
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    if not isinstance(value, str) or not value.strip():
+        raise DiffractionSupportAnalysisError(
+            "FullFramePSFSurvey HDF5 is missing required survey_id artifact identity"
+        )
+    return value.strip()
 
 
 def _read_component_rows(report_h5: str | Path) -> list[dict[str, Any]]:

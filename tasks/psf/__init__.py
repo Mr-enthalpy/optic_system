@@ -2,11 +2,13 @@ from .build_full_frame_psf_survey import (
     FullFramePSFSurveyError,
     FullFramePSFSurveyManifest,
     build_full_frame_psf_survey,
+    migrate_full_frame_psf_survey_v1_to_v2,
 )
 from .build_peak_patch_psf_dictionary import (
     PeakPatchPSFDictionaryError,
     PeakPatchPSFDictionaryManifest,
     build_peak_patch_psf_dictionary,
+    migrate_peak_patch_psf_dictionary_v1_to_v2,
 )
 from .bad_pixel_correction import (
     BadPixelCorrectionError,
@@ -20,11 +22,13 @@ from .derive_peak_layout_profile import (
     PeakLayoutProfileError,
     PeakLayoutProfileManifest,
     derive_peak_layout_profile,
+    migrate_peak_layout_profile_v1_to_v2,
 )
 from .analyze_diffraction_support import (
     DiffractionSupportAnalysisError,
     PeakSupportAnalysisManifest,
     analyze_diffraction_support,
+    migrate_peak_support_analysis_report_v1_to_v2,
 )
 from .publish_measured_evidence_handoff import (
     MeasuredEvidenceHandoffError,
@@ -40,6 +44,7 @@ from .sensor_energy_center import (
     SensorEnergyCenterProfile,
     derive_sensor_energy_center_profile,
     estimate_frame_energy_center,
+    migrate_sensor_energy_center_profile_v1_to_v2,
     validate_center_profile_for_frame_source,
 )
 
@@ -65,6 +70,11 @@ __all__ = [
     "derive_peak_layout_profile",
     "derive_sensor_energy_center_profile",
     "estimate_frame_energy_center",
+    "migrate_full_frame_psf_survey_v1_to_v2",
+    "migrate_peak_layout_profile_v1_to_v2",
+    "migrate_peak_patch_psf_dictionary_v1_to_v2",
+    "migrate_peak_support_analysis_report_v1_to_v2",
+    "migrate_sensor_energy_center_profile_v1_to_v2",
     "publish_measured_evidence_handoff",
     "render_peak_patch_dense_view",
     "validate_broadband_pupil_scan_dependencies",

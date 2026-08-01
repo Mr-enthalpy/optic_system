@@ -21,6 +21,7 @@ def main() -> int:
     )
     parser.add_argument("source_raw_capture_h5")
     parser.add_argument("output_h5")
+    parser.add_argument("--source-raw-capture-artifact-id", required=True)
     parser.add_argument("--survey-id")
     parser.add_argument("--manifest-path")
     parser.add_argument("--pupil-profile-manifest")
@@ -36,6 +37,7 @@ def main() -> int:
 
     build_full_frame_psf_survey(
         source_raw_capture_h5=args.source_raw_capture_h5,
+        source_raw_capture_artifact_id=args.source_raw_capture_artifact_id,
         output_h5=args.output_h5,
         survey_id=args.survey_id,
         manifest_path=args.manifest_path,

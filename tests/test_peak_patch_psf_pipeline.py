@@ -38,7 +38,9 @@ def _center_profile_path(
 ) -> Path:
     profile = SensorEnergyCenterProfile(
         center_profile_id="center_v1",
-        source_survey_h5=str(survey_path),
+        source_survey_artifact_id=(
+            "survey_v1" if survey_path.name != "raw_capture.h5" else "raw_test"
+        ),
         coordinate_frame="sensor_full_frame",
         camera_frame_extent={
             "mode": "full_sensor",
@@ -189,6 +191,7 @@ def _survey_and_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
     survey_path = tmp_path / "survey.h5"
     build_full_frame_psf_survey(
         source_raw_capture_h5=raw_path,
+        source_raw_capture_artifact_id="raw_capture_test",
         output_h5=survey_path,
         survey_id="survey_v1",
         pupil_profile_manifest=pupil_manifest,
@@ -215,6 +218,7 @@ def test_builds_full_frame_survey_as_scout_artifact(tmp_path: Path) -> None:
 
     manifest = build_full_frame_psf_survey(
         source_raw_capture_h5=raw_path,
+        source_raw_capture_artifact_id="raw_capture_test",
         output_h5=survey_path,
         survey_id="survey_v1",
         pupil_profile_manifest=pupil_manifest,
@@ -225,6 +229,8 @@ def test_builds_full_frame_survey_as_scout_artifact(tmp_path: Path) -> None:
     assert manifest.entry_mask_ids == ["mask_a", "mask_a", "mask_b", "mask_b"]
     assert manifest.unique_wavelengths_nm == [450.0, 550.0]
     with h5py.File(survey_path, "r") as f:
+        assert f.attrs["manifest_schema_version"] == 2
+        assert f.attrs["payload_schema_version"] == 1
         assert f["full_frame_survey/frames_avg"].shape == (4, 20, 20)
         raw_illumination = f["full_frame_survey/entry_illumination_json"][0]
         illumination = json.loads(
@@ -253,6 +259,7 @@ def test_full_frame_survey_defaults_to_confirmed_full_sensor(tmp_path: Path) -> 
     with pytest.raises(FullFramePSFSurveyError, match="full-sensor"):
         build_full_frame_psf_survey(
             source_raw_capture_h5=raw_path,
+            source_raw_capture_artifact_id="raw_capture_test",
             output_h5=tmp_path / "survey.h5",
             pupil_profile_manifest=pupil_manifest,
             camera_profile_manifest=camera_manifest,
@@ -319,6 +326,7 @@ def test_builds_peak_patch_dictionary_from_raw_capture_and_layout(tmp_path: Path
 
     manifest = build_peak_patch_psf_dictionary(
         source_raw_capture_h5=raw_path,
+        source_raw_capture_artifact_id="raw_capture_test",
         peak_layout_profile=layout_path,
         output_h5=dictionary_path,
         dictionary_id="peak_patch_dict_v1",
@@ -330,13 +338,15 @@ def test_builds_peak_patch_dictionary_from_raw_capture_and_layout(tmp_path: Path
     assert manifest.entry_wavelengths_nm == [450.0, 550.0, 450.0, 550.0]
     assert manifest.unique_mask_ids == ["mask_a", "mask_b"]
     with h5py.File(dictionary_path, "r") as f:
+        assert f.attrs["manifest_schema_version"] == 2
+        assert f.attrs["payload_schema_version"] == 1
         assert f["peak_patch_dictionary/patches"].shape == (4, 2, 5, 5)
         assert f["peak_patch_dictionary/patches"].dtype == np.float32
         assert "psf_dictionary/frames_avg" not in f
         assert list(f["peak_patch_dictionary/entry_capture_indices"][3]) == [3]
         assert f["peak_patch_dictionary/patch_origin_xy"].shape == (2, 2)
         assert _h5_str(f["peak_patch_dictionary/coordinate_frame"]) == "sensor_full_frame"
-        assert _h5_str(f["source/peak_layout_profile"]) == str(layout_path)
+        assert _h5_str(f["source/peak_layout_artifact_id"]) == "peak_layout_v1"
 
 
 def test_peak_patch_dictionary_rejects_profile_missing_raw_wavelength(tmp_path: Path) -> None:
@@ -346,6 +356,7 @@ def test_peak_patch_dictionary_rejects_profile_missing_raw_wavelength(tmp_path: 
     with pytest.raises(PeakPatchPSFDictionaryError, match="550"):
         build_peak_patch_psf_dictionary(
             source_raw_capture_h5=raw_path,
+            source_raw_capture_artifact_id="raw_capture_test",
             peak_layout_profile=layout_path,
             output_h5=tmp_path / "peak_patch_dictionary.h5",
             pupil_profile_manifest=pupil_manifest,
@@ -369,6 +380,7 @@ def test_peak_patch_dictionary_rejects_camera_frame_extent_mismatch(tmp_path: Pa
     with pytest.raises(PeakPatchPSFDictionaryError, match="full-sensor"):
         build_peak_patch_psf_dictionary(
             source_raw_capture_h5=raw_path,
+            source_raw_capture_artifact_id="raw_capture_test",
             peak_layout_profile=layout_path,
             output_h5=tmp_path / "peak_patch_dictionary.h5",
             pupil_profile_manifest=pupil_manifest,
@@ -382,6 +394,7 @@ def test_publishes_peak_patch_measured_evidence_handoff(tmp_path: Path) -> None:
     dictionary_path = tmp_path / "peak_patch_dictionary.h5"
     build_peak_patch_psf_dictionary(
         source_raw_capture_h5=raw_path,
+        source_raw_capture_artifact_id="raw_capture_test",
         peak_layout_profile=layout_path,
         output_h5=dictionary_path,
         pupil_profile_manifest=pupil_manifest,
@@ -401,7 +414,7 @@ def test_publishes_peak_patch_measured_evidence_handoff(tmp_path: Path) -> None:
         assert f["peak_table/patch_origin_xy"].shape == (2, 2)
         assert _h5_str(f["peak_table/coordinate_frame"]) == "sensor_full_frame"
         assert list(f["entries/wavelength_nm"][:]) == [450.0, 550.0, 450.0, 550.0]
-        assert _h5_str(f["source/raw_capture_h5"]) == str(raw_path)
+        assert _h5_str(f["source/raw_capture_artifact_id"]) == "raw_capture_test"
         assert _h5_str(f["source/dictionary_h5"]) == str(dictionary_path)
         assert f["exports/dense_diagnostic/psf_dense"].shape == (4, 20, 20)
         metadata = json.loads(_h5_str(f["metadata_json"]))

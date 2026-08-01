@@ -66,6 +66,7 @@ def _write_survey(
     extent = extent or _extent((h, w))
     string_dtype = h5py.string_dtype(encoding="utf-8")
     with h5py.File(str(path), "w") as f:
+        f.attrs["survey_id"] = "synthetic_survey"
         g = f.require_group("full_frame_survey")
         g.create_dataset("frames_avg", data=arr)
         g.create_dataset("entry_mask_ids", data=np.asarray(mask_ids, dtype=object), dtype=string_dtype)
@@ -120,7 +121,7 @@ def _center_profile(
 ) -> Path:
     profile = SensorEnergyCenterProfile(
         center_profile_id="center_profile_v1",
-        source_survey_h5=str(source_survey_h5),
+        source_survey_artifact_id="synthetic_survey",
         coordinate_frame="sensor_full_frame",
         camera_frame_extent=camera_frame_extent or _extent(frame_shape),
         camera_frame_shape=frame_shape,
