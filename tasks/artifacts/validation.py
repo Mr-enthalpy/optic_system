@@ -2,29 +2,29 @@ from __future__ import annotations
 
 """Representation-independent local artifact validation.
 
-Representation readers own probing, parsing, and serialized identity
-extraction. Schema contracts own one exact artifact identity. The orchestrator
-only composes those two registries; it contains no JSON/HDF5/bundle dispatch
-branches.
+Readers own probing, resource lifetime, parsing, and identity extraction.
+Schema contracts own one exact identity. The orchestrator only composes those
+two frozen registries and never tells a reader which identity it should find.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 import json
-import math
 from pathlib import Path
 import re
 from types import MappingProxyType
 from typing import Any
 
-from tasks.artifact_versioning import (
-    LegacyUnversionedArtifactError,
-    NewerSchemaVersionError,
-    OlderSchemaVersionError,
-    SchemaCompatibilityError,
-)
+from tasks.artifact_versioning import CURRENT_SCHEMA_VERSIONS
+
+
+_ARTIFACT_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
+_KNOWN_ARTIFACT_TYPES = frozenset(CURRENT_SCHEMA_VERSIONS)
 
 
 class ArtifactRepresentation(str, Enum):
@@ -43,8 +43,6 @@ class ValidityOutcome(str, Enum):
 
 
 class SemanticValidationMode(str, Enum):
-    """Closed semantic-ownership modes supported by schema contracts."""
-
     EXPLICIT = "explicit"
     LEGACY_LOADER = "legacy_loader"
 
@@ -52,6 +50,13 @@ class SemanticValidationMode(str, Enum):
 class AdditionalFieldsPolicy(str, Enum):
     FORBID = "forbid"
     IGNORE = "ignore"
+
+
+class ProbeOutcome(str, Enum):
+    NO_MATCH = "no_match"
+    MATCH = "match"
+    UNREADABLE = "unreadable"
+    UNSUPPORTED_LIMIT = "unsupported_limit"
 
 
 @dataclass(frozen=True)
@@ -83,11 +88,70 @@ class ArtifactIdentity:
     representation: ArtifactRepresentation
     versions: ArtifactVersionSet
 
+    def __post_init__(self) -> None:
+        _require_artifact_type(self.artifact_type)
+        if not isinstance(self.representation, ArtifactRepresentation):
+            raise ValueError("identity representation must be ArtifactRepresentation")
+        if not isinstance(self.versions, ArtifactVersionSet):
+            raise ValueError("identity versions must be ArtifactVersionSet")
+        manifest, payload, bundle = self.versions.values()
+        if self.representation is ArtifactRepresentation.JSON:
+            valid_shape = manifest is not None and payload is None and bundle is None
+        elif self.representation is ArtifactRepresentation.HDF5:
+            valid_shape = payload is not None and bundle is None
+        else:
+            valid_shape = bundle is not None
+        if not valid_shape:
+            raise ValueError(
+                "version axes are inconsistent with artifact representation"
+            )
+
 
 @dataclass(frozen=True)
 class ParsedRepresentation:
     identity: ArtifactIdentity
     document: Any
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    outcome: ProbeOutcome
+    reason_code: str | None = None
+    message: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.outcome, ProbeOutcome):
+            raise ValueError("probe outcome must be ProbeOutcome")
+        needs_diagnostic = self.outcome in {
+            ProbeOutcome.UNREADABLE,
+            ProbeOutcome.UNSUPPORTED_LIMIT,
+        }
+        if needs_diagnostic:
+            if self.reason_code is None or self.message is None:
+                raise ValueError("terminal probe outcome requires diagnostics")
+            _require_reason_code(self.reason_code)
+        elif self.reason_code is not None or self.message is not None:
+            raise ValueError("match/no-match probe cannot carry diagnostics")
+
+    @classmethod
+    def no_match(cls) -> ProbeResult:
+        return cls(ProbeOutcome.NO_MATCH)
+
+    @classmethod
+    def match(cls) -> ProbeResult:
+        return cls(ProbeOutcome.MATCH)
+
+
+@dataclass(frozen=True)
+class OpenedRepresentation:
+    """A probed resource kept alive until schema validation completes."""
+
+    representation: ArtifactRepresentation
+    probe: ProbeResult
+    parse_representation: Callable[[], ParsedRepresentation]
+
+    def parse(self) -> ParsedRepresentation:
+        return self.parse_representation()
 
 
 @dataclass(frozen=True)
@@ -103,6 +167,18 @@ class ValidityResult:
     warnings: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        _require_artifact_type(self.artifact_type)
+        if not isinstance(self.outcome, ValidityOutcome):
+            raise ValueError("outcome must be ValidityOutcome")
+        if self.representation is not None and not isinstance(
+            self.representation,
+            ArtifactRepresentation,
+        ):
+            raise ValueError("representation must be ArtifactRepresentation or None")
+        if not isinstance(self.versions, ArtifactVersionSet):
+            raise ValueError("versions must be ArtifactVersionSet")
+        for reason_code in self.reason_codes:
+            _require_reason_code(reason_code)
         object.__setattr__(
             self,
             "errors",
@@ -113,8 +189,6 @@ class ValidityResult:
             "warnings",
             tuple(_sanitize_result_message(value) for value in self.warnings),
         )
-        if not isinstance(self.outcome, ValidityOutcome):
-            raise ValueError("outcome must be ValidityOutcome")
         if self.outcome is ValidityOutcome.VALID:
             if self.reason_codes or self.errors:
                 raise ValueError("VALID result cannot contain reason codes or errors")
@@ -144,26 +218,25 @@ class ValidityResult:
 
     @property
     def schema_version(self) -> int | None:
-        """Compatibility view for callers that predate the version set."""
-        if self.versions.manifest is not None:
-            return self.versions.manifest
-        if self.versions.payload is not None:
-            return self.versions.payload
-        return self.versions.bundle
+        """Compatibility scalar, valid only when zero or one axis is populated."""
+        return _unambiguous_schema_version(self.versions)
 
 
 class ArtifactValidationError(ValueError):
-    """Expected failure carrying stable outcome and reason-code classification."""
-
     outcome = ValidityOutcome.INVALID
 
     def __init__(self, reason_code: str, message: str) -> None:
+        _require_reason_code(reason_code)
         super().__init__(message)
         self.reason_code = reason_code
         self.message = message
 
 
 class SerializedSchemaError(ArtifactValidationError):
+    pass
+
+
+class ConstructionValidationError(ArtifactValidationError):
     pass
 
 
@@ -180,19 +253,26 @@ class UnsupportedRepresentationError(ArtifactValidationError):
 
 
 class ReaderLimitError(ArtifactValidationError):
-    """The local reader deliberately does not support this resource scale."""
-
     outcome = ValidityOutcome.UNSUPPORTED
+
+
+class LegacyUnversionedValidationError(ArtifactValidationError):
+    outcome = ValidityOutcome.LEGACY_UNVERSIONED
+
+
+class ValidatorFailureError(ArtifactValidationError):
+    outcome = ValidityOutcome.VALIDATOR_FAILED
 
 
 SerializedValidator = Callable[[Any], None]
 ArtifactConstructor = Callable[[Any], Any]
 SemanticValidator = Callable[[Any], None]
+LegacyErrorTranslator = Callable[[Exception], ConstructionValidationError | None]
 
 
 @dataclass(frozen=True)
 class SchemaAdapter:
-    """One exact serialized contract with an explicit semantic validator."""
+    """One closed serialized contract with three stage-specific callbacks."""
 
     artifact_type: str
     representation: ArtifactRepresentation
@@ -202,7 +282,6 @@ class SchemaAdapter:
     required_fields: frozenset[str] = frozenset()
     validate_serialized: SerializedValidator | None = None
     validate_semantics: SemanticValidator | None = None
-    contract_error_types: tuple[type[Exception], ...] = ()
     additional_fields_policy: AdditionalFieldsPolicy = AdditionalFieldsPolicy.FORBID
 
     @property
@@ -210,12 +289,20 @@ class SchemaAdapter:
         return (self.artifact_type, self.representation, self.versions)
 
     @property
+    def identity(self) -> ArtifactIdentity:
+        return ArtifactIdentity(
+            self.artifact_type,
+            self.representation,
+            self.versions,
+        )
+
+    @property
     def semantic_mode(self) -> SemanticValidationMode:
         return SemanticValidationMode.EXPLICIT
 
     @property
     def schema_version(self) -> int | None:
-        return _single_schema_version(self.representation, self.versions)
+        return _unambiguous_schema_version(self.versions)
 
     def parse_and_validate(
         self,
@@ -223,42 +310,40 @@ class SchemaAdapter:
         *,
         identity: ArtifactIdentity | None = None,
     ) -> Any:
-        """Invoke each configured engine stage once over a parsed document."""
-        resolved_identity = identity or _identity_from_mapping(
-            document,
-            self.representation,
-        )
-        expected = ArtifactIdentity(
-            self.artifact_type,
-            self.representation,
-            self.versions,
-        )
-        if resolved_identity != expected:
+        resolved_identity = identity or _identity_from_json_mapping(document)
+        if resolved_identity != self.identity:
             raise SerializedSchemaError(
                 "schema.identity.mismatch",
                 "serialized identity does not match schema adapter identity",
             )
-        try:
-            _validate_document_fields(self, document)
-            if self.validate_serialized is not None:
-                self.validate_serialized(document)
-            artifact = self.construct(document)
-            if self.validate_semantics is None:
-                raise RuntimeError("exact adapter lacks its semantic validator")
-            self.validate_semantics(artifact)
-            return artifact
-        except ArtifactValidationError:
-            raise
-        except self.contract_error_types as exc:
-            raise SemanticValidationError(
-                "schema.semantic.invalid",
-                _safe_message(exc, "artifact violates its semantic contract"),
-            ) from exc
+        _validate_document_fields(self, document)
+        if self.validate_serialized is not None:
+            _invoke_typed_stage(
+                "serialized",
+                self.validate_serialized,
+                document,
+                SerializedSchemaError,
+            )
+        artifact = _invoke_typed_stage(
+            "construction",
+            self.construct,
+            document,
+            ConstructionValidationError,
+        )
+        if self.validate_semantics is None:
+            raise RuntimeError("exact adapter lacks its semantic validator")
+        _invoke_typed_stage(
+            "semantic",
+            self.validate_semantics,
+            artifact,
+            SemanticValidationError,
+        )
+        return artifact
 
 
 @dataclass(frozen=True)
 class LegacyCompatibilityBridge:
-    """Historical load-and-validate callback with explicitly non-exact internals."""
+    """Read-only bridge for one historical composite loader."""
 
     artifact_type: str
     representation: ArtifactRepresentation
@@ -267,7 +352,7 @@ class LegacyCompatibilityBridge:
     allowed_fields: frozenset[str] | None = None
     required_fields: frozenset[str] = frozenset()
     validate_serialized: SerializedValidator | None = None
-    contract_error_types: tuple[type[Exception], ...] = ()
+    translate_error: LegacyErrorTranslator | None = None
     additional_fields_policy: AdditionalFieldsPolicy = AdditionalFieldsPolicy.IGNORE
 
     @property
@@ -275,12 +360,20 @@ class LegacyCompatibilityBridge:
         return (self.artifact_type, self.representation, self.versions)
 
     @property
+    def identity(self) -> ArtifactIdentity:
+        return ArtifactIdentity(
+            self.artifact_type,
+            self.representation,
+            self.versions,
+        )
+
+    @property
     def semantic_mode(self) -> SemanticValidationMode:
         return SemanticValidationMode.LEGACY_LOADER
 
     @property
     def schema_version(self) -> int | None:
-        return _single_schema_version(self.representation, self.versions)
+        return _unambiguous_schema_version(self.versions)
 
     def parse_and_validate(
         self,
@@ -288,32 +381,40 @@ class LegacyCompatibilityBridge:
         *,
         identity: ArtifactIdentity | None = None,
     ) -> Any:
-        resolved_identity = identity or _identity_from_mapping(
-            document,
-            self.representation,
-        )
-        expected = ArtifactIdentity(
-            self.artifact_type,
-            self.representation,
-            self.versions,
-        )
-        if resolved_identity != expected:
+        resolved_identity = identity or _identity_from_json_mapping(document)
+        if resolved_identity != self.identity:
             raise SerializedSchemaError(
                 "schema.identity.mismatch",
                 "serialized identity does not match compatibility bridge identity",
             )
+        _validate_document_fields(self, document)
+        if self.validate_serialized is not None:
+            _invoke_typed_stage(
+                "serialized",
+                self.validate_serialized,
+                document,
+                SerializedSchemaError,
+            )
         try:
-            _validate_document_fields(self, document)
-            if self.validate_serialized is not None:
-                self.validate_serialized(document)
             return self.load_and_validate(document)
-        except ArtifactValidationError:
+        except ConstructionValidationError:
             raise
-        except self.contract_error_types as exc:
-            raise SemanticValidationError(
-                "schema.semantic.invalid",
-                _safe_message(exc, "artifact violates its historical contract"),
+        except ArtifactValidationError as exc:
+            raise ValidatorFailureError(
+                "validator.stage_contract_violation",
+                "legacy loader raised a validation error for the wrong stage",
             ) from exc
+        except Exception as exc:
+            if self.translate_error is not None:
+                translated = self.translate_error(exc)
+                if translated is not None:
+                    if not isinstance(translated, ConstructionValidationError):
+                        raise ValidatorFailureError(
+                            "validator.translator_contract_violation",
+                            "legacy error translator returned the wrong error type",
+                        ) from exc
+                    raise translated from exc
+            raise
 
 
 SchemaContract = SchemaAdapter | LegacyCompatibilityBridge
@@ -321,8 +422,6 @@ AdapterKey = tuple[str, ArtifactRepresentation, ArtifactVersionSet]
 
 
 class SchemaAdapterRegistry:
-    """Mutable only during deterministic bootstrap, then read-only."""
-
     def __init__(self) -> None:
         self._adapters: dict[AdapterKey, SchemaContract] = {}
         self._frozen = False
@@ -334,6 +433,10 @@ class SchemaAdapterRegistry:
     @property
     def adapters(self) -> Mapping[AdapterKey, SchemaContract]:
         return MappingProxyType(self._adapters)
+
+    @property
+    def artifact_types(self) -> frozenset[str]:
+        return frozenset(adapter.artifact_type for adapter in self._adapters.values())
 
     def register(self, adapter: SchemaContract) -> None:
         if self._frozen:
@@ -374,13 +477,13 @@ def register_legacy_compatibility_bridge(
 def get_schema_adapter(
     artifact_type: str,
     representation: ArtifactRepresentation,
-    versions: ArtifactVersionSet | int,
+    versions: ArtifactVersionSet,
     *,
     registry: SchemaAdapterRegistry | None = None,
 ) -> SchemaContract | None:
-    registry = registry or _get_builtin_schema_registry()
-    if type(versions) is int:
-        versions = _version_set_for_representation(representation, versions)
+    if not isinstance(versions, ArtifactVersionSet):
+        raise TypeError("versions must be ArtifactVersionSet")
+    registry = registry or _BUILTIN_SCHEMA_ADAPTERS
     return registry.get((artifact_type, representation, versions))
 
 
@@ -388,17 +491,14 @@ class RepresentationReader(ABC):
     representation: ArtifactRepresentation
 
     @abstractmethod
-    def detect(self, path: Path) -> bool:
-        """Return whether this reader owns the serialized location."""
-
-    @abstractmethod
-    def parse(self, path: Path, expected_artifact_type: str) -> ParsedRepresentation:
-        """Parse representation data and extract its complete identity."""
+    def open(
+        self,
+        path: Path,
+    ) -> AbstractContextManager[OpenedRepresentation]:
+        """Open once, probe, and retain the resource through validation."""
 
 
 class RepresentationReaderRegistry:
-    """Ordered reader registry, mutable only until bootstrap is frozen."""
-
     def __init__(self) -> None:
         self._readers: list[RepresentationReader] = []
         self._frozen = False
@@ -428,11 +528,54 @@ class RepresentationReaderRegistry:
             )
         self._readers.append(reader)
 
-    def detect(self, path: Path) -> RepresentationReader | None:
-        for reader in self._readers:
-            if reader.detect(path):
-                return reader
-        return None
+    @contextmanager
+    def open(self, path: Path) -> Iterator[OpenedRepresentation]:
+        with ExitStack() as stack:
+            opened = [
+                stack.enter_context(reader.open(path)) for reader in self._readers
+            ]
+            for reader, candidate in zip(self._readers, opened, strict=True):
+                if candidate.representation is not reader.representation:
+                    raise ValidatorFailureError(
+                        "validator.reader_contract_violation",
+                        "reader returned a different representation",
+                    )
+            unreadable = [
+                item for item in opened if item.probe.outcome is ProbeOutcome.UNREADABLE
+            ]
+            if unreadable:
+                item = unreadable[0]
+                raise RepresentationUnreadableError(
+                    item.probe.reason_code or "representation.probe_unreadable",
+                    item.probe.message
+                    or "representation probe could not read location",
+                )
+            limited = [
+                item
+                for item in opened
+                if item.probe.outcome is ProbeOutcome.UNSUPPORTED_LIMIT
+            ]
+            if limited:
+                item = limited[0]
+                raise ReaderLimitError(
+                    item.probe.reason_code or "reader_limit.representation_probe",
+                    item.probe.message or "representation probe exceeded reader limits",
+                )
+            matches = [
+                item for item in opened if item.probe.outcome is ProbeOutcome.MATCH
+            ]
+            if not matches:
+                raise UnsupportedRepresentationError(
+                    "representation.reader_not_registered",
+                    "validator_not_implemented: no representation reader recognized "
+                    "the artifact location",
+                )
+            if len(matches) > 1:
+                raise RepresentationUnreadableError(
+                    "representation.probe_ambiguous",
+                    "multiple representation readers matched the artifact location",
+                )
+            yield matches[0]
 
     def freeze(self) -> None:
         self._frozen = True
@@ -447,8 +590,9 @@ def register_representation_reader(
 
 
 _HDF5_SIGNATURE = b"\x89HDF\r\n\x1a\n"
-_MAX_HDF5_PROBE_OFFSET = 64 * 1024 * 1024
 _MAX_JSON_INTEGER_DIGITS = 4300
+_MAX_JSON_DECIMAL_DIGITS = 4300
+_MAX_JSON_DECIMAL_EXPONENT = 1_000_000
 
 
 def _parse_json_integer(token: str) -> int:
@@ -467,12 +611,20 @@ def _parse_json_integer(token: str) -> int:
         ) from exc
 
 
-def _parse_json_float(token: str) -> float:
-    value = float(token)
-    if not math.isfinite(value):
+def _parse_json_decimal(token: str) -> Decimal:
+    try:
+        value = Decimal(token)
+    except InvalidOperation as exc:
+        raise RepresentationUnreadableError(
+            "representation.json.number_invalid",
+            "JSON decimal token is invalid",
+        ) from exc
+    digits = len(value.as_tuple().digits)
+    exponent = value.as_tuple().exponent
+    if digits > _MAX_JSON_DECIMAL_DIGITS or abs(exponent) > _MAX_JSON_DECIMAL_EXPONENT:
         raise ReaderLimitError(
-            "reader_limit.json_float_range",
-            "JSON number is outside the finite binary64 range",
+            "reader_limit.json_decimal_range",
+            "JSON decimal literal exceeds this reader's token limits",
         )
     return value
 
@@ -496,25 +648,12 @@ def _reject_duplicate_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def parse_json_mapping(path: str | Path) -> dict[str, Any]:
-    artifact_path = Path(path)
-    try:
-        text = artifact_path.read_text(encoding="utf-8")
-    except UnicodeError as exc:
-        raise RepresentationUnreadableError(
-            "representation.json.not_utf8",
-            "artifact JSON is not valid UTF-8",
-        ) from exc
-    except OSError as exc:
-        raise RepresentationUnreadableError(
-            "location.unreadable",
-            "artifact location could not be read",
-        ) from exc
+def parse_json_text_mapping(text: str) -> dict[str, Any]:
     try:
         value = json.loads(
             text,
             parse_int=_parse_json_integer,
-            parse_float=_parse_json_float,
+            parse_float=_parse_json_decimal,
             parse_constant=_reject_json_constant,
             object_pairs_hook=_reject_duplicate_pairs,
         )
@@ -538,44 +677,161 @@ def parse_json_mapping(path: str | Path) -> dict[str, Any]:
     return value
 
 
-class _HDF5ProbeReader(RepresentationReader):
-    """Recognize HDF5 locations until a payload reader is registered."""
+def _parse_json_stream(stream: Any) -> ParsedRepresentation:
+    try:
+        stream.seek(0)
+        raw = stream.read()
+    except OSError as exc:
+        raise RepresentationUnreadableError(
+            "location.unreadable",
+            "artifact location could not be read",
+        ) from exc
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeError as exc:
+        raise RepresentationUnreadableError(
+            "representation.json.not_utf8",
+            "artifact JSON is not valid UTF-8",
+        ) from exc
+    mapping = parse_json_text_mapping(text)
+    return ParsedRepresentation(_identity_from_json_mapping(mapping), mapping)
 
+
+def parse_json_mapping(path: str | Path) -> dict[str, Any]:
+    reader = _JSONRepresentationReader()
+    with reader.open(Path(path)) as opened:
+        if opened.probe.outcome is ProbeOutcome.UNREADABLE:
+            raise RepresentationUnreadableError(
+                opened.probe.reason_code or "location.unreadable",
+                opened.probe.message or "artifact location could not be read",
+            )
+        if opened.probe.outcome is not ProbeOutcome.MATCH:
+            raise RepresentationUnreadableError(
+                "representation.json.not_detected",
+                "artifact location is not a JSON object representation",
+            )
+        parsed = opened.parse()
+        return parsed.document
+
+
+def _unsupported_hdf_parse() -> ParsedRepresentation:
+    raise UnsupportedRepresentationError(
+        "representation.adapter_not_registered",
+        "HDF5 representation reader is not implemented",
+    )
+
+
+class _HDF5ProbeReader(RepresentationReader):
     representation = ArtifactRepresentation.HDF5
 
-    def detect(self, path: Path) -> bool:
+    @contextmanager
+    def open(self, path: Path) -> Iterator[OpenedRepresentation]:
         if not path.is_file():
-            return False
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.no_match(),
+                _unsupported_hdf_parse,
+            )
+            return
         try:
-            size = path.stat().st_size
-            with path.open("rb") as stream:
+            stream = path.open("rb")
+        except OSError:
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult(
+                    ProbeOutcome.UNREADABLE,
+                    "representation.hdf5.probe_unreadable",
+                    "HDF5 probe could not read artifact location",
+                ),
+                _unsupported_hdf_parse,
+            )
+            return
+        with stream:
+            try:
+                stream.seek(0, 2)
+                size = stream.tell()
                 offset = 0
-                while offset <= size and offset <= _MAX_HDF5_PROBE_OFFSET:
+                matched = False
+                while offset <= size:
                     stream.seek(offset)
                     if stream.read(len(_HDF5_SIGNATURE)) == _HDF5_SIGNATURE:
-                        return True
+                        matched = True
+                        break
                     offset = 512 if offset == 0 else offset * 2
-        except OSError:
-            return False
-        return False
-
-    def parse(self, path: Path, expected_artifact_type: str) -> ParsedRepresentation:
-        raise UnsupportedRepresentationError(
-            "representation.adapter_not_registered",
-            "HDF5 representation reader is not implemented",
-        )
+                stream.seek(0)
+            except OSError:
+                yield OpenedRepresentation(
+                    self.representation,
+                    ProbeResult(
+                        ProbeOutcome.UNREADABLE,
+                        "representation.hdf5.probe_unreadable",
+                        "HDF5 probe could not read artifact location",
+                    ),
+                    _unsupported_hdf_parse,
+                )
+                return
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match() if matched else ProbeResult.no_match(),
+                _unsupported_hdf_parse,
+            )
 
 
 class _JSONRepresentationReader(RepresentationReader):
     representation = ArtifactRepresentation.JSON
 
-    def detect(self, path: Path) -> bool:
-        return path.is_file()
+    @contextmanager
+    def open(self, path: Path) -> Iterator[OpenedRepresentation]:
+        if not path.is_file():
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.no_match(),
+                lambda: _raise_not_detected_json(),
+            )
+            return
+        try:
+            stream = path.open("rb")
+        except OSError:
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult(
+                    ProbeOutcome.UNREADABLE,
+                    "representation.json.probe_unreadable",
+                    "JSON probe could not read artifact location",
+                ),
+                lambda: _raise_not_detected_json(),
+            )
+            return
+        with stream:
+            try:
+                prefix = stream.read(4096)
+                stream.seek(0)
+            except OSError:
+                yield OpenedRepresentation(
+                    self.representation,
+                    ProbeResult(
+                        ProbeOutcome.UNREADABLE,
+                        "representation.json.probe_unreadable",
+                        "JSON probe could not read artifact location",
+                    ),
+                    lambda: _raise_not_detected_json(),
+                )
+                return
+            if prefix.startswith(b"\xef\xbb\xbf"):
+                prefix = prefix[3:]
+            matches = prefix.lstrip().startswith(b"{")
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match() if matches else ProbeResult.no_match(),
+                lambda: _parse_json_stream(stream),
+            )
 
-    def parse(self, path: Path, expected_artifact_type: str) -> ParsedRepresentation:
-        mapping = parse_json_mapping(path)
-        identity = _identity_from_mapping(mapping, self.representation)
-        return ParsedRepresentation(identity, mapping)
+
+def _raise_not_detected_json() -> ParsedRepresentation:
+    raise UnsupportedRepresentationError(
+        "representation.json.not_detected",
+        "artifact location is not a JSON object representation",
+    )
 
 
 def build_default_representation_reader_registry() -> RepresentationReaderRegistry:
@@ -587,16 +843,15 @@ def build_default_representation_reader_registry() -> RepresentationReaderRegist
 
 
 _BUILTIN_REPRESENTATION_READERS = build_default_representation_reader_registry()
-_BUILTIN_SCHEMA_ADAPTERS: SchemaAdapterRegistry | None = None
+_BUILTIN_SCHEMA_ADAPTERS: SchemaAdapterRegistry
 
 
-def _get_builtin_schema_registry() -> SchemaAdapterRegistry:
+def _bootstrap_builtin_validation() -> None:
+    """Build and freeze the built-in catalog at import time, failing fast."""
     global _BUILTIN_SCHEMA_ADAPTERS
-    if _BUILTIN_SCHEMA_ADAPTERS is None:
-        from .adapter_catalog import build_builtin_schema_registry
+    from .adapter_catalog import build_builtin_schema_registry
 
-        _BUILTIN_SCHEMA_ADAPTERS = build_builtin_schema_registry()
-    return _BUILTIN_SCHEMA_ADAPTERS
+    _BUILTIN_SCHEMA_ADAPTERS = build_builtin_schema_registry()
 
 
 def check_validity(
@@ -606,19 +861,14 @@ def check_validity(
     adapter_registry: SchemaAdapterRegistry | None = None,
     reader_registry: RepresentationReaderRegistry | None = None,
 ) -> ValidityResult:
-    """Validate by composing one representation reader and one exact contract."""
-    if (
-        not isinstance(artifact_type, str)
-        or not artifact_type
-        or artifact_type != artifact_type.strip()
-    ):
+    """Compose one independently identifying reader and one exact contract."""
+    if not _is_artifact_type(artifact_type):
         return _result(
-            str(artifact_type),
+            "unknown",
             ValidityOutcome.UNSUPPORTED,
-            reason_codes=("artifact_type.unknown",),
-            errors=("unknown artifact_type",),
+            reason_codes=("artifact_type.invalid",),
+            errors=("artifact_type must be a canonical identifier",),
         )
-
     artifact_path = Path(path)
     if not artifact_path.exists():
         return _result(
@@ -628,84 +878,41 @@ def check_validity(
             errors=("artifact location does not exist",),
         )
 
-    adapters = adapter_registry or _get_builtin_schema_registry()
+    adapters = adapter_registry or _BUILTIN_SCHEMA_ADAPTERS
     readers = reader_registry or _BUILTIN_REPRESENTATION_READERS
     representation: ArtifactRepresentation | None = None
     versions = ArtifactVersionSet()
     try:
-        if not any(
-            adapter.artifact_type == artifact_type for adapter in adapters.values()
-        ):
-            raise UnsupportedRepresentationError(
-                "artifact_type.unknown",
-                "validator_not_implemented: no schema contract is registered "
-                "for this artifact type",
-            )
-        reader = readers.detect(artifact_path)
-        if reader is None:
-            raise UnsupportedRepresentationError(
-                "representation.reader_not_registered",
-                "no representation reader recognized the artifact location",
-            )
-        representation = reader.representation
-        parsed = reader.parse(artifact_path, artifact_type)
-        if parsed.identity.representation is not representation:
-            raise SerializedSchemaError(
-                "schema.identity.mismatch",
-                "reader returned an identity for a different representation",
-            )
-        versions = parsed.identity.versions
-        if parsed.identity.artifact_type != artifact_type:
-            raise SerializedSchemaError(
-                "schema.artifact_type.mismatch",
-                f"artifact_type mismatch: expected {artifact_type!r}, "
-                f"found {parsed.identity.artifact_type!r}",
-            )
-        adapter = adapters.get((artifact_type, representation, versions))
-        if adapter is None:
-            raise _missing_adapter_error(
+        with readers.open(artifact_path) as opened:
+            representation = opened.representation
+            parsed = opened.parse()
+            if parsed.identity.representation is not representation:
+                raise ValidatorFailureError(
+                    "validator.reader_contract_violation",
+                    "reader returned an identity for a different representation",
+                )
+            versions = parsed.identity.versions
+            if parsed.identity.artifact_type != artifact_type:
+                raise SerializedSchemaError(
+                    "schema.artifact_type.mismatch",
+                    f"artifact_type mismatch: expected {artifact_type!r}, "
+                    f"found {parsed.identity.artifact_type!r}",
+                )
+            adapter = adapters.get((artifact_type, representation, versions))
+            if adapter is None:
+                raise _missing_adapter_error(
+                    artifact_type,
+                    representation,
+                    versions,
+                    adapters,
+                )
+            adapter.parse_and_validate(parsed.document, identity=parsed.identity)
+            return _result(
                 artifact_type,
-                representation,
-                versions,
-                adapters,
+                ValidityOutcome.VALID,
+                representation=representation,
+                versions=versions,
             )
-        adapter.parse_and_validate(parsed.document, identity=parsed.identity)
-        return _result(
-            artifact_type,
-            ValidityOutcome.VALID,
-            representation=representation,
-            versions=versions,
-        )
-    except LegacyUnversionedArtifactError:
-        return _result(
-            artifact_type,
-            ValidityOutcome.LEGACY_UNVERSIONED,
-            representation=representation,
-            reason_codes=("schema.version.missing",),
-            errors=("legacy_unversioned: serialized artifact lacks schema version",),
-        )
-    except (NewerSchemaVersionError, OlderSchemaVersionError) as exc:
-        return _result(
-            artifact_type,
-            ValidityOutcome.UNSUPPORTED,
-            representation=representation,
-            versions=_version_set_for_representation(representation, exc.version),
-            reason_codes=(
-                "schema.version.newer"
-                if isinstance(exc, NewerSchemaVersionError)
-                else "schema.version.older",
-            ),
-            errors=(_safe_message(exc, "schema version is outside the readable window"),),
-        )
-    except SchemaCompatibilityError as exc:
-        return _result(
-            artifact_type,
-            ValidityOutcome.INVALID,
-            representation=representation,
-            versions=versions,
-            reason_codes=("schema.version.invalid",),
-            errors=(_safe_message(exc, "schema version is invalid"),),
-        )
     except ArtifactValidationError as exc:
         return _result(
             artifact_type,
@@ -747,17 +954,26 @@ def _result(
     )
 
 
+def _invoke_typed_stage(
+    stage: str,
+    callback: Callable[[Any], Any],
+    value: Any,
+    expected_error: type[ArtifactValidationError],
+) -> Any:
+    try:
+        return callback(value)
+    except expected_error:
+        raise
+    except ArtifactValidationError as exc:
+        raise ValidatorFailureError(
+            "validator.stage_contract_violation",
+            f"{stage} callback raised a validation error for the wrong stage",
+        ) from exc
+
+
 def _validate_schema_contract(adapter: SchemaContract) -> None:
-    if (
-        not isinstance(adapter.artifact_type, str)
-        or not adapter.artifact_type
-        or adapter.artifact_type != adapter.artifact_type.strip()
-    ):
-        raise ValueError("adapter artifact_type must be a canonical non-empty string")
-    if not isinstance(adapter.representation, ArtifactRepresentation):
-        raise ValueError("adapter representation must be ArtifactRepresentation")
-    if not any(version is not None for version in adapter.versions.values()):
-        raise ValueError("adapter must declare at least one schema version axis")
+    _require_artifact_type(adapter.artifact_type)
+    adapter.identity
     if type(adapter.allowed_fields) not in (frozenset, type(None)):
         raise ValueError("adapter allowed_fields must be frozenset or None")
     if type(adapter.required_fields) is not frozenset:
@@ -770,30 +986,29 @@ def _validate_schema_contract(adapter: SchemaContract) -> None:
     if not isinstance(adapter.additional_fields_policy, AdditionalFieldsPolicy):
         raise ValueError("adapter additional_fields_policy is invalid")
     if adapter.representation is ArtifactRepresentation.JSON:
-        if adapter.versions.manifest is None or any(
-            version is not None
-            for version in (adapter.versions.payload, adapter.versions.bundle)
-        ):
-            raise ValueError("JSON contracts must use only the manifest version axis")
         if adapter.allowed_fields is None:
             raise ValueError("JSON contracts must declare allowed_fields")
         identity_fields = frozenset({"artifact_type", "schema_version"})
         if not identity_fields <= adapter.required_fields:
             raise ValueError("JSON contracts must require serialized identity fields")
     if isinstance(adapter, SchemaAdapter):
+        if adapter.additional_fields_policy is not AdditionalFieldsPolicy.FORBID:
+            raise ValueError("exact schema adapter must forbid additional fields")
         if not callable(adapter.construct):
             raise ValueError("exact schema adapter construct must be callable")
         if not callable(adapter.validate_semantics):
             raise ValueError("exact schema adapter requires validate_semantics")
-    elif not callable(adapter.load_and_validate):
-        raise ValueError("legacy bridge load_and_validate must be callable")
+    else:
+        if not callable(adapter.load_and_validate):
+            raise ValueError("legacy bridge load_and_validate must be callable")
+        if adapter.translate_error is not None and not callable(
+            adapter.translate_error
+        ):
+            raise ValueError("legacy bridge translate_error must be callable")
     if adapter.validate_serialized is not None and not callable(
         adapter.validate_serialized
     ):
         raise ValueError("validate_serialized must be callable")
-    for error_type in adapter.contract_error_types:
-        if not isinstance(error_type, type) or not issubclass(error_type, Exception):
-            raise ValueError("contract_error_types must contain exception classes")
 
 
 def _validate_document_fields(adapter: SchemaContract, document: Any) -> None:
@@ -826,26 +1041,23 @@ def _validate_document_fields(adapter: SchemaContract, document: Any) -> None:
         )
 
 
-def _identity_from_mapping(
-    document: Any,
-    representation: ArtifactRepresentation,
-) -> ArtifactIdentity:
-    if representation is not ArtifactRepresentation.JSON or not isinstance(
-        document,
-        Mapping,
-    ):
+def _identity_from_json_mapping(document: Any) -> ArtifactIdentity:
+    if not isinstance(document, Mapping):
         raise SerializedSchemaError(
             "schema.identity.missing",
-            "non-JSON adapter invocation requires reader-provided identity",
+            "JSON identity requires a mapping document",
         )
     artifact_type = document.get("artifact_type")
-    if not isinstance(artifact_type, str) or not artifact_type:
+    if not _is_artifact_type(artifact_type):
         raise SerializedSchemaError(
             "schema.artifact_type.missing",
-            "artifact_type is required and must be a non-empty string",
+            "artifact_type is required and must be a canonical identifier",
         )
     if "schema_version" not in document:
-        raise LegacyUnversionedArtifactError("schema_version is required")
+        raise LegacyUnversionedValidationError(
+            "schema.version.missing",
+            "legacy_unversioned: serialized artifact lacks schema_version",
+        )
     version = document["schema_version"]
     if type(version) is not int or version < 1:
         raise SerializedSchemaError(
@@ -854,31 +1066,18 @@ def _identity_from_mapping(
         )
     return ArtifactIdentity(
         artifact_type,
-        representation,
+        ArtifactRepresentation.JSON,
         ArtifactVersionSet(manifest=version),
     )
 
 
-def _single_schema_version(
-    representation: ArtifactRepresentation,
-    versions: ArtifactVersionSet,
-) -> int | None:
-    if representation is ArtifactRepresentation.JSON:
-        return versions.manifest
-    if representation is ArtifactRepresentation.HDF5:
-        return versions.payload
-    return versions.bundle
-
-
-def _version_set_for_representation(
-    representation: ArtifactRepresentation | None,
-    version: int,
-) -> ArtifactVersionSet:
-    if representation is ArtifactRepresentation.HDF5:
-        return ArtifactVersionSet(payload=version)
-    if representation is ArtifactRepresentation.BUNDLE:
-        return ArtifactVersionSet(bundle=version)
-    return ArtifactVersionSet(manifest=version)
+def _unambiguous_schema_version(versions: ArtifactVersionSet) -> int | None:
+    populated = [version for version in versions.values() if version is not None]
+    if not populated:
+        return None
+    if len(populated) != 1:
+        raise ValueError("multi-axis identity has no unambiguous scalar schema_version")
+    return populated[0]
 
 
 def _missing_adapter_error(
@@ -887,44 +1086,77 @@ def _missing_adapter_error(
     versions: ArtifactVersionSet,
     registry: SchemaAdapterRegistry,
 ) -> UnsupportedRepresentationError:
+    known_types = _KNOWN_ARTIFACT_TYPES | registry.artifact_types
     same_type = [
-        adapter for adapter in registry.values() if adapter.artifact_type == artifact_type
+        adapter
+        for adapter in registry.values()
+        if adapter.artifact_type == artifact_type
     ]
-    if not same_type:
+    if artifact_type not in known_types:
         return UnsupportedRepresentationError(
             "artifact_type.unknown",
-            "validator_not_implemented: no schema contract is registered for "
-            "this artifact type",
+            "artifact type is not part of the known identity vocabulary",
         )
-    if not any(adapter.representation is representation for adapter in same_type):
+    if not same_type:
         return UnsupportedRepresentationError(
-            "representation.adapter_not_registered",
-            "validator_not_implemented: no schema contract is registered for "
-            "this representation",
+            "schema.adapter_not_registered",
+            "validator_not_implemented: known artifact type has no schema adapter",
         )
-    requested = _single_schema_version(representation, versions)
-    registered = [
-        _single_schema_version(adapter.representation, adapter.versions)
+    same_representation = [
+        adapter
         for adapter in same_type
         if adapter.representation is representation
     ]
-    registered = [version for version in registered if version is not None]
-    if requested is not None and registered:
-        if requested > max(registered):
-            return UnsupportedRepresentationError(
-                "schema.version.newer",
-                "schema version is newer than this reader's registered contracts",
-            )
-        if requested < min(registered):
-            return UnsupportedRepresentationError(
-                "schema.version.older",
-                "schema version is older than this reader's registered contracts",
-            )
+    if not same_representation:
+        return UnsupportedRepresentationError(
+            "representation.adapter_not_registered",
+            "validator_not_implemented: no schema adapter is registered for this "
+            "representation",
+        )
+    for axis in ("manifest", "payload", "bundle"):
+        requested = getattr(versions, axis)
+        registered = sorted(
+            {
+                value
+                for adapter in same_representation
+                if (value := getattr(adapter.versions, axis)) is not None
+            }
+        )
+        if requested is None and not registered:
+            continue
+        if requested is None or not registered:
+            suffix = "unsupported"
+        elif requested < registered[0]:
+            suffix = "older"
+        elif requested > registered[-1]:
+            suffix = "newer"
+        elif requested not in registered:
+            suffix = "unsupported"
+        else:
+            continue
+        return UnsupportedRepresentationError(
+            f"schema.{axis}_version.{suffix}",
+            f"requested {axis} version is {suffix}; no schema adapter matches "
+            "that version axis",
+        )
     return UnsupportedRepresentationError(
-        "schema.adapter_not_registered",
-        "validator_not_implemented: no schema contract is registered for this "
-        "version identity",
+        "schema.version_set.unsupported",
+        "no schema adapter is registered for this complete version identity",
     )
+
+
+def _is_artifact_type(value: Any) -> bool:
+    return isinstance(value, str) and _ARTIFACT_TYPE_RE.fullmatch(value) is not None
+
+
+def _require_artifact_type(value: Any) -> None:
+    if not _is_artifact_type(value):
+        raise ValueError("artifact_type must be a canonical identifier")
+
+
+def _require_reason_code(value: Any) -> None:
+    if not isinstance(value, str) or _REASON_CODE_RE.fullmatch(value) is None:
+        raise ValueError("reason code must use the stable dotted identifier grammar")
 
 
 def _safe_message(exc: Exception, fallback: str) -> str:
@@ -943,14 +1175,22 @@ def _sanitize_result_message(value: Any) -> str:
     )
 
 
+_bootstrap_builtin_validation()
+
+
 __all__ = [
     "AdditionalFieldsPolicy",
     "ArtifactIdentity",
     "ArtifactRepresentation",
     "ArtifactValidationError",
     "ArtifactVersionSet",
+    "ConstructionValidationError",
     "LegacyCompatibilityBridge",
+    "LegacyUnversionedValidationError",
+    "OpenedRepresentation",
     "ParsedRepresentation",
+    "ProbeOutcome",
+    "ProbeResult",
     "ReaderLimitError",
     "RepresentationReader",
     "RepresentationReaderRegistry",
@@ -960,12 +1200,14 @@ __all__ = [
     "SemanticValidationMode",
     "SerializedSchemaError",
     "UnsupportedRepresentationError",
+    "ValidatorFailureError",
     "ValidityOutcome",
     "ValidityResult",
     "build_default_representation_reader_registry",
     "check_validity",
     "get_schema_adapter",
     "parse_json_mapping",
+    "parse_json_text_mapping",
     "register_legacy_compatibility_bridge",
     "register_representation_reader",
     "register_schema_adapter",

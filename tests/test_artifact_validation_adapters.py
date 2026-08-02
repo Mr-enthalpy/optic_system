@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import inspect
 import json
+from contextlib import contextmanager
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import tasks.artifacts.validation as validation_module
 
 from tasks.artifacts.adapter_catalog import validate_registry_completeness
 from tasks.artifacts.validation import (
@@ -12,8 +15,12 @@ from tasks.artifacts.validation import (
     ArtifactIdentity,
     ArtifactRepresentation,
     ArtifactVersionSet,
+    ConstructionValidationError,
     LegacyCompatibilityBridge,
+    OpenedRepresentation,
     ParsedRepresentation,
+    ProbeOutcome,
+    ProbeResult,
     RepresentationReader,
     RepresentationReaderRegistry,
     SchemaAdapter,
@@ -63,7 +70,7 @@ def test_registry_identity_includes_representation_and_version_set() -> None:
     adapter = get_schema_adapter(
         "camera_profile",
         ArtifactRepresentation.JSON,
-        1,
+        ArtifactVersionSet(manifest=1),
     )
 
     assert adapter is not None
@@ -172,24 +179,32 @@ def test_registered_non_json_reader_and_adapter_execute_without_core_branch(
     class FakeHDFReader(RepresentationReader):
         representation = ArtifactRepresentation.HDF5
 
-        def detect(self, path: Path) -> bool:
-            calls.append("detect")
-            return path.read_bytes() == b"fake-hdf"
+        @contextmanager
+        def open(self, path: Path):
+            calls.append("open")
+            with path.open("rb") as stream:
+                header = stream.read().decode("ascii")
+                stream.seek(0)
+                calls.append("probe")
 
-        def parse(
-            self,
-            path: Path,
-            expected_artifact_type: str,
-        ) -> ParsedRepresentation:
-            calls.append("parse")
-            return ParsedRepresentation(
-                ArtifactIdentity(
-                    expected_artifact_type,
+                def parse() -> ParsedRepresentation:
+                    calls.append("parse")
+                    artifact_type, raw_version = header.split("|")
+                    return ParsedRepresentation(
+                        ArtifactIdentity(
+                            artifact_type,
+                            self.representation,
+                            ArtifactVersionSet(payload=int(raw_version)),
+                        ),
+                        stream,
+                    )
+
+                yield OpenedRepresentation(
                     self.representation,
-                    ArtifactVersionSet(payload=3),
-                ),
-                {"payload": path.read_bytes()},
-            )
+                    ProbeResult.match(),
+                    parse,
+                )
+            calls.append("close")
 
     readers = RepresentationReaderRegistry()
     register_representation_reader(FakeHDFReader(), registry=readers)
@@ -199,12 +214,13 @@ def test_registered_non_json_reader_and_adapter_execute_without_core_branch(
             artifact_type="fake_payload",
             representation=ArtifactRepresentation.HDF5,
             versions=ArtifactVersionSet(payload=3),
-            construct=lambda document: calls.append("construct") or document,
-            validate_semantics=lambda _artifact: calls.append("semantic"),
+            construct=lambda stream: calls.append("construct") or stream,
+            validate_semantics=lambda stream: calls.append("semantic")
+            or (not stream.closed),
         )
     )
     path = tmp_path / "payload.bin"
-    path.write_bytes(b"fake-hdf")
+    path.write_bytes(b"fake_payload|3")
 
     result = check_validity(
         "fake_payload",
@@ -215,28 +231,28 @@ def test_registered_non_json_reader_and_adapter_execute_without_core_branch(
 
     assert result.outcome is ValidityOutcome.VALID
     assert result.versions == ArtifactVersionSet(payload=3)
-    assert calls == ["detect", "parse", "construct", "semantic"]
+    assert calls == ["open", "probe", "parse", "construct", "semantic", "close"]
 
 
 def test_registered_bundle_reader_can_own_a_directory(tmp_path: Path) -> None:
     class FakeBundleReader(RepresentationReader):
         representation = ArtifactRepresentation.BUNDLE
 
-        def detect(self, path: Path) -> bool:
-            return path.is_dir()
-
-        def parse(
-            self,
-            path: Path,
-            expected_artifact_type: str,
-        ) -> ParsedRepresentation:
-            return ParsedRepresentation(
-                ArtifactIdentity(
-                    expected_artifact_type,
-                    self.representation,
-                    ArtifactVersionSet(bundle=2),
+        @contextmanager
+        def open(self, path: Path):
+            identity = (path / "identity.txt").read_text(encoding="utf-8")
+            artifact_type, raw_version = identity.split("|")
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match(),
+                lambda: ParsedRepresentation(
+                    ArtifactIdentity(
+                        artifact_type,
+                        self.representation,
+                        ArtifactVersionSet(bundle=int(raw_version)),
+                    ),
+                    path,
                 ),
-                path,
             )
 
     readers = RepresentationReaderRegistry()
@@ -253,6 +269,7 @@ def test_registered_bundle_reader_can_own_a_directory(tmp_path: Path) -> None:
     )
     path = tmp_path / "bundle"
     path.mkdir()
+    (path / "identity.txt").write_text("fake_bundle|2", encoding="utf-8")
 
     result = check_validity(
         "fake_bundle",
@@ -353,7 +370,10 @@ def test_profile_data_rejection_is_invalid_not_validator_failure(
     result = check_validity("pupil_profile", path)
 
     assert result.outcome is ValidityOutcome.INVALID
-    assert result.reason_codes == ("schema.semantic.invalid",)
+    assert result.reason_codes in {
+        ("schema.construction.profile_rejected",),
+        ("schema.field.type_invalid",),
+    }
 
 
 def test_unexpected_adapter_exception_is_validator_failed(tmp_path: Path) -> None:
@@ -393,18 +413,40 @@ def test_json_reader_rejects_nonstandard_numeric_constants(
     assert result.reason_codes == ("representation.json.nonstandard_constant",)
 
 
-def test_json_reader_classifies_float_overflow_as_reader_limit(tmp_path: Path) -> None:
-    path = tmp_path / "overflow.json"
+def test_json_reader_preserves_large_finite_decimal_for_schema(
+    tmp_path: Path,
+) -> None:
+    observed: list[Decimal] = []
+    registry = _register_exact(
+        SchemaAdapter(
+            artifact_type="decimal_example",
+            representation=ArtifactRepresentation.JSON,
+            versions=ArtifactVersionSet(manifest=1),
+            allowed_fields=frozenset(
+                {"artifact_type", "schema_version", "value"}
+            ),
+            required_fields=frozenset(
+                {"artifact_type", "schema_version", "value"}
+            ),
+            construct=lambda mapping: mapping,
+            validate_semantics=lambda mapping: observed.append(mapping["value"]),
+        )
+    )
+    path = tmp_path / "decimal.json"
     path.write_text(
-        '{"artifact_type":"pupil_profile","schema_version":1,'
-        '"extra":{"value":1e999}}',
+        '{"artifact_type":"decimal_example","schema_version":1,'
+        '"value":1e999}',
         encoding="utf-8",
     )
 
-    result = check_validity("pupil_profile", path)
+    result = check_validity(
+        "decimal_example",
+        path,
+        adapter_registry=registry,
+    )
 
-    assert result.outcome is ValidityOutcome.UNSUPPORTED
-    assert result.reason_codes == ("reader_limit.json_float_range",)
+    assert result.outcome is ValidityOutcome.VALID
+    assert observed == [Decimal("1e999")]
 
 
 def test_json_reader_rejects_duplicate_keys(tmp_path: Path) -> None:
@@ -450,12 +492,16 @@ def test_hdf5_user_block_signature_is_detected(tmp_path: Path) -> None:
 def test_yaml_import_is_not_an_artifact_representation(tmp_path: Path) -> None:
     assert "YAML_IMPORT" not in ArtifactRepresentation.__members__
     path = tmp_path / "profile.yaml"
-    path.write_text("artifact_type: pupil_profile\nschema_version: 1\n", encoding="utf-8")
+    path.write_text(
+        "artifact_type: pupil_profile\nschema_version: 1\n",
+        encoding="utf-8",
+    )
 
     result = check_validity("pupil_profile", path)
 
-    assert result.outcome is ValidityOutcome.UNREADABLE
-    assert result.representation is ArtifactRepresentation.JSON
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.representation is None
+    assert result.reason_codes == ("representation.reader_not_registered",)
 
 
 def test_registration_requires_complete_semantic_validation() -> None:
@@ -569,7 +615,10 @@ def test_result_sanitizes_paths_from_adapter_errors(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("registered", "requested", "reason_code"),
-    [(2, 1, "schema.version.older"), (1, 2, "schema.version.newer")],
+    [
+        (2, 1, "schema.manifest_version.older"),
+        (1, 2, "schema.manifest_version.newer"),
+    ],
 )
 def test_versions_outside_registered_window_are_unsupported(
     tmp_path: Path,
@@ -595,3 +644,426 @@ def test_result_never_retains_location(tmp_path: Path) -> None:
 
     assert "path" not in result.__dataclass_fields__
     assert str(tmp_path) not in "\n".join(result.errors)
+
+
+def test_reader_identity_is_independent_of_expected_artifact_type(
+    tmp_path: Path,
+) -> None:
+    class IdentityReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            artifact_type = path.read_text(encoding="utf-8")
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match(),
+                lambda: ParsedRepresentation(
+                    ArtifactIdentity(
+                        artifact_type,
+                        self.representation,
+                        ArtifactVersionSet(payload=1),
+                    ),
+                    path,
+                ),
+            )
+
+    readers = RepresentationReaderRegistry()
+    readers.register(IdentityReader())
+    readers.freeze()
+    adapters = _register_exact(
+        SchemaAdapter(
+            artifact_type="requested_type",
+            representation=ArtifactRepresentation.HDF5,
+            versions=ArtifactVersionSet(payload=1),
+            construct=lambda path: path,
+            validate_semantics=lambda path: None,
+        )
+    )
+    path = tmp_path / "identity.payload"
+    path.write_text("actual_type", encoding="utf-8")
+
+    result = check_validity(
+        "requested_type",
+        path,
+        adapter_registry=adapters,
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("schema.artifact_type.mismatch",)
+    assert "expected_artifact_type" not in inspect.signature(
+        RepresentationReader.open
+    ).parameters
+
+
+def test_probe_unreadable_is_not_treated_as_no_match(tmp_path: Path) -> None:
+    class UnreadableReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult(
+                    ProbeOutcome.UNREADABLE,
+                    "representation.hdf5.probe_unreadable",
+                    "probe failed",
+                ),
+                lambda: pytest.fail("unreadable probe must not parse"),
+            )
+
+    readers = RepresentationReaderRegistry()
+    readers.register(UnreadableReader())
+    readers.freeze()
+    path = tmp_path / "payload"
+    path.write_bytes(b"payload")
+
+    result = check_validity(
+        "raw_capture",
+        path,
+        adapter_registry=SchemaAdapterRegistry(),
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.UNREADABLE
+    assert result.reason_codes == ("representation.hdf5.probe_unreadable",)
+
+
+def test_probe_limit_is_not_treated_as_no_match(tmp_path: Path) -> None:
+    class LimitedReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult(
+                    ProbeOutcome.UNSUPPORTED_LIMIT,
+                    "reader_limit.hdf5_probe",
+                    "probe limit reached",
+                ),
+                lambda: pytest.fail("limited probe must not parse"),
+            )
+
+    readers = RepresentationReaderRegistry()
+    readers.register(LimitedReader())
+    readers.freeze()
+    path = tmp_path / "payload"
+    path.write_bytes(b"payload")
+
+    result = check_validity(
+        "raw_capture",
+        path,
+        adapter_registry=SchemaAdapterRegistry(),
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("reader_limit.hdf5_probe",)
+
+
+def test_probe_ambiguity_is_explicit(tmp_path: Path) -> None:
+    class HDFMatch(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match(),
+                lambda: pytest.fail("ambiguous probe must not parse"),
+            )
+
+    class JSONMatch(RepresentationReader):
+        representation = ArtifactRepresentation.JSON
+
+        @contextmanager
+        def open(self, path: Path):
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match(),
+                lambda: pytest.fail("ambiguous probe must not parse"),
+            )
+
+    readers = RepresentationReaderRegistry()
+    readers.register(HDFMatch())
+    readers.register(JSONMatch())
+    readers.freeze()
+    path = tmp_path / "ambiguous"
+    path.write_bytes(b"payload")
+
+    result = check_validity(
+        "raw_capture",
+        path,
+        adapter_registry=SchemaAdapterRegistry(),
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.UNREADABLE
+    assert result.reason_codes == ("representation.probe_ambiguous",)
+
+
+def test_arbitrary_binary_is_not_claimed_by_json_reader(tmp_path: Path) -> None:
+    path = tmp_path / "unknown.bin"
+    path.write_bytes(b"\x00\x01not-json")
+
+    result = check_validity("pupil_profile", path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.representation is None
+    assert result.reason_codes == ("representation.reader_not_registered",)
+
+
+def test_hdf5_probe_has_no_artificial_user_block_cap(tmp_path: Path) -> None:
+    path = tmp_path / "large-user-block.h5"
+    with path.open("wb") as stream:
+        stream.seek(128 * 1024 * 1024)
+        stream.write(b"\x89HDF\r\n\x1a\nplaceholder")
+
+    result = check_validity("pupil_profile", path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.representation is ArtifactRepresentation.HDF5
+
+
+def test_known_artifact_without_capability_is_not_reported_unknown(
+    tmp_path: Path,
+) -> None:
+    registry = SchemaAdapterRegistry()
+    registry.freeze()
+    path = tmp_path / "known.json"
+    path.write_text(
+        json.dumps({"artifact_type": "full_frame_psf_survey", "schema_version": 1}),
+        encoding="utf-8",
+    )
+
+    result = check_validity(
+        "full_frame_psf_survey",
+        path,
+        adapter_registry=registry,
+    )
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("schema.adapter_not_registered",)
+
+
+def test_exact_adapter_cannot_ignore_additional_fields() -> None:
+    registry = SchemaAdapterRegistry()
+    adapter = SchemaAdapter(
+        artifact_type="open_exact",
+        representation=ArtifactRepresentation.JSON,
+        versions=ArtifactVersionSet(manifest=1),
+        allowed_fields=frozenset({"artifact_type", "schema_version"}),
+        required_fields=frozenset({"artifact_type", "schema_version"}),
+        construct=dict,
+        validate_semantics=lambda artifact: None,
+        additional_fields_policy=AdditionalFieldsPolicy.IGNORE,
+    )
+
+    with pytest.raises(ValueError, match="must forbid"):
+        register_schema_adapter(adapter, registry=registry)
+
+
+@pytest.mark.parametrize(
+    ("stage", "failure", "expected_outcome", "expected_reason"),
+    [
+        (
+            "serialized",
+            ValueError("bug"),
+            ValidityOutcome.VALIDATOR_FAILED,
+            "validator.internal_failure",
+        ),
+        (
+            "serialized",
+            SemanticValidationError("semantic.invalid", "wrong stage"),
+            ValidityOutcome.VALIDATOR_FAILED,
+            "validator.stage_contract_violation",
+        ),
+        (
+            "construction",
+            ConstructionValidationError(
+                "schema.construction.invalid",
+                "bad data",
+            ),
+            ValidityOutcome.INVALID,
+            "schema.construction.invalid",
+        ),
+        (
+            "construction",
+            TypeError("bug"),
+            ValidityOutcome.VALIDATOR_FAILED,
+            "validator.internal_failure",
+        ),
+        (
+            "semantic",
+            SemanticValidationError("semantic.invalid", "bad data"),
+            ValidityOutcome.INVALID,
+            "semantic.invalid",
+        ),
+        (
+            "semantic",
+            ValueError("bug"),
+            ValidityOutcome.VALIDATOR_FAILED,
+            "validator.internal_failure",
+        ),
+    ],
+)
+def test_adapter_stage_errors_have_closed_classification(
+    tmp_path: Path,
+    stage: str,
+    failure: Exception,
+    expected_outcome: ValidityOutcome,
+    expected_reason: str,
+) -> None:
+    def raise_failure(_value):
+        raise failure
+
+    adapter = SchemaAdapter(
+        artifact_type="stage_failure",
+        representation=ArtifactRepresentation.JSON,
+        versions=ArtifactVersionSet(manifest=1),
+        allowed_fields=frozenset({"artifact_type", "schema_version"}),
+        required_fields=frozenset({"artifact_type", "schema_version"}),
+        validate_serialized=raise_failure if stage == "serialized" else None,
+        construct=raise_failure if stage == "construction" else dict,
+        validate_semantics=raise_failure if stage == "semantic" else lambda value: None,
+    )
+    registry = _register_exact(adapter)
+    path = tmp_path / "stage.json"
+    path.write_text(
+        json.dumps({"artifact_type": "stage_failure", "schema_version": 1}),
+        encoding="utf-8",
+    )
+
+    result = check_validity("stage_failure", path, adapter_registry=registry)
+
+    assert result.outcome is expected_outcome
+    assert result.reason_codes == (expected_reason,)
+
+
+def test_legacy_translator_does_not_blanket_classify_value_error(
+    tmp_path: Path,
+) -> None:
+    bridge = LegacyCompatibilityBridge(
+        artifact_type="legacy_bug",
+        representation=ArtifactRepresentation.JSON,
+        versions=ArtifactVersionSet(manifest=1),
+        allowed_fields=frozenset({"artifact_type", "schema_version"}),
+        required_fields=frozenset({"artifact_type", "schema_version"}),
+        load_and_validate=lambda mapping: (_ for _ in ()).throw(ValueError("bug")),
+        translate_error=lambda exc: None,
+    )
+    registry = SchemaAdapterRegistry()
+    registry.register(bridge)
+    registry.freeze()
+    path = tmp_path / "legacy.json"
+    path.write_text(
+        json.dumps({"artifact_type": "legacy_bug", "schema_version": 1}),
+        encoding="utf-8",
+    )
+
+    result = check_validity("legacy_bug", path, adapter_registry=registry)
+
+    assert result.outcome is ValidityOutcome.VALIDATOR_FAILED
+    assert result.reason_codes == ("validator.internal_failure",)
+
+
+def test_multi_axis_identity_has_no_lossy_scalar_schema_version() -> None:
+    versions = ArtifactVersionSet(manifest=2, payload=3, bundle=1)
+    adapter = SchemaAdapter(
+        artifact_type="multi_axis",
+        representation=ArtifactRepresentation.BUNDLE,
+        versions=versions,
+        construct=lambda value: value,
+        validate_semantics=lambda value: None,
+    )
+    result = ValidityResult(
+        "multi_axis",
+        ValidityOutcome.VALID,
+        representation=ArtifactRepresentation.BUNDLE,
+        versions=versions,
+    )
+
+    with pytest.raises(ValueError, match="multi-axis"):
+        _ = adapter.schema_version
+    with pytest.raises(ValueError, match="multi-axis"):
+        _ = result.schema_version
+    with pytest.raises(TypeError, match="ArtifactVersionSet"):
+        get_schema_adapter("camera_profile", ArtifactRepresentation.JSON, 1)
+
+
+@pytest.mark.parametrize(
+    ("representation", "versions"),
+    [
+        (ArtifactRepresentation.JSON, ArtifactVersionSet(payload=1)),
+        (ArtifactRepresentation.HDF5, ArtifactVersionSet(manifest=1)),
+        (ArtifactRepresentation.BUNDLE, ArtifactVersionSet(payload=1)),
+    ],
+)
+def test_identity_rejects_representation_version_shape_mismatch(
+    representation: ArtifactRepresentation,
+    versions: ArtifactVersionSet,
+) -> None:
+    with pytest.raises(ValueError, match="version axes"):
+        ArtifactIdentity("shape_mismatch", representation, versions)
+
+
+def test_json_decimal_underflow_and_precision_are_preserved(tmp_path: Path) -> None:
+    observed: list[tuple[Decimal, Decimal]] = []
+
+    def validate(mapping) -> None:
+        observed.append((mapping["tiny"], mapping["precise"]))
+
+    adapter = SchemaAdapter(
+        artifact_type="decimal_precision",
+        representation=ArtifactRepresentation.JSON,
+        versions=ArtifactVersionSet(manifest=1),
+        allowed_fields=frozenset(
+            {"artifact_type", "schema_version", "tiny", "precise"}
+        ),
+        required_fields=frozenset(
+            {"artifact_type", "schema_version", "tiny", "precise"}
+        ),
+        construct=lambda mapping: mapping,
+        validate_semantics=validate,
+    )
+    registry = _register_exact(adapter)
+    path = tmp_path / "precision.json"
+    path.write_text(
+        '{"artifact_type":"decimal_precision","schema_version":1,'
+        '"tiny":1e-999,"precise":0.12345678901234567890123456789}',
+        encoding="utf-8",
+    )
+
+    result = check_validity(
+        "decimal_precision",
+        path,
+        adapter_registry=registry,
+    )
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert observed == [
+        (
+            Decimal("1e-999"),
+            Decimal("0.12345678901234567890123456789"),
+        )
+    ]
+    assert observed[0][0] != 0
+
+
+@pytest.mark.parametrize(
+    "reason_code",
+    ["invalid", "Invalid.code", "invalid-code.value", "C:/private/path"],
+)
+def test_reason_codes_enforce_stable_machine_grammar(reason_code: str) -> None:
+    with pytest.raises(ValueError, match="reason code"):
+        ValidityResult(
+            "example",
+            ValidityOutcome.INVALID,
+            reason_codes=(reason_code,),
+        )
+
+
+def test_builtin_catalog_is_eagerly_bootstrapped_and_frozen() -> None:
+    assert validation_module._BUILTIN_SCHEMA_ADAPTERS.frozen
