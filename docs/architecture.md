@@ -252,26 +252,29 @@ Storage-location config layer (`tasks/storage_config.py`):
 
 Artifact schema versioning (`tasks/artifact_versioning.py`):
 
-- `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` are the single
-  source of truth for each artifact type's version and read-compatibility
-  window.
+- `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` remain the writer
+  and legacy compatibility API. Validation capability is owned by the frozen
+  adapter catalog; its bootstrap checks implemented built-in windows against
+  those declarations instead of using the tables as a dispatch gate.
 - Every new serialized artifact emits a round-trippable integer
   `schema_version` via `emit_schema_version`. Strict reads reject a missing
   version as `legacy_unversioned`; compatibility loaders opt into legacy mode
   explicitly. Legacy compatibility is not catalog eligibility.
-- Local validation dispatch is keyed by
-  `(artifact_type, representation, schema_version)`. Each `SchemaAdapter`
-  declares its exact allowed and required fields, serialized validator, typed
-  constructor, semantic validator, and optional migration target. Registering a
-  new reader cannot widen an older version's field contract.
-- One adapter invocation follows a single non-recursive pipeline: parse the
-  representation once, validate the serialized mapping once, construct from
-  that validated mapping, then validate semantic invariants once. Compatibility
-  bridge adapters are explicitly marked when a historical `from_dict()` method
-  still owns semantic validation.
-- `check_validity(artifact_type, path)` detects the representation and selects
-  one exact adapter. Missing HDF5 or artifact-version adapters fail closed with
-  `unsupported`; path existence is never validity evidence.
+- Representation readers own location probing, parsing, and identity
+  extraction. Schema dispatch is keyed by artifact type, representation, and
+  an `ArtifactVersionSet` with independent manifest, payload, and bundle axes.
+  `check_validity()` only composes one registered reader with one exact schema
+  contract; it contains no JSON/HDF5/bundle branches.
+- Exact adapters declare their field policy, serialized validator, typed
+  constructor, and semantic validator. The engine invokes each configured
+  stage at most once; this does not make claims about calls inside a callback.
+  Historical composite loaders use an explicit `LegacyCompatibilityBridge`.
+- Registries are private, reject duplicate identities, and freeze after a
+  deterministic provider bootstrap. Tests and later representations use
+  independent registry instances rather than replacing production contracts.
+- Missing representation or version adapters fail closed with `unsupported`;
+  unexpected callback failures use the distinct `validator_failed` outcome.
+  Path existence is never validity evidence.
 - `ValidityResult` records the representation, version, stable reason codes and
   a closed outcome vocabulary. It intentionally does not retain the input path. A future
   catalog owns `(storage_root, rel_path)` separately, so machine-specific
@@ -280,8 +283,11 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   reported as `unsupported / reader_limit.json_integer_digits`, not as a claim
   that the abstract artifact schema is mathematically invalid.
 - This foundation change does not revise any artifact schema. Camera and pupil
-  remain schema v1; the other measured manifests also remain schema v1 until
-  their version-specific adapters and migrations are introduced separately.
+  remain schema v1. Their explicit compatibility bridges preserve the
+  historical open top-level field policy and translate expected `ProfileError`
+  rejections to `invalid`; strict recursive contracts remain later schema work.
+  The other measured manifests also remain schema v1 until their
+  version-specific adapters and migrations are introduced separately.
 
 The planned bundle and catalog-location contract is documented in
 [`artifact_bundle_design.md`](artifact_bundle_design.md). It is design work,
