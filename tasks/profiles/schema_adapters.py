@@ -21,7 +21,6 @@ from tasks.artifacts.validation import (
 from .camera_profile import CameraProfile, ProfileError
 from .pupil_profile import PupilProfile
 
-
 CAMERA_PROFILE_V1_FIELDS = frozenset(
     {
         "artifact_type",
@@ -82,20 +81,22 @@ def _decimal_to_legacy_binary64(value: Any) -> Any:
             )
         return converted
     if isinstance(value, dict):
-        return {
-            key: _decimal_to_legacy_binary64(child) for key, child in value.items()
-        }
+        return {key: _decimal_to_legacy_binary64(child) for key, child in value.items()}
     if isinstance(value, list):
         return [_decimal_to_legacy_binary64(child) for child in value]
     return value
 
 
 def _load_camera_profile_v1(mapping: Mapping[str, Any]) -> CameraProfile:
-    return CameraProfile.from_dict(_decimal_to_legacy_binary64(dict(mapping)))
+    return CameraProfile.from_v1_serialized_mapping(
+        _decimal_to_legacy_binary64(dict(mapping))
+    )
 
 
 def _load_pupil_profile_v1(mapping: Mapping[str, Any]) -> PupilProfile:
-    return PupilProfile.from_dict(_decimal_to_legacy_binary64(dict(mapping)))
+    return PupilProfile.from_v1_serialized_mapping(
+        _decimal_to_legacy_binary64(dict(mapping))
+    )
 
 
 def _validate_numeric_sequence(

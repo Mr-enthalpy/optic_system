@@ -18,7 +18,6 @@ from .validation import (
     SchemaAdapterRegistry,
 )
 
-
 AdapterProviderCallback = Callable[[SchemaAdapterRegistry], None]
 
 
@@ -39,31 +38,26 @@ class SchemaAdapterProvider:
             raise ValueError("provider register callback must be callable")
 
 
-def _manifest_window_identities(artifact_type: str) -> frozenset[ArtifactIdentity]:
-    minimum = MIN_READABLE_SCHEMA_VERSIONS[artifact_type]
-    current = CURRENT_SCHEMA_VERSIONS[artifact_type]
-    return frozenset(
-        ArtifactIdentity(
-            artifact_type,
-            ArtifactRepresentation.JSON,
-            ArtifactVersionSet(manifest=version),
-        )
-        for version in range(minimum, current + 1)
-    )
-
-
 PROFILE_V1_PROVIDER = SchemaAdapterProvider(
     name="profile_v1",
-    identities=(
-        _manifest_window_identities("camera_profile")
-        | _manifest_window_identities("pupil_profile")
+    identities=frozenset(
+        {
+            ArtifactIdentity(
+                "camera_profile",
+                ArtifactRepresentation.JSON,
+                ArtifactVersionSet(manifest=1),
+            ),
+            ArtifactIdentity(
+                "pupil_profile",
+                ArtifactRepresentation.JSON,
+                ArtifactVersionSet(manifest=1),
+            ),
+        }
     ),
     register=register_profile_v1_adapters,
 )
 
-BUILTIN_ADAPTER_PROVIDERS: tuple[SchemaAdapterProvider, ...] = (
-    PROFILE_V1_PROVIDER,
-)
+BUILTIN_ADAPTER_PROVIDERS: tuple[SchemaAdapterProvider, ...] = (PROFILE_V1_PROVIDER,)
 
 
 def build_builtin_schema_registry() -> SchemaAdapterRegistry:
@@ -111,6 +105,31 @@ def validate_registry_completeness(
             f"built-in registry contains undeclared adapter identities: "
             f"{sorted(map(repr, undeclared))}"
         )
+    owned_manifest_types = {
+        identity.artifact_type
+        for provider in providers
+        for identity in provider.identities
+        if identity.representation is ArtifactRepresentation.JSON
+    }
+    for artifact_type in owned_manifest_types:
+        declared_versions = {
+            identity.versions.manifest
+            for provider in providers
+            for identity in provider.identities
+            if identity.artifact_type == artifact_type
+            and identity.representation is ArtifactRepresentation.JSON
+        }
+        current = CURRENT_SCHEMA_VERSIONS[artifact_type]
+        readable = set(range(MIN_READABLE_SCHEMA_VERSIONS[artifact_type], current + 1))
+        if current not in declared_versions:
+            raise RuntimeError(
+                f"writer current version lacks an adapter for {artifact_type!r}"
+            )
+        if declared_versions != readable:
+            raise RuntimeError(
+                f"declared readable versions disagree with compatibility policy "
+                f"for {artifact_type!r}"
+            )
 
 
 __all__ = [

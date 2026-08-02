@@ -12,6 +12,7 @@ remain available here for callers that used the original public entry point.
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 
 
@@ -50,28 +51,51 @@ class OlderSchemaVersionError(SchemaCompatibilityError):
 
 
 # Current schema version emitted when writing each artifact type.
-CURRENT_SCHEMA_VERSIONS: dict[str, int] = {
-    "camera_profile": 1,
-    "pupil_profile": 1,
-    "peak_layout_profile": 1,
-    "full_frame_psf_survey": 1,
-    "peak_patch_psf_dictionary": 1,
-    "sensor_energy_center_profile": 1,
-    "peak_support_analysis_report": 1,
-    "raw_capture": 2,
-}
+CURRENT_SCHEMA_VERSIONS: Mapping[str, int] = MappingProxyType(
+    {
+        "camera_profile": 1,
+        "pupil_profile": 1,
+        "peak_layout_profile": 1,
+        "full_frame_psf_survey": 1,
+        "peak_patch_psf_dictionary": 1,
+        "sensor_energy_center_profile": 1,
+        "peak_support_analysis_report": 1,
+        "raw_capture": 2,
+    }
+)
 
 # Oldest schema version this codebase can still read for each artifact type.
-MIN_READABLE_SCHEMA_VERSIONS: dict[str, int] = {
-    "camera_profile": 1,
-    "pupil_profile": 1,
-    "peak_layout_profile": 1,
-    "full_frame_psf_survey": 1,
-    "peak_patch_psf_dictionary": 1,
-    "sensor_energy_center_profile": 1,
-    "peak_support_analysis_report": 1,
-    "raw_capture": 2,
-}
+MIN_READABLE_SCHEMA_VERSIONS: Mapping[str, int] = MappingProxyType(
+    {
+        "camera_profile": 1,
+        "pupil_profile": 1,
+        "peak_layout_profile": 1,
+        "full_frame_psf_survey": 1,
+        "peak_patch_psf_dictionary": 1,
+        "sensor_energy_center_profile": 1,
+        "peak_support_analysis_report": 1,
+        "raw_capture": 2,
+    }
+)
+
+# Artifact identity vocabulary is independent of installed validation capability.
+ARTIFACT_TYPE_VOCABULARY = frozenset(
+    {
+        "camera_profile",
+        "pupil_profile",
+        "peak_layout_profile",
+        "full_frame_psf_survey",
+        "peak_patch_psf_dictionary",
+        "sensor_energy_center_profile",
+        "peak_support_analysis_report",
+        "raw_capture",
+    }
+)
+
+if set(CURRENT_SCHEMA_VERSIONS) != ARTIFACT_TYPE_VOCABULARY:
+    raise RuntimeError("current schema versions do not cover artifact vocabulary")
+if set(MIN_READABLE_SCHEMA_VERSIONS) != ARTIFACT_TYPE_VOCABULARY:
+    raise RuntimeError("minimum readable versions do not cover artifact vocabulary")
 
 
 @dataclass(frozen=True)
@@ -158,6 +182,7 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "ARTIFACT_TYPE_VOCABULARY",
     "CURRENT_SCHEMA_VERSIONS",
     "LegacyUnversionedArtifactError",
     "MIN_READABLE_SCHEMA_VERSIONS",

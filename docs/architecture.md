@@ -252,19 +252,23 @@ Storage-location config layer (`tasks/storage_config.py`):
 
 Artifact schema versioning (`tasks/artifact_versioning.py`):
 
-- `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` remain the writer
-  and legacy compatibility API. Validation capability is owned by the frozen
-  adapter catalog; its bootstrap checks implemented built-in windows against
-  those declarations instead of using the tables as a dispatch gate.
+- `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` are immutable
+  writer and legacy-compatibility declarations. An independent immutable
+  artifact-type vocabulary names known identities. Validation capability is
+  owned by the frozen adapter catalog; providers list exact identities and
+  bootstrap checks writer-current and readable-policy coverage separately.
 - Every new serialized artifact emits a round-trippable integer
   `schema_version` via `emit_schema_version`. Strict reads reject a missing
   version as `legacy_unversioned`; compatibility loaders opt into legacy mode
   explicitly. Legacy compatibility is not catalog eligibility.
 - Representation readers expose a context-managed `open(path)` operation.
-  The opened session reports a structured probe outcome (`match`, `no_match`,
-  `unreadable`, or `unsupported_limit`), keeps representation resources alive
-  through adapter validation, and extracts identity without receiving the
-  caller's expected artifact type. Ambiguous matches fail explicitly.
+  Reader providers are composed at bootstrap. The opened session reports a
+  structured, scoped probe outcome (`match`, `no_match`, `unreadable`,
+  `unsupported_limit`, or `unsupported_capability`), keeps representation
+  resources alive through adapter validation, and extracts identity without
+  receiving the caller's expected artifact type. One unique match wins over
+  unrelated reader-local failures; ambiguous matches fail explicitly. The
+  HDF5 signature sentinel does not occupy or block a later full HDF5 reader.
 - Schema dispatch is keyed by artifact type, representation, and an
   `ArtifactVersionSet` with independent manifest, payload, and bundle axes.
   `ArtifactIdentity` validates the legal axis shape for its representation.
@@ -281,6 +285,13 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   or any undeclared callback exception, is `validator_failed`. Historical
   composite loaders use an explicit `LegacyCompatibilityBridge` and a narrow
   error translator rather than a cross-stage exception whitelist.
+- Reader open/probe and parse/identity stages have their own allowed error
+  sets. A reader that raises an artifact-validation error from the wrong stage
+  produces `validator.reader_stage_contract_violation`, never `invalid`.
+- Exact JSON adapters receive the same transitively read-only document in the
+  serialized and construction stages. Serialized validation cannot mutate,
+  repair, or migrate the value before construction; legacy bridges retain
+  their explicitly isolated compatibility behavior.
 - Registries are private, reject duplicate identities, and freeze after an
   eager deterministic bootstrap. Each provider declares its complete identity
   set; bootstrap verifies actual registration against that declaration and
@@ -290,8 +301,11 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   unexpected callback failures use the distinct `validator_failed` outcome.
   Path existence is never validity evidence.
 - `ValidityResult` records the representation, version set, stable reason codes
-  and a closed outcome vocabulary. Reason codes use a validated lowercase
-  dotted-identifier grammar. It intentionally does not retain the input path.
+  and a closed outcome vocabulary. A valid result requires a complete legal
+  identity; representation/version shapes are checked with `ArtifactIdentity`,
+  and legacy-unversioned results retain their identified representation.
+  Reason codes use a validated lowercase dotted-identifier grammar. It
+  intentionally does not retain the input path.
   A future catalog owns `(storage_root, rel_path)` separately, so
   machine-specific absolute paths cannot leak into tracked catalog records.
 - The JSON integer digit cap is a local reader implementation limit and is
@@ -302,6 +316,12 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   Non-standard constants remain representation errors. The v1 profile bridge
   explicitly converts accepted historical values to finite binary64 and
   rejects overflow or non-zero underflow during construction.
+- The JSON reader performs one bounded read (currently 16 MiB), decodes and
+  parses once, then reuses the cached value for identity extraction. Every
+  legal JSON root is recognized as JSON; non-mapping roots are subsequently
+  rejected as `representation.json.root_invalid`. Leading whitespace has no
+  separate probe cap, while oversized documents report
+  `reader_limit.json_bytes`.
 - This foundation change does not revise any artifact schema. Camera and pupil
   remain schema v1. Their explicit compatibility bridges preserve the
   historical open top-level field policy and translate expected `ProfileError`

@@ -10,6 +10,11 @@ import pytest
 import tasks.artifacts.validation as validation_module
 
 from tasks.artifacts.adapter_catalog import validate_registry_completeness
+from tasks.artifacts.reader_catalog import (
+    BUILTIN_READER_PROVIDERS,
+    RepresentationReaderProvider,
+    build_representation_reader_registry,
+)
 from tasks.artifacts.validation import (
     AdditionalFieldsPolicy,
     ArtifactIdentity,
@@ -20,6 +25,7 @@ from tasks.artifacts.validation import (
     OpenedRepresentation,
     ParsedRepresentation,
     ProbeOutcome,
+    ProbeFailureScope,
     ProbeResult,
     RepresentationReader,
     RepresentationReaderRegistry,
@@ -164,9 +170,7 @@ def test_adapter_validates_its_own_identity() -> None:
     adapter = _json_adapter("example")
 
     with pytest.raises(SerializedSchemaError, match="identity") as exc_info:
-        adapter.parse_and_validate(
-            {"artifact_type": "different", "schema_version": 1}
-        )
+        adapter.parse_and_validate({"artifact_type": "different", "schema_version": 1})
 
     assert exc_info.value.reason_code == "schema.identity.mismatch"
 
@@ -380,9 +384,7 @@ def test_unexpected_adapter_exception_is_validator_failed(tmp_path: Path) -> Non
     def fail(_artifact) -> None:
         raise RuntimeError("programming bug")
 
-    registry = _register_exact(
-        _json_adapter("broken_adapter", validate_semantics=fail)
-    )
+    registry = _register_exact(_json_adapter("broken_adapter", validate_semantics=fail))
     path = tmp_path / "broken.json"
     path.write_text(
         json.dumps({"artifact_type": "broken_adapter", "schema_version": 1}),
@@ -422,20 +424,15 @@ def test_json_reader_preserves_large_finite_decimal_for_schema(
             artifact_type="decimal_example",
             representation=ArtifactRepresentation.JSON,
             versions=ArtifactVersionSet(manifest=1),
-            allowed_fields=frozenset(
-                {"artifact_type", "schema_version", "value"}
-            ),
-            required_fields=frozenset(
-                {"artifact_type", "schema_version", "value"}
-            ),
+            allowed_fields=frozenset({"artifact_type", "schema_version", "value"}),
+            required_fields=frozenset({"artifact_type", "schema_version", "value"}),
             construct=lambda mapping: mapping,
             validate_semantics=lambda mapping: observed.append(mapping["value"]),
         )
     )
     path = tmp_path / "decimal.json"
     path.write_text(
-        '{"artifact_type":"decimal_example","schema_version":1,'
-        '"value":1e999}',
+        '{"artifact_type":"decimal_example","schema_version":1,' '"value":1e999}',
         encoding="utf-8",
     )
 
@@ -452,8 +449,7 @@ def test_json_reader_preserves_large_finite_decimal_for_schema(
 def test_json_reader_rejects_duplicate_keys(tmp_path: Path) -> None:
     path = tmp_path / "duplicate.json"
     path.write_text(
-        '{"artifact_type":"pupil_profile","schema_version":1,'
-        '"schema_version":1}',
+        '{"artifact_type":"pupil_profile","schema_version":1,' '"schema_version":1}',
         encoding="utf-8",
     )
 
@@ -466,9 +462,7 @@ def test_json_reader_rejects_duplicate_keys(tmp_path: Path) -> None:
 def test_reader_limit_is_not_reported_as_schema_invalid(tmp_path: Path) -> None:
     path = tmp_path / "huge.json"
     path.write_text(
-        '{"artifact_type":"pupil_profile","schema_version":'
-        + ("9" * 5000)
-        + "}",
+        '{"artifact_type":"pupil_profile","schema_version":' + ("9" * 5000) + "}",
         encoding="utf-8",
     )
 
@@ -486,7 +480,7 @@ def test_hdf5_user_block_signature_is_detected(tmp_path: Path) -> None:
 
     assert result.outcome is ValidityOutcome.UNSUPPORTED
     assert result.representation is ArtifactRepresentation.HDF5
-    assert result.reason_codes == ("representation.adapter_not_registered",)
+    assert result.reason_codes == ("representation.reader_not_registered",)
 
 
 def test_yaml_import_is_not_an_artifact_representation(tmp_path: Path) -> None:
@@ -565,11 +559,17 @@ def test_version_set_rejects_invalid_versions(axis: str, version) -> None:
 
 
 def test_validity_result_enforces_closed_state_invariants() -> None:
-    valid = ValidityResult("example", ValidityOutcome.VALID)
+    valid = ValidityResult(
+        "example",
+        ValidityOutcome.VALID,
+        representation=ArtifactRepresentation.JSON,
+        versions=ArtifactVersionSet(manifest=1),
+    )
     invalid = ValidityResult(
         "example",
         ValidityOutcome.INVALID,
         reason_codes=("schema.invalid",),
+        errors=("invalid artifact",),
     )
 
     assert valid.ok
@@ -578,16 +578,26 @@ def test_validity_result_enforces_closed_state_invariants() -> None:
         ValidityResult(
             "example",
             ValidityOutcome.VALID,
+            representation=ArtifactRepresentation.JSON,
+            versions=ArtifactVersionSet(manifest=1),
             errors=("failure",),
         )
     with pytest.raises(ValueError, match="reason code"):
         ValidityResult("example", ValidityOutcome.INVALID)
+    with pytest.raises(ValueError, match="diagnostic message"):
+        ValidityResult(
+            "example",
+            ValidityOutcome.INVALID,
+            reason_codes=("schema.invalid",),
+        )
     with pytest.raises(ValueError, match="cannot declare schema versions"):
         ValidityResult(
             "example",
             ValidityOutcome.LEGACY_UNVERSIONED,
+            representation=ArtifactRepresentation.JSON,
             versions=ArtifactVersionSet(manifest=1),
             reason_codes=("schema.version.missing",),
+            errors=("missing version",),
         )
 
 
@@ -598,9 +608,7 @@ def test_result_sanitizes_paths_from_adapter_errors(tmp_path: Path) -> None:
             f"invalid artifact at {tmp_path / 'private.json'}",
         )
 
-    registry = _register_exact(
-        _json_adapter("path_message", validate_semantics=reject)
-    )
+    registry = _register_exact(_json_adapter("path_message", validate_semantics=reject))
     path = tmp_path / "artifact.json"
     path.write_text(
         json.dumps({"artifact_type": "path_message", "schema_version": 1}),
@@ -692,9 +700,10 @@ def test_reader_identity_is_independent_of_expected_artifact_type(
 
     assert result.outcome is ValidityOutcome.INVALID
     assert result.reason_codes == ("schema.artifact_type.mismatch",)
-    assert "expected_artifact_type" not in inspect.signature(
-        RepresentationReader.open
-    ).parameters
+    assert (
+        "expected_artifact_type"
+        not in inspect.signature(RepresentationReader.open).parameters
+    )
 
 
 def test_probe_unreadable_is_not_treated_as_no_match(tmp_path: Path) -> None:
@@ -709,6 +718,7 @@ def test_probe_unreadable_is_not_treated_as_no_match(tmp_path: Path) -> None:
                     ProbeOutcome.UNREADABLE,
                     "representation.hdf5.probe_unreadable",
                     "probe failed",
+                    ProbeFailureScope.LOCATION_GLOBAL,
                 ),
                 lambda: pytest.fail("unreadable probe must not parse"),
             )
@@ -742,6 +752,7 @@ def test_probe_limit_is_not_treated_as_no_match(tmp_path: Path) -> None:
                     ProbeOutcome.UNSUPPORTED_LIMIT,
                     "reader_limit.hdf5_probe",
                     "probe limit reached",
+                    ProbeFailureScope.READER_LOCAL,
                 ),
                 lambda: pytest.fail("limited probe must not parse"),
             )
@@ -1067,3 +1078,305 @@ def test_reason_codes_enforce_stable_machine_grammar(reason_code: str) -> None:
 
 def test_builtin_catalog_is_eagerly_bootstrapped_and_frozen() -> None:
     assert validation_module._BUILTIN_SCHEMA_ADAPTERS.frozen
+
+
+def test_public_provider_api_exports_all_stage_error_types() -> None:
+    import tasks.artifacts as artifacts
+
+    for name in (
+        "ArtifactValidationError",
+        "SerializedSchemaError",
+        "ConstructionValidationError",
+        "SemanticValidationError",
+        "RepresentationUnreadableError",
+        "ReaderLimitError",
+        "UnsupportedRepresentationError",
+    ):
+        assert name in artifacts.__all__
+        assert getattr(artifacts, name) is getattr(validation_module, name)
+
+
+def test_match_wins_over_unrelated_reader_limit(tmp_path: Path) -> None:
+    class MatchReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match(),
+                lambda: ParsedRepresentation(
+                    ArtifactIdentity(
+                        "monotonic",
+                        self.representation,
+                        ArtifactVersionSet(payload=1),
+                    ),
+                    path,
+                ),
+            )
+
+    class LimitedReader(RepresentationReader):
+        representation = ArtifactRepresentation.BUNDLE
+
+        @contextmanager
+        def open(self, path: Path):
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult(
+                    ProbeOutcome.UNSUPPORTED_LIMIT,
+                    "reader_limit.bundle_probe",
+                    "unrelated bundle limit",
+                    ProbeFailureScope.READER_LOCAL,
+                ),
+                lambda: pytest.fail("unmatched reader must not parse"),
+            )
+
+    readers = RepresentationReaderRegistry()
+    readers.register(LimitedReader())
+    readers.register(MatchReader())
+    readers.freeze()
+    adapters = _register_exact(
+        SchemaAdapter(
+            artifact_type="monotonic",
+            representation=ArtifactRepresentation.HDF5,
+            versions=ArtifactVersionSet(payload=1),
+            construct=lambda path: path,
+            validate_semantics=lambda path: None,
+        )
+    )
+    path = tmp_path / "payload"
+    path.write_bytes(b"payload")
+
+    result = check_validity(
+        "monotonic",
+        path,
+        adapter_registry=adapters,
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.VALID
+
+
+def test_reader_provider_can_extend_builtin_hdf5_slot(tmp_path: Path) -> None:
+    class FullHDFReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            raw = path.read_bytes()
+            probe = (
+                ProbeResult.match()
+                if raw.startswith(b"\x89HDF")
+                else ProbeResult.no_match()
+            )
+            yield OpenedRepresentation(
+                self.representation,
+                probe,
+                lambda: ParsedRepresentation(
+                    ArtifactIdentity(
+                        "provider_hdf",
+                        self.representation,
+                        ArtifactVersionSet(payload=1),
+                    ),
+                    raw,
+                ),
+            )
+
+    provider = RepresentationReaderProvider(
+        "full_hdf_test",
+        ArtifactRepresentation.HDF5,
+        FullHDFReader,
+    )
+    readers = build_representation_reader_registry(
+        (*BUILTIN_READER_PROVIDERS, provider)
+    )
+    adapters = _register_exact(
+        SchemaAdapter(
+            artifact_type="provider_hdf",
+            representation=ArtifactRepresentation.HDF5,
+            versions=ArtifactVersionSet(payload=1),
+            construct=lambda raw: raw,
+            validate_semantics=lambda raw: None,
+        )
+    )
+    path = tmp_path / "provider.h5"
+    path.write_bytes(b"\x89HDF\r\n\x1a\n")
+
+    result = check_validity(
+        "provider_hdf",
+        path,
+        adapter_registry=adapters,
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.VALID
+
+
+def test_json_array_is_identified_then_rejected_as_invalid(tmp_path: Path) -> None:
+    path = tmp_path / "array.json"
+    path.write_text("[]", encoding="utf-8")
+
+    result = check_validity("pupil_profile", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.representation is ArtifactRepresentation.JSON
+    assert result.reason_codes == ("representation.json.root_invalid",)
+
+
+def test_json_allows_more_than_4096_leading_whitespace(tmp_path: Path) -> None:
+    registry = _register_exact(_json_adapter("whitespace"))
+    path = tmp_path / "whitespace.json"
+    path.write_text(
+        " " * 5000 + '{"artifact_type":"whitespace","schema_version":1}',
+        encoding="utf-8",
+    )
+
+    result = check_validity("whitespace", path, adapter_registry=registry)
+
+    assert result.outcome is ValidityOutcome.VALID
+
+
+def test_json_manifest_byte_limit_is_explicit(tmp_path: Path) -> None:
+    path = tmp_path / "large.json"
+    path.write_text(
+        " " * (validation_module._MAX_JSON_BYTES + 1) + "[]",
+        encoding="utf-8",
+    )
+
+    result = check_validity("pupil_profile", path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.reason_codes == ("reader_limit.json_bytes",)
+
+
+def test_reader_wrong_stage_error_is_validator_failure(tmp_path: Path) -> None:
+    class BrokenReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match(),
+                lambda: (_ for _ in ()).throw(
+                    SemanticValidationError("semantic.invalid", "wrong reader stage")
+                ),
+            )
+
+    readers = RepresentationReaderRegistry()
+    readers.register(BrokenReader())
+    readers.freeze()
+    path = tmp_path / "broken"
+    path.write_bytes(b"broken")
+
+    result = check_validity(
+        "raw_capture",
+        path,
+        adapter_registry=SchemaAdapterRegistry(),
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.VALIDATOR_FAILED
+    assert result.reason_codes == ("validator.reader_stage_contract_violation",)
+
+
+def test_reader_open_wrong_stage_error_is_validator_failure(tmp_path: Path) -> None:
+    class BrokenOpenReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            raise SemanticValidationError("semantic.invalid", "wrong reader open stage")
+            yield  # pragma: no cover - makes this a context-manager generator.
+
+    readers = RepresentationReaderRegistry()
+    readers.register(BrokenOpenReader())
+    readers.freeze()
+    path = tmp_path / "broken-open"
+    path.write_bytes(b"broken")
+
+    result = check_validity(
+        "raw_capture",
+        path,
+        adapter_registry=SchemaAdapterRegistry(),
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.VALIDATOR_FAILED
+    assert result.reason_codes == ("validator.reader_stage_contract_violation",)
+
+
+def test_validity_result_rejects_missing_or_malformed_valid_identity() -> None:
+    with pytest.raises(ValueError, match="complete artifact identity"):
+        ValidityResult("example", ValidityOutcome.VALID)
+    with pytest.raises(ValueError, match="version axes"):
+        ValidityResult(
+            "example",
+            ValidityOutcome.VALID,
+            representation=ArtifactRepresentation.JSON,
+            versions=ArtifactVersionSet(payload=1),
+        )
+
+
+def test_version_authority_mappings_are_immutable() -> None:
+    from tasks.artifact_versioning import CURRENT_SCHEMA_VERSIONS
+
+    with pytest.raises(TypeError):
+        CURRENT_SCHEMA_VERSIONS["camera_profile"] = 2
+
+
+def test_legacy_bridge_does_not_repeat_global_version_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tasks.artifact_versioning as versioning
+
+    data = pupil_profile_dict()
+    data["artifact_type"] = "pupil_profile"
+    data["schema_version"] = 1
+    path = tmp_path / "pupil.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(
+        versioning,
+        "read_schema_version",
+        lambda *_args, **_kwargs: pytest.fail("second version dispatch"),
+    )
+
+    result = check_validity("pupil_profile", path)
+
+    assert result.outcome is ValidityOutcome.VALID
+
+
+def test_exact_json_serialized_input_is_transitively_read_only(
+    tmp_path: Path,
+) -> None:
+    def mutate(mapping) -> None:
+        mapping["nested"]["value"] = 2
+
+    adapter = SchemaAdapter(
+        artifact_type="immutable_input",
+        representation=ArtifactRepresentation.JSON,
+        versions=ArtifactVersionSet(manifest=1),
+        allowed_fields=frozenset({"artifact_type", "schema_version", "nested"}),
+        required_fields=frozenset({"artifact_type", "schema_version", "nested"}),
+        validate_serialized=mutate,
+        construct=dict,
+        validate_semantics=lambda artifact: None,
+    )
+    registry = _register_exact(adapter)
+    path = tmp_path / "immutable.json"
+    path.write_text(
+        json.dumps(
+            {
+                "artifact_type": "immutable_input",
+                "schema_version": 1,
+                "nested": {"value": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = check_validity("immutable_input", path, adapter_registry=registry)
+
+    assert result.outcome is ValidityOutcome.VALIDATOR_FAILED
+    assert result.reason_codes == ("validator.internal_failure",)

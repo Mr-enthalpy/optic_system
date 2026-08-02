@@ -5,16 +5,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 BROADBAND_PASSTHROUGH = "broadband_passthrough"
 PER_BAND_PUPIL_OPEN = "per_band_pupil_open"
 MONOCHROMATIC = "monochromatic"
-PSF_PRODUCING_TASK_FAMILIES = frozenset({
-    "psf_dictionary_capture",
-    "dotf_capture",
-    "mask_family_psf_capture",
-    "psf_capture",
-})
+PSF_PRODUCING_TASK_FAMILIES = frozenset(
+    {
+        "psf_dictionary_capture",
+        "dotf_capture",
+        "mask_family_psf_capture",
+        "psf_capture",
+    }
+)
 
 
 class ProfileError(ValueError):
@@ -151,7 +152,9 @@ class PerWavelengthCameraSettings:
         if self.full_frame_peak_pixel is not None:
             result["full_frame_peak_pixel"] = self.full_frame_peak_pixel
         if self.full_frame_saturated_pixel_count is not None:
-            result["full_frame_saturated_pixel_count"] = self.full_frame_saturated_pixel_count
+            result["full_frame_saturated_pixel_count"] = (
+                self.full_frame_saturated_pixel_count
+            )
         return result
 
 
@@ -182,15 +185,18 @@ class CameraProfile:
         from tasks.artifact_versioning import read_schema_version
 
         read_schema_version(d, "camera_profile", legacy_mode=True)
+        return cls.from_v1_serialized_mapping(d)
+
+    @classmethod
+    def from_v1_serialized_mapping(cls, d: dict[str, Any]) -> CameraProfile:
+        """Construct the already-dispatched v1 contract without version lookup."""
         profile_family = _require_str(d, "profile_family")
         illumination = CameraProfileIllumination.from_dict(
             _require_dict(d, "illumination")
         )
         camera_block = _optional_dict(d.get("camera")) or {}
         per_wavelength_raw = (
-            d.get("per_wavelength")
-            or camera_block.get("per_wavelength")
-            or {}
+            d.get("per_wavelength") or camera_block.get("per_wavelength") or {}
         )
         if not isinstance(per_wavelength_raw, dict):
             raise ProfileError("per_wavelength must be a mapping")
@@ -204,9 +210,13 @@ class CameraProfile:
                 str(k): PerWavelengthCameraSettings.from_dict(v)
                 for k, v in per_wavelength_raw.items()
             },
-            exposure_us=_optional_float(d.get("exposure_us", camera_block.get("exposure_us"))),
+            exposure_us=_optional_float(
+                d.get("exposure_us", camera_block.get("exposure_us"))
+            ),
             gain_db=_optional_float(d.get("gain_db", camera_block.get("gain_db"))),
-            peak_pixel=_optional_float(d.get("peak_pixel", camera_block.get("peak_pixel"))),
+            peak_pixel=_optional_float(
+                d.get("peak_pixel", camera_block.get("peak_pixel"))
+            ),
             saturation_margin=_optional_float(
                 d.get("saturation_margin", camera_block.get("saturation_margin"))
             ),
@@ -217,7 +227,9 @@ class CameraProfile:
                 d.get("peak_pixel_domain", camera_block.get("peak_pixel_domain"))
             ),
             full_frame_peak_pixel=_optional_finite_number(
-                d.get("full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel")),
+                d.get(
+                    "full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel")
+                ),
                 "full_frame_peak_pixel",
             ),
             full_frame_saturated_pixel_count=_optional_count(
@@ -301,7 +313,9 @@ class CameraProfile:
                 )
             return
 
-        raise ProfileError(f"unsupported camera profile family: {self.profile_family!r}")
+        raise ProfileError(
+            f"unsupported camera profile family: {self.profile_family!r}"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         from tasks.artifact_versioning import emit_schema_version
@@ -341,7 +355,9 @@ class CameraProfile:
             if self.full_frame_peak_pixel is not None:
                 camera["full_frame_peak_pixel"] = self.full_frame_peak_pixel
             if self.full_frame_saturated_pixel_count is not None:
-                camera["full_frame_saturated_pixel_count"] = self.full_frame_saturated_pixel_count
+                camera["full_frame_saturated_pixel_count"] = (
+                    self.full_frame_saturated_pixel_count
+                )
             if camera:
                 result["camera"] = camera
         for key in ("source_raw_capture_file", "created_at", "software_version"):

@@ -30,6 +30,11 @@ class PupilProfile:
         from tasks.artifact_versioning import read_schema_version
 
         read_schema_version(d, "pupil_profile", legacy_mode=True)
+        return cls.from_v1_serialized_mapping(d)
+
+    @classmethod
+    def from_v1_serialized_mapping(cls, d: dict[str, Any]) -> PupilProfile:
+        """Construct the already-dispatched v1 contract without version lookup."""
         profile = cls(
             pupil_profile_id=_require_str(d, "pupil_profile_id"),
             lcd_coordinate_convention=_require_str(d, "lcd_coordinate_convention"),
