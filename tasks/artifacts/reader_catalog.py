@@ -12,6 +12,7 @@ from .validation import (
     _HDF5ProbeReader,
     _JSONRepresentationReader,
 )
+from .validation_requirements import REQUIRED_IDENTIFYING_REPRESENTATIONS
 
 ReaderFactory = Callable[[], RepresentationReader]
 
@@ -64,6 +65,19 @@ def build_representation_reader_registry(
                 f"reader provider {provider.name!r} returned the wrong representation"
             )
         registry.register(reader)
+    installed_identifying_representations = frozenset(
+        reader.representation
+        for reader in registry.readers
+        if reader.identifies_representation
+    )
+    missing = (
+        REQUIRED_IDENTIFYING_REPRESENTATIONS - installed_identifying_representations
+    )
+    if missing:
+        raise RuntimeError(
+            "required identifying representation readers are missing: "
+            f"{sorted(item.value for item in missing)}"
+        )
     registry.freeze()
     return registry
 

@@ -265,14 +265,19 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   Reader providers are composed at bootstrap. The opened session reports a
   structured, scoped probe outcome (`match`, `no_match`, `unreadable`,
   `unsupported_limit`, or `unsupported_capability`), keeps representation
-  resources alive through adapter validation, and extracts identity without
-  receiving the caller's expected artifact type. Probe arbitration is ordered:
-  contract violations, location-global failures, ambiguous matches, one unique
-  match, reader-local unreadable, reader limits, unavailable capability, then
-  no recognized representation. Expected open/probe failures must be returned
-  as scoped `ProbeResult` values; direct validation exceptions are contract
-  violations. The HDF5 signature sentinel does not occupy or block a later
-  full HDF5 reader.
+  resources alive through arbitration, and extracts identity without receiving
+  the caller's expected artifact type. After arbitration, unselected reader
+  contexts close immediately; only the selected reader remains open through
+  adapter validation. `match` is conclusive, not a lexical-format hint: a JSON
+  candidate that fails complete parsing reports reader-local unreadable. Probe
+  arbitration gives location-global failures and ambiguous conclusive matches
+  precedence, accepts one conclusive match over unrelated local failures, and
+  lets a strong capability signature (such as an HDF5 user-block signature)
+  outrank an unrelated malformed JSON candidate. A full reader's local failure
+  outranks a same-representation capability sentinel. Expected open/probe
+  failures must be returned as scoped `ProbeResult` values; direct validation
+  exceptions are contract violations. The HDF5 signature sentinel does not
+  occupy or block a later full HDF5 reader.
 - Schema dispatch is keyed by artifact type, representation, and an
   `ArtifactVersionSet` with independent manifest, payload, and bundle axes.
   `ArtifactIdentity` validates the legal axis shape for its representation.
@@ -294,7 +299,11 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   extraction uses `IdentityValidationError`, and `SerializedSchemaError` is
   reserved for adapter serialized validation. A reader that raises an error
   owned by another stage produces `validator.reader_stage_contract_violation`.
-  Non-JSON adapters require an explicit reader-produced identity.
+  `ParsedRepresentation` requires a real `ArtifactIdentity`. JSON adapters
+  independently extract the embedded identity and require it to equal the
+  reader identity; disagreement is a reader identity contract violation.
+  Non-JSON adapters require an explicit reader-produced identity and retain
+  responsibility for validating representation-native identity metadata.
 - Exact JSON adapters receive the same transitively read-only document in the
   serialized and construction stages. Serialized validation cannot mutate,
   repair, or migrate the value before construction; legacy bridges retain
@@ -302,10 +311,14 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   the abstract `Mapping` / `Sequence` contract; concrete `dict` / `list`
   container types are not promised.
 - Registries are private, reject duplicate identities, and freeze after an
-  eager deterministic bootstrap. Each provider declares its complete identity
-  set; bootstrap verifies actual registration against that declaration and
-  fails fast. Tests and later representations use independent registry
-  instances rather than replacing production contracts.
+  eager deterministic bootstrap. An independent requirements authority lists
+  required readable identities, current-writer identities, and identifying
+  representation capabilities. Each provider declares its implementation set;
+  bootstrap requires authority, provider declarations, registered adapters,
+  and installed identifying readers to agree. Removing an entire provider or
+  the JSON reader therefore fails bootstrap instead of shrinking the claimed
+  system requirements. Tests and later representations use independent
+  registry instances rather than replacing production contracts.
 - Missing representation or version adapters fail closed with `unsupported`;
   unexpected callback failures use the distinct `validator_failed` outcome.
   Path existence is never validity evidence.
@@ -335,10 +348,16 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   rejected as `representation.json.root_invalid`. Leading whitespace has no
   separate probe cap, while oversized documents report
   `reader_limit.json_bytes`.
+- Current JSON writers use one stable serializer with `allow_nan=False` and
+  validate before emission. Bootstrap owns explicit current-writer identities,
+  and round-trip tests require each production profile writer's output to be
+  accepted by the reader/adapter identity registered for that writer version.
 - This foundation change does not revise any artifact schema. Camera and pupil
   remain schema v1. Their explicit compatibility bridges preserve the
   historical open top-level field policy and translate expected `ProfileError`
-  rejections to `invalid`; strict recursive contracts remain later schema work.
+  rejections to `invalid`; Decimal-to-binary64 checks are confined to fields
+  consumed by the bridge and do not change the public domain loaders or inspect
+  ignored/opaque extensions. Strict recursive contracts remain later schema work.
   The other measured manifests also remain schema v1 until their
   version-specific adapters and migrations are introduced separately.
 

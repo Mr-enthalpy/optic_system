@@ -49,6 +49,8 @@ from tasks.artifacts.validation import (
     register_representation_reader,
     register_schema_adapter,
 )
+from tasks.profiles.camera_profile import CameraProfile
+from tasks.profiles.pupil_profile import PupilProfile
 from test_profile_artifacts import (
     per_band_camera_profile_dict,
     pupil_profile_dict,
@@ -463,7 +465,7 @@ def test_json_reader_rejects_duplicate_keys(tmp_path: Path) -> None:
 
     result = check_validity("pupil_profile", path)
 
-    assert result.outcome is ValidityOutcome.INVALID
+    assert result.outcome is ValidityOutcome.UNREADABLE
     assert result.reason_codes == ("representation.json.duplicate_key",)
 
 
@@ -557,6 +559,40 @@ def test_frozen_registry_is_read_only() -> None:
 def test_builtin_catalog_detects_version_window_gap() -> None:
     with pytest.raises(RuntimeError, match="adapter gap"):
         validate_registry_completeness(SchemaAdapterRegistry())
+
+
+def test_required_adapter_authority_detects_omitted_provider() -> None:
+    with pytest.raises(RuntimeError, match="required readable identities"):
+        validate_registry_completeness(SchemaAdapterRegistry(), ())
+
+
+def test_required_reader_authority_detects_omitted_json_reader() -> None:
+    hdf_only = tuple(
+        provider
+        for provider in BUILTIN_READER_PROVIDERS
+        if provider.representation is ArtifactRepresentation.HDF5
+    )
+
+    with pytest.raises(RuntimeError, match="required identifying"):
+        build_representation_reader_registry(hdf_only)
+
+
+def test_registry_composition_requires_reader_for_adapter_representation() -> None:
+    adapters = _register_exact(
+        SchemaAdapter(
+            artifact_type="reader_gap",
+            representation=ArtifactRepresentation.HDF5,
+            versions=ArtifactVersionSet(payload=1),
+            construct=lambda value: value,
+            validate_semantics=lambda value: None,
+        )
+    )
+    readers = RepresentationReaderRegistry()
+    readers.register(validation_module._JSONRepresentationReader())
+    readers.freeze()
+
+    with pytest.raises(RuntimeError, match="lack identifying"):
+        validation_module._validate_registry_composition(adapters, readers)
 
 
 @pytest.mark.parametrize("axis", ["manifest", "payload", "bundle"])
@@ -1661,6 +1697,23 @@ def test_pupil_v1_ignored_or_opaque_extensions_do_not_enter_numeric_domain(
     assert result.outcome is ValidityOutcome.VALID
 
 
+@pytest.mark.parametrize("extension_field", ["historical_extension", "extra"])
+def test_camera_v1_ignored_or_opaque_extensions_do_not_enter_numeric_domain(
+    tmp_path: Path,
+    extension_field: str,
+) -> None:
+    data = per_band_camera_profile_dict()
+    data.update({"artifact_type": "camera_profile", "schema_version": 1})
+    text = json.dumps(data)[:-1]
+    text += f',"{extension_field}":{{"tiny":1e-999}}}}'
+    path = tmp_path / "opaque-camera-extension.json"
+    path.write_text(text, encoding="utf-8")
+
+    result = check_validity("camera_profile", path)
+
+    assert result.outcome is ValidityOutcome.VALID
+
+
 def test_pupil_v1_consumed_number_still_enforces_binary64_domain(
     tmp_path: Path,
 ) -> None:
@@ -1793,3 +1846,275 @@ def test_json_probe_stops_after_first_non_json_chunk(
         assert opened.probe.outcome is ProbeOutcome.NO_MATCH
 
     assert stream.bytes_read <= validation_module._JSON_PROBE_CHUNK_BYTES
+
+
+def _json_prefixed_hdf5_bytes() -> bytes:
+    metadata = b'{"user_block":"json metadata"}'
+    return metadata + (b" " * (512 - len(metadata))) + b"\x89HDF\r\n\x1a\n" + b"payload"
+
+
+def test_json_prefixed_hdf5_user_block_prefers_signature_capability(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "json-user-block.h5"
+    path.write_bytes(_json_prefixed_hdf5_bytes())
+
+    result = check_validity("raw_capture", path)
+
+    assert result.outcome is ValidityOutcome.UNSUPPORTED
+    assert result.representation is ArtifactRepresentation.HDF5
+    assert result.reason_codes == ("representation.reader_not_registered",)
+
+
+def test_full_hdf_reader_uniquely_matches_json_prefixed_user_block(
+    tmp_path: Path,
+) -> None:
+    identity = ArtifactIdentity(
+        "raw_capture",
+        ArtifactRepresentation.HDF5,
+        ArtifactVersionSet(payload=1),
+    )
+
+    class FullHDFReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            raw = path.read_bytes()
+            probe = (
+                ProbeResult.match()
+                if raw[512:520] == b"\x89HDF\r\n\x1a\n"
+                else ProbeResult.no_match()
+            )
+            yield OpenedRepresentation(
+                self.representation,
+                probe,
+                lambda: ParsedRepresentation(identity, raw),
+            )
+
+    readers = RepresentationReaderRegistry()
+    readers.register(validation_module._HDF5ProbeReader())
+    readers.register(validation_module._JSONRepresentationReader())
+    readers.register(FullHDFReader())
+    readers.freeze()
+    adapters = _register_exact(
+        SchemaAdapter(
+            artifact_type="raw_capture",
+            representation=ArtifactRepresentation.HDF5,
+            versions=ArtifactVersionSet(payload=1),
+            construct=lambda raw: raw,
+            validate_semantics=lambda raw: None,
+        )
+    )
+    path = tmp_path / "full-reader-user-block.h5"
+    path.write_bytes(_json_prefixed_hdf5_bytes())
+
+    result = check_validity(
+        "raw_capture",
+        path,
+        adapter_registry=adapters,
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert result.identified_identity == identity
+
+
+def test_explicit_json_identity_must_match_embedded_document() -> None:
+    adapter = _json_adapter("identity_bound")
+
+    with pytest.raises(ValidatorFailureError) as exc_info:
+        adapter.parse_and_validate(
+            {
+                "artifact_type": "different_type",
+                "schema_version": 999,
+            },
+            identity=adapter.identity,
+        )
+
+    assert exc_info.value.reason_code == "validator.reader_identity_contract_violation"
+
+
+def test_reader_identity_mismatch_with_json_document_is_validator_failure(
+    tmp_path: Path,
+) -> None:
+    adapter = _json_adapter("identity_bound")
+
+    class MismatchedJSONReader(RepresentationReader):
+        representation = ArtifactRepresentation.JSON
+
+        @contextmanager
+        def open(self, path: Path):
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match(),
+                lambda: ParsedRepresentation(
+                    adapter.identity,
+                    {
+                        "artifact_type": "different_type",
+                        "schema_version": 1,
+                    },
+                ),
+            )
+
+    readers = RepresentationReaderRegistry()
+    readers.register(MismatchedJSONReader())
+    readers.freeze()
+    path = tmp_path / "mismatched.json"
+    path.write_text("{}", encoding="utf-8")
+
+    result = check_validity(
+        "identity_bound",
+        path,
+        adapter_registry=_register_exact(adapter),
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.VALIDATOR_FAILED
+    assert result.reason_codes == ("validator.reader_identity_contract_violation",)
+
+
+def test_parsed_representation_rejects_non_identity_from_reader(
+    tmp_path: Path,
+) -> None:
+    class BrokenIdentityReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            yield OpenedRepresentation(
+                self.representation,
+                ProbeResult.match(),
+                lambda: ParsedRepresentation("not-an-identity", object()),
+            )
+
+    readers = RepresentationReaderRegistry()
+    readers.register(BrokenIdentityReader())
+    readers.freeze()
+    path = tmp_path / "broken-identity"
+    path.write_bytes(b"payload")
+
+    result = check_validity(
+        "raw_capture",
+        path,
+        adapter_registry=SchemaAdapterRegistry(),
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.VALIDATOR_FAILED
+    assert result.reason_codes == ("validator.reader_identity_contract_violation",)
+
+
+def test_unselected_reader_resource_closes_before_adapter_stages(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    identity = ArtifactIdentity(
+        "resource_owner",
+        ArtifactRepresentation.HDF5,
+        ArtifactVersionSet(payload=1),
+    )
+
+    class MatchReader(RepresentationReader):
+        representation = ArtifactRepresentation.HDF5
+
+        @contextmanager
+        def open(self, path: Path):
+            events.append("winner.open")
+            try:
+                yield OpenedRepresentation(
+                    self.representation,
+                    ProbeResult.match(),
+                    lambda: ParsedRepresentation(identity, b"payload"),
+                )
+            finally:
+                events.append("winner.close")
+
+    class NoMatchReader(RepresentationReader):
+        representation = ArtifactRepresentation.BUNDLE
+
+        @contextmanager
+        def open(self, path: Path):
+            events.append("loser.open")
+            try:
+                yield OpenedRepresentation(
+                    self.representation,
+                    ProbeResult.no_match(),
+                    lambda: pytest.fail("unselected reader must not parse"),
+                )
+            finally:
+                events.append("loser.close")
+
+    def construct(document):
+        assert "loser.close" in events
+        assert "winner.close" not in events
+        events.append("construct")
+        return document
+
+    readers = RepresentationReaderRegistry()
+    readers.register(NoMatchReader())
+    readers.register(MatchReader())
+    readers.freeze()
+    adapters = _register_exact(
+        SchemaAdapter(
+            artifact_type="resource_owner",
+            representation=ArtifactRepresentation.HDF5,
+            versions=ArtifactVersionSet(payload=1),
+            construct=construct,
+            validate_semantics=lambda document: events.append("semantic"),
+        )
+    )
+    path = tmp_path / "resource"
+    path.write_bytes(b"payload")
+
+    result = check_validity(
+        "resource_owner",
+        path,
+        adapter_registry=adapters,
+        reader_registry=readers,
+    )
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert events.index("loser.close") < events.index("construct")
+    assert events[-1] == "winner.close"
+
+
+@pytest.mark.parametrize(
+    ("profile_factory", "artifact_type"),
+    [
+        (
+            lambda: CameraProfile.from_dict(per_band_camera_profile_dict()),
+            "camera_profile",
+        ),
+        (lambda: PupilProfile.from_dict(pupil_profile_dict()), "pupil_profile"),
+    ],
+)
+def test_current_profile_writer_round_trips_through_validator(
+    tmp_path: Path,
+    profile_factory,
+    artifact_type: str,
+) -> None:
+    profile = profile_factory()
+    path = tmp_path / f"{artifact_type}.json"
+
+    profile.to_json(path)
+    result = check_validity(artifact_type, path)
+
+    assert result.outcome is ValidityOutcome.VALID
+    assert result.identified_identity == ArtifactIdentity(
+        artifact_type,
+        ArtifactRepresentation.JSON,
+        ArtifactVersionSet(manifest=1),
+    )
+
+
+def test_current_profile_writers_reject_nonfinite_json(tmp_path: Path) -> None:
+    pupil = PupilProfile.from_dict(pupil_profile_dict())
+    pupil.lcd_physical_center = (float("nan"), 1.0)
+    camera = CameraProfile.from_dict(per_band_camera_profile_dict())
+    camera.extra = {"nonfinite": float("inf")}
+
+    with pytest.raises(ValueError, match="JSON compliant"):
+        pupil.to_json(tmp_path / "pupil.json")
+    with pytest.raises(ValueError, match="JSON compliant"):
+        camera.to_json(tmp_path / "camera.json")

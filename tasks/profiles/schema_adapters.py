@@ -3,6 +3,8 @@ from __future__ import annotations
 """Historical profile readers registered outside the validation mechanism."""
 
 from collections.abc import Mapping
+from decimal import Decimal
+import math
 from typing import Any
 
 from tasks.artifacts.validation import (
@@ -70,11 +72,175 @@ PUPIL_PROFILE_V1_FIELDS = frozenset(
 
 
 def _load_camera_profile_v1(mapping: Mapping[str, Any]) -> CameraProfile:
-    return CameraProfile.from_v1_serialized_mapping(dict(mapping))
+    return CameraProfile.from_v1_serialized_mapping(_prepare_camera_profile_v1(mapping))
 
 
 def _load_pupil_profile_v1(mapping: Mapping[str, Any]) -> PupilProfile:
-    return PupilProfile.from_v1_serialized_mapping(dict(mapping))
+    return PupilProfile.from_v1_serialized_mapping(_prepare_pupil_profile_v1(mapping))
+
+
+def _construction_rejected(message: str) -> ConstructionValidationError:
+    return ConstructionValidationError(
+        "schema.construction.profile_rejected",
+        message,
+    )
+
+
+def _legacy_binary64(value: Any, field: str) -> float:
+    """Apply the v1 bridge's explicit Decimal-to-binary64 policy."""
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise _construction_rejected(f"{field} must be numeric") from None
+    if not math.isfinite(result):
+        raise _construction_rejected(f"{field} must be finite")
+    if isinstance(value, Decimal) and value != 0 and result == 0:
+        raise _construction_rejected(f"{field} is outside the binary64 range")
+    return result
+
+
+def _legacy_integer(value: Any, field: str) -> int:
+    try:
+        if isinstance(value, Decimal):
+            return int(_legacy_binary64(value, field))
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise _construction_rejected(f"{field} must be integer-compatible") from None
+
+
+def _convert_present(
+    target: dict[str, Any],
+    field: str,
+    converter,
+    *,
+    path: str | None = None,
+    allow_none: bool = True,
+) -> None:
+    if field in target and (target[field] is not None or not allow_none):
+        target[field] = converter(target[field], path or field)
+
+
+def _copy_mapping(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise _construction_rejected(f"{field} must be a mapping")
+    return dict(value)
+
+
+def _convert_sequence(
+    value: Any,
+    field: str,
+    length: int | None,
+    converter,
+    *,
+    allow_tuple: bool = True,
+) -> list[Any]:
+    accepted_types = (list, tuple) if allow_tuple else (list,)
+    if not isinstance(value, accepted_types) or (
+        length is not None and len(value) != length
+    ):
+        qualifier = f" exactly {length}" if length is not None else ""
+        raise _construction_rejected(f"{field} must contain{qualifier} values")
+    return [converter(item, field) for item in value]
+
+
+def _prepare_pupil_profile_v1(mapping: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert only fields consumed by the v1 loader; extensions stay opaque."""
+    prepared = dict(mapping)
+    for field in ("lcd_display_index", "subpixel_axis"):
+        _convert_present(prepared, field, _legacy_integer, allow_none=False)
+    for field in ("lcd_physical_center", "camera_psf_center"):
+        if field in prepared and prepared[field] is not None:
+            prepared[field] = _convert_sequence(
+                prepared[field], field, 2, _legacy_binary64
+            )
+    _convert_present(prepared, "lcd_physical_radius", _legacy_binary64)
+    for field in ("aperture_window", "recommended_roi"):
+        if field in prepared and prepared[field] is not None:
+            prepared[field] = _convert_sequence(
+                prepared[field], field, 4, _legacy_integer
+            )
+    return prepared
+
+
+_CAMERA_FLOAT_FIELDS = (
+    "exposure_us",
+    "gain_db",
+    "peak_pixel",
+    "saturation_margin",
+    "full_frame_peak_pixel",
+)
+_CAMERA_INTEGER_FIELDS = (
+    "frames_per_capture",
+    "full_frame_saturated_pixel_count",
+)
+
+
+def _prepare_camera_settings(
+    value: Any,
+    field: str,
+) -> dict[str, Any]:
+    settings = _copy_mapping(value, field)
+    for name in _CAMERA_FLOAT_FIELDS:
+        _convert_present(
+            settings,
+            name,
+            _legacy_binary64,
+            path=f"{field}.{name}",
+            allow_none=name not in {"exposure_us", "gain_db"},
+        )
+    for name in _CAMERA_INTEGER_FIELDS:
+        _convert_present(settings, name, _legacy_integer, path=f"{field}.{name}")
+    return settings
+
+
+def _prepare_camera_profile_v1(mapping: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply v1 numeric policy without inspecting ignored or opaque extensions."""
+    prepared = dict(mapping)
+    illumination = _copy_mapping(prepared.get("illumination"), "illumination")
+    for field in ("tls_setpoint_nm", "effective_wavelength_nm"):
+        _convert_present(
+            illumination,
+            field,
+            _legacy_binary64,
+            path=f"illumination.{field}",
+        )
+    if "wavelengths_nm" in illumination and illumination["wavelengths_nm"] is not None:
+        illumination["wavelengths_nm"] = _convert_sequence(
+            illumination["wavelengths_nm"],
+            "illumination.wavelengths_nm",
+            None,
+            _legacy_binary64,
+            allow_tuple=False,
+        )
+    prepared["illumination"] = illumination
+
+    camera = prepared.get("camera")
+    if camera is not None:
+        prepared["camera"] = _prepare_camera_settings(camera, "camera")
+        camera = prepared["camera"]
+    else:
+        camera = {}
+    for field in _CAMERA_FLOAT_FIELDS:
+        _convert_present(prepared, field, _legacy_binary64)
+    for field in _CAMERA_INTEGER_FIELDS:
+        _convert_present(prepared, field, _legacy_integer)
+
+    if prepared.get("per_wavelength"):
+        per_wavelength = _copy_mapping(prepared["per_wavelength"], "per_wavelength")
+        target = prepared
+    elif camera.get("per_wavelength"):
+        per_wavelength = _copy_mapping(
+            camera["per_wavelength"], "camera.per_wavelength"
+        )
+        target = camera
+    else:
+        per_wavelength = {}
+        target = prepared
+    target["per_wavelength"] = {
+        str(key): _prepare_camera_settings(value, f"per_wavelength[{key!r}]")
+        for key, value in per_wavelength.items()
+    }
+    return prepared
 
 
 def _validate_numeric_sequence(

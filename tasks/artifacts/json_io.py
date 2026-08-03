@@ -21,11 +21,16 @@ def decode_h5_string(value: Any) -> str:
 
 
 def json_dumps_stable(value: Any) -> str:
-    return json.dumps(value, indent=2, sort_keys=True)
+    return json.dumps(value, allow_nan=False, indent=2, sort_keys=True)
 
 
 def canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        value,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def read_json_dataset_or_attr(group: h5py.Group, name: str) -> dict[str, Any]:

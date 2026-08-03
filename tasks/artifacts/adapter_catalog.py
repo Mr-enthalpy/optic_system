@@ -17,6 +17,12 @@ from .validation import (
     ArtifactVersionSet,
     SchemaAdapterRegistry,
 )
+from .validation_requirements import (
+    CAMERA_PROFILE_V1_IDENTITY,
+    PUPIL_PROFILE_V1_IDENTITY,
+    REQUIRED_CURRENT_WRITER_IDENTITIES,
+    REQUIRED_READABLE_IDENTITIES,
+)
 
 AdapterProviderCallback = Callable[[SchemaAdapterRegistry], None]
 
@@ -42,16 +48,8 @@ PROFILE_V1_PROVIDER = SchemaAdapterProvider(
     name="profile_v1",
     identities=frozenset(
         {
-            ArtifactIdentity(
-                "camera_profile",
-                ArtifactRepresentation.JSON,
-                ArtifactVersionSet(manifest=1),
-            ),
-            ArtifactIdentity(
-                "pupil_profile",
-                ArtifactRepresentation.JSON,
-                ArtifactVersionSet(manifest=1),
-            ),
+            CAMERA_PROFILE_V1_IDENTITY,
+            PUPIL_PROFILE_V1_IDENTITY,
         }
     ),
     register=register_profile_v1_adapters,
@@ -112,6 +110,24 @@ def validate_registry_completeness(
         raise RuntimeError(
             f"built-in registry contains undeclared adapter identities: "
             f"{sorted(map(repr, undeclared))}"
+        )
+    declared_identities = frozenset(
+        ArtifactIdentity(artifact_type, representation, versions)
+        for artifact_type, representation, versions in declared
+    )
+    if declared_identities != REQUIRED_READABLE_IDENTITIES:
+        missing = REQUIRED_READABLE_IDENTITIES - declared_identities
+        extra = declared_identities - REQUIRED_READABLE_IDENTITIES
+        raise RuntimeError(
+            "adapter provider declarations do not match required readable "
+            f"identities; missing={sorted(map(repr, missing))}, "
+            f"extra={sorted(map(repr, extra))}"
+        )
+    if not REQUIRED_CURRENT_WRITER_IDENTITIES <= declared_identities:
+        missing_writers = REQUIRED_CURRENT_WRITER_IDENTITIES - declared_identities
+        raise RuntimeError(
+            "current writer identities lack adapters: "
+            f"{sorted(map(repr, missing_writers))}"
         )
     owned_manifest_types = {
         identity.artifact_type

@@ -117,6 +117,16 @@ class ParsedRepresentation:
     identity: ArtifactIdentity
     document: Any
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, ArtifactIdentity):
+            raise ParsedRepresentationContractError(
+                "parsed representation identity must be ArtifactIdentity"
+            )
+
+
+class ParsedRepresentationContractError(TypeError):
+    pass
+
 
 @dataclass(frozen=True)
 class ProbeResult:
@@ -565,6 +575,7 @@ def get_schema_adapter(
 
 class RepresentationReader(ABC):
     representation: ArtifactRepresentation
+    identifies_representation: bool = True
 
     @abstractmethod
     def open(
@@ -598,84 +609,150 @@ class RepresentationReaderRegistry:
 
     @contextmanager
     def open(self, path: Path) -> Iterator[OpenedRepresentation]:
-        with ExitStack() as stack:
-            opened = [_open_reader(reader, path, stack) for reader in self._readers]
+        sessions: list[_OpenedReaderSession] = []
+        try:
+            for reader in self._readers:
+                stack = ExitStack()
+                try:
+                    opened = _open_reader(reader, path, stack)
+                except Exception:
+                    stack.close()
+                    raise
+                sessions.append(_OpenedReaderSession(reader, opened, stack))
+            opened = [session.opened for session in sessions]
             for reader, candidate in zip(self._readers, opened, strict=True):
                 if candidate.representation is not reader.representation:
                     raise ValidatorFailureError(
                         "validator.reader_contract_violation",
                         "reader returned a different representation",
                     )
-            matches = [
-                item for item in opened if item.probe.outcome is ProbeOutcome.MATCH
-            ]
-            global_unreadable = [
-                item
-                for item in opened
-                if item.probe.outcome is ProbeOutcome.UNREADABLE
-                and item.probe.failure_scope is ProbeFailureScope.LOCATION_GLOBAL
-            ]
-            if global_unreadable:
-                item = global_unreadable[0]
-                raise RepresentationUnreadableError(
-                    item.probe.reason_code or "representation.probe_unreadable",
-                    item.probe.message
-                    or "representation probe could not read location",
-                )
-            if len(matches) > 1:
-                raise RepresentationUnreadableError(
-                    "representation.probe_ambiguous",
-                    "multiple representation readers matched the artifact location",
-                )
-            if len(matches) == 1:
-                yield matches[0]
-                return
-            local_unreadable = [
-                item
-                for item in opened
-                if item.probe.outcome is ProbeOutcome.UNREADABLE
-                and item.probe.failure_scope is ProbeFailureScope.READER_LOCAL
-            ]
-            if local_unreadable:
-                item = local_unreadable[0]
-                raise RepresentationUnreadableError(
-                    item.probe.reason_code or "representation.probe_unreadable",
-                    item.probe.message or "representation reader rejected the location",
-                    representation=item.representation,
-                )
-            limited = [
-                item
-                for item in opened
-                if item.probe.outcome is ProbeOutcome.UNSUPPORTED_LIMIT
-            ]
-            if limited:
-                item = limited[0]
-                raise ReaderLimitError(
-                    item.probe.reason_code or "reader_limit.representation_probe",
-                    item.probe.message or "representation probe exceeded reader limits",
-                    representation=item.representation,
-                )
-            unavailable = [
-                item
-                for item in opened
-                if item.probe.outcome is ProbeOutcome.UNSUPPORTED_CAPABILITY
-            ]
-            if unavailable:
-                item = unavailable[0]
-                raise UnsupportedRepresentationError(
-                    item.probe.reason_code or "representation.reader_not_registered",
-                    item.probe.message
-                    or "recognized representation has no installed reader",
-                    representation=item.representation,
-                )
-            raise UnsupportedRepresentationError(
-                "representation.reader_not_registered",
-                "validator_not_implemented: no representation reader recognized "
-                "the artifact location",
+            selected = _select_opened_representation(opened)
+            selected_session = next(
+                session for session in sessions if session.opened is selected
             )
+            for session in sessions:
+                if session is not selected_session:
+                    session.close()
+            yield selected
+        finally:
+            for session in reversed(sessions):
+                session.close()
 
     def freeze(self) -> None:
         self._frozen = True
+
+
+@dataclass
+class _OpenedReaderSession:
+    reader: RepresentationReader
+    opened: OpenedRepresentation
+    stack: ExitStack
+    closed: bool = False
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.stack.close()
+        except ArtifactValidationError as exc:
+            raise ValidatorFailureError(
+                "validator.reader_stage_contract_violation",
+                "reader close raised an artifact validation error",
+            ) from exc
+
+
+def _select_opened_representation(
+    opened: list[OpenedRepresentation],
+) -> OpenedRepresentation:
+    matches = [item for item in opened if item.probe.outcome is ProbeOutcome.MATCH]
+    global_unreadable = [
+        item
+        for item in opened
+        if item.probe.outcome is ProbeOutcome.UNREADABLE
+        and item.probe.failure_scope is ProbeFailureScope.LOCATION_GLOBAL
+    ]
+    if global_unreadable:
+        item = global_unreadable[0]
+        raise RepresentationUnreadableError(
+            item.probe.reason_code or "representation.probe_unreadable",
+            item.probe.message or "representation probe could not read location",
+        )
+    if len(matches) > 1:
+        raise RepresentationUnreadableError(
+            "representation.probe_ambiguous",
+            "multiple representation readers matched the artifact location",
+        )
+    if len(matches) == 1:
+        return matches[0]
+    local_unreadable = [
+        item
+        for item in opened
+        if item.probe.outcome is ProbeOutcome.UNREADABLE
+        and item.probe.failure_scope is ProbeFailureScope.READER_LOCAL
+    ]
+    limited = [
+        item for item in opened if item.probe.outcome is ProbeOutcome.UNSUPPORTED_LIMIT
+    ]
+    unavailable = [
+        item
+        for item in opened
+        if item.probe.outcome is ProbeOutcome.UNSUPPORTED_CAPABILITY
+    ]
+    capability_representations = {item.representation for item in unavailable}
+    same_representation_unreadable = [
+        item
+        for item in local_unreadable
+        if item.representation in capability_representations
+    ]
+    if same_representation_unreadable:
+        item = same_representation_unreadable[0]
+        raise RepresentationUnreadableError(
+            item.probe.reason_code or "representation.probe_unreadable",
+            item.probe.message or "representation reader rejected the location",
+            representation=item.representation,
+        )
+    same_representation_limited = [
+        item for item in limited if item.representation in capability_representations
+    ]
+    if same_representation_limited:
+        item = same_representation_limited[0]
+        raise ReaderLimitError(
+            item.probe.reason_code or "reader_limit.representation_probe",
+            item.probe.message or "representation probe exceeded reader limits",
+            representation=item.representation,
+        )
+    if unavailable:
+        if len(capability_representations) > 1:
+            raise RepresentationUnreadableError(
+                "representation.probe_ambiguous",
+                "multiple representation signatures recognized the location",
+            )
+        item = unavailable[0]
+        raise UnsupportedRepresentationError(
+            item.probe.reason_code or "representation.reader_not_registered",
+            item.probe.message or "recognized representation has no installed reader",
+            representation=item.representation,
+        )
+    if local_unreadable:
+        item = local_unreadable[0]
+        raise RepresentationUnreadableError(
+            item.probe.reason_code or "representation.probe_unreadable",
+            item.probe.message or "representation reader rejected the location",
+            representation=item.representation,
+        )
+    if limited:
+        item = limited[0]
+        raise ReaderLimitError(
+            item.probe.reason_code or "reader_limit.representation_probe",
+            item.probe.message or "representation probe exceeded reader limits",
+            representation=item.representation,
+        )
+    raise UnsupportedRepresentationError(
+        "representation.reader_not_registered",
+        "validator_not_implemented: no representation reader recognized "
+        "the artifact location",
+    )
 
 
 def _open_reader(
@@ -858,6 +935,7 @@ def _unsupported_hdf_parse() -> ParsedRepresentation:
 
 class _HDF5ProbeReader(RepresentationReader):
     representation = ArtifactRepresentation.HDF5
+    identifies_representation = False
 
     @contextmanager
     def open(self, path: Path) -> Iterator[OpenedRepresentation]:
@@ -1042,42 +1120,48 @@ class _JSONRepresentationReader(RepresentationReader):
             try:
                 text = bytes(raw).decode("utf-8-sig")
             except UnicodeError:
-                decode_error = RepresentationParseError(
-                    "representation.json.not_utf8",
-                    "artifact JSON is not valid UTF-8",
-                )
-
-                def raise_decode_error() -> ParsedRepresentation:
-                    raise decode_error
-
                 yield OpenedRepresentation(
                     self.representation,
-                    ProbeResult.match() if looks_json else ProbeResult.no_match(),
-                    (
-                        raise_decode_error
-                        if looks_json
-                        else lambda: _raise_not_detected_json()
+                    ProbeResult(
+                        ProbeOutcome.UNREADABLE,
+                        "representation.json.not_utf8",
+                        "artifact JSON is not valid UTF-8",
+                        ProbeFailureScope.READER_LOCAL,
                     ),
+                    lambda: _raise_not_detected_json(),
                 )
                 return
             try:
                 parsed_value = _parse_json_text_value(text)
-                parse_error: ArtifactValidationError | None = None
-                matches = True
-            except ArtifactValidationError as exc:
-                parsed_value = None
-                parse_error = exc
-                matches = looks_json
-
-            def parse_cached() -> ParsedRepresentation:
-                if parse_error is not None:
-                    raise parse_error
-                return _parsed_json_representation(parsed_value)
+            except ReaderLimitError as exc:
+                yield OpenedRepresentation(
+                    self.representation,
+                    ProbeResult(
+                        ProbeOutcome.UNSUPPORTED_LIMIT,
+                        exc.reason_code,
+                        exc.message,
+                        ProbeFailureScope.READER_LOCAL,
+                    ),
+                    lambda: _raise_not_detected_json(),
+                )
+                return
+            except RepresentationParseError as exc:
+                yield OpenedRepresentation(
+                    self.representation,
+                    ProbeResult(
+                        ProbeOutcome.UNREADABLE,
+                        exc.reason_code,
+                        exc.message,
+                        ProbeFailureScope.READER_LOCAL,
+                    ),
+                    lambda: _raise_not_detected_json(),
+                )
+                return
 
             yield OpenedRepresentation(
                 self.representation,
-                ProbeResult.match() if matches else ProbeResult.no_match(),
-                parse_cached,
+                ProbeResult.match(),
+                lambda: _parsed_json_representation(parsed_value),
             )
 
 
@@ -1094,7 +1178,7 @@ def build_default_representation_reader_registry() -> RepresentationReaderRegist
     return build_builtin_representation_reader_registry()
 
 
-_BUILTIN_REPRESENTATION_READERS = build_default_representation_reader_registry()
+_BUILTIN_REPRESENTATION_READERS: RepresentationReaderRegistry
 _BUILTIN_SCHEMA_ADAPTERS: SchemaAdapterRegistry
 
 
@@ -1104,6 +1188,32 @@ def _bootstrap_builtin_validation() -> None:
     from .adapter_catalog import build_builtin_schema_registry
 
     _BUILTIN_SCHEMA_ADAPTERS = build_builtin_schema_registry()
+
+    _validate_registry_composition(
+        _BUILTIN_SCHEMA_ADAPTERS,
+        _BUILTIN_REPRESENTATION_READERS,
+    )
+
+
+def _validate_registry_composition(
+    adapters: SchemaAdapterRegistry,
+    readers: RepresentationReaderRegistry,
+) -> None:
+    """Require every installed adapter representation to be identifiable."""
+    identifying_representations = frozenset(
+        reader.representation
+        for reader in readers.readers
+        if reader.identifies_representation
+    )
+    adapter_representations = frozenset(
+        adapter.representation for adapter in adapters.values()
+    )
+    missing = adapter_representations - identifying_representations
+    if missing:
+        raise RuntimeError(
+            "schema adapters lack identifying representation readers: "
+            f"{sorted(item.value for item in missing)}"
+        )
 
 
 def check_validity(
@@ -1242,6 +1352,11 @@ def _parse_opened_representation(
 ) -> ParsedRepresentation:
     try:
         parsed = opened.parse()
+    except ParsedRepresentationContractError as exc:
+        raise ValidatorFailureError(
+            "validator.reader_identity_contract_violation",
+            "reader returned an invalid parsed identity",
+        ) from exc
     except (
         RepresentationUnreadableError,
         RepresentationParseError,
@@ -1343,6 +1458,14 @@ def _resolve_adapter_identity(
     document: Any,
     identity: ArtifactIdentity | None,
 ) -> ArtifactIdentity:
+    if adapter.representation is ArtifactRepresentation.JSON:
+        embedded_identity = _identity_from_json_mapping(document)
+        if identity is not None and identity != embedded_identity:
+            raise ValidatorFailureError(
+                "validator.reader_identity_contract_violation",
+                "reader identity disagrees with serialized JSON identity",
+            )
+        return embedded_identity
     if identity is not None:
         if not isinstance(identity, ArtifactIdentity):
             raise ValidatorFailureError(
@@ -1350,12 +1473,10 @@ def _resolve_adapter_identity(
                 "adapter identity argument must be ArtifactIdentity",
             )
         return identity
-    if adapter.representation is not ArtifactRepresentation.JSON:
-        raise ValidatorFailureError(
-            "validator.adapter_identity_required",
-            "non-JSON schema adapter invocation requires explicit identity",
-        )
-    return _identity_from_json_mapping(document)
+    raise ValidatorFailureError(
+        "validator.adapter_identity_required",
+        "non-JSON schema adapter invocation requires explicit identity",
+    )
 
 
 def _deep_freeze(value: Any) -> Any:
@@ -1501,6 +1622,7 @@ def _sanitize_result_message(value: Any) -> str:
     )
 
 
+_BUILTIN_REPRESENTATION_READERS = build_default_representation_reader_registry()
 _bootstrap_builtin_validation()
 
 
