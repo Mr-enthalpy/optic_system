@@ -62,7 +62,11 @@ BUILTIN_ADAPTER_PROVIDERS: tuple[SchemaAdapterProvider, ...] = (PROFILE_V1_PROVI
 
 def build_builtin_schema_registry() -> SchemaAdapterRegistry:
     registry = SchemaAdapterRegistry()
+    provider_names: set[str] = set()
     for provider in BUILTIN_ADAPTER_PROVIDERS:
+        if provider.name in provider_names:
+            raise RuntimeError(f"duplicate adapter provider name {provider.name!r}")
+        provider_names.add(provider.name)
         before = frozenset(registry.adapters)
         provider.register(registry)
         after = frozenset(registry.adapters)
@@ -87,7 +91,11 @@ def validate_registry_completeness(
 ) -> None:
     """Validate completeness from provider declarations, without a type side table."""
     declared: set[tuple[str, ArtifactRepresentation, ArtifactVersionSet]] = set()
+    provider_names: set[str] = set()
     for provider in providers:
+        if provider.name in provider_names:
+            raise RuntimeError(f"duplicate adapter provider name {provider.name!r}")
+        provider_names.add(provider.name)
         for identity in provider.identities:
             key = (identity.artifact_type, identity.representation, identity.versions)
             if key in declared:

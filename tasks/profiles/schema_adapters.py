@@ -3,8 +3,6 @@ from __future__ import annotations
 """Historical profile readers registered outside the validation mechanism."""
 
 from collections.abc import Mapping
-from decimal import Decimal
-import math
 from typing import Any
 
 from tasks.artifacts.validation import (
@@ -71,32 +69,12 @@ PUPIL_PROFILE_V1_FIELDS = frozenset(
 )
 
 
-def _decimal_to_legacy_binary64(value: Any) -> Any:
-    if isinstance(value, Decimal):
-        converted = float(value)
-        if not math.isfinite(converted) or (value != 0 and converted == 0):
-            raise ConstructionValidationError(
-                "schema.construction.numeric_range",
-                "legacy profile number is outside its binary64 domain",
-            )
-        return converted
-    if isinstance(value, dict):
-        return {key: _decimal_to_legacy_binary64(child) for key, child in value.items()}
-    if isinstance(value, list):
-        return [_decimal_to_legacy_binary64(child) for child in value]
-    return value
-
-
 def _load_camera_profile_v1(mapping: Mapping[str, Any]) -> CameraProfile:
-    return CameraProfile.from_v1_serialized_mapping(
-        _decimal_to_legacy_binary64(dict(mapping))
-    )
+    return CameraProfile.from_v1_serialized_mapping(dict(mapping))
 
 
 def _load_pupil_profile_v1(mapping: Mapping[str, Any]) -> PupilProfile:
-    return PupilProfile.from_v1_serialized_mapping(
-        _decimal_to_legacy_binary64(dict(mapping))
-    )
+    return PupilProfile.from_v1_serialized_mapping(dict(mapping))
 
 
 def _validate_numeric_sequence(

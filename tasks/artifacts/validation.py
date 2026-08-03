@@ -10,7 +10,7 @@ two frozen registries and never tells a reader which identity it should find.
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, ExitStack, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 import json
@@ -171,30 +171,39 @@ class OpenedRepresentation:
 class ValidityResult:
     """Path-free, machine-readable result for one serialized representation."""
 
-    artifact_type: str
+    requested_artifact_type: str
     outcome: ValidityOutcome
-    representation: ArtifactRepresentation | None = None
-    versions: ArtifactVersionSet = field(default_factory=ArtifactVersionSet)
+    identified_identity: ArtifactIdentity | None = None
+    identified_representation: ArtifactRepresentation | None = None
     reason_codes: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        _require_artifact_type(self.artifact_type)
+        if not isinstance(self.requested_artifact_type, str):
+            raise ValueError("requested_artifact_type must be a string")
         if not isinstance(self.outcome, ValidityOutcome):
             raise ValueError("outcome must be ValidityOutcome")
-        if self.representation is not None and not isinstance(
-            self.representation,
+        if self.identified_identity is not None and not isinstance(
+            self.identified_identity,
+            ArtifactIdentity,
+        ):
+            raise ValueError("identified_identity must be ArtifactIdentity or None")
+        if self.identified_representation is not None and not isinstance(
+            self.identified_representation,
             ArtifactRepresentation,
         ):
-            raise ValueError("representation must be ArtifactRepresentation or None")
-        if not isinstance(self.versions, ArtifactVersionSet):
-            raise ValueError("versions must be ArtifactVersionSet")
-        has_versions = any(version is not None for version in self.versions.values())
-        if self.representation is None and has_versions:
-            raise ValueError("versions require an identified representation")
-        if self.representation is not None and has_versions:
-            ArtifactIdentity(self.artifact_type, self.representation, self.versions)
+            raise ValueError(
+                "identified_representation must be ArtifactRepresentation or None"
+            )
+        if (
+            self.identified_identity is not None
+            and self.identified_representation is not None
+        ):
+            raise ValueError(
+                "complete identity and partial representation are mutually exclusive"
+            )
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
         for reason_code in self.reason_codes:
             _require_reason_code(reason_code)
         object.__setattr__(
@@ -210,17 +219,20 @@ class ValidityResult:
         if self.outcome is ValidityOutcome.VALID:
             if self.reason_codes or self.errors:
                 raise ValueError("VALID result cannot contain reason codes or errors")
-            if self.representation is None or not has_versions:
+            if self.identified_identity is None:
                 raise ValueError("VALID result requires a complete artifact identity")
         elif not self.reason_codes:
             raise ValueError("non-VALID result requires at least one reason code")
         elif not self.errors:
             raise ValueError("non-VALID result requires a diagnostic message")
-        if self.outcome is ValidityOutcome.LEGACY_UNVERSIONED and has_versions:
-            raise ValueError("LEGACY_UNVERSIONED result cannot declare schema versions")
         if (
             self.outcome is ValidityOutcome.LEGACY_UNVERSIONED
-            and self.representation is None
+            and self.identified_identity is not None
+        ):
+            raise ValueError("LEGACY_UNVERSIONED result cannot have complete identity")
+        if (
+            self.outcome is ValidityOutcome.LEGACY_UNVERSIONED
+            and self.identified_representation is None
         ):
             raise ValueError("LEGACY_UNVERSIONED result requires representation")
 
@@ -244,6 +256,18 @@ class ValidityResult:
     def schema_version(self) -> int | None:
         """Compatibility scalar, valid only when zero or one axis is populated."""
         return _unambiguous_schema_version(self.versions)
+
+    @property
+    def representation(self) -> ArtifactRepresentation | None:
+        if self.identified_identity is not None:
+            return self.identified_identity.representation
+        return self.identified_representation
+
+    @property
+    def versions(self) -> ArtifactVersionSet:
+        if self.identified_identity is not None:
+            return self.identified_identity.versions
+        return ArtifactVersionSet()
 
 
 class ArtifactValidationError(ValueError):
@@ -271,6 +295,18 @@ class SerializedSchemaError(ArtifactValidationError):
     pass
 
 
+class RepresentationParseError(ArtifactValidationError):
+    outcome = ValidityOutcome.UNREADABLE
+
+
+class RepresentationStructureError(RepresentationParseError):
+    outcome = ValidityOutcome.INVALID
+
+
+class IdentityValidationError(ArtifactValidationError):
+    pass
+
+
 class ConstructionValidationError(ArtifactValidationError):
     pass
 
@@ -291,7 +327,7 @@ class ReaderLimitError(ArtifactValidationError):
     outcome = ValidityOutcome.UNSUPPORTED
 
 
-class LegacyUnversionedValidationError(ArtifactValidationError):
+class LegacyUnversionedValidationError(IdentityValidationError):
     outcome = ValidityOutcome.LEGACY_UNVERSIONED
 
 
@@ -345,7 +381,7 @@ class SchemaAdapter:
         *,
         identity: ArtifactIdentity | None = None,
     ) -> Any:
-        resolved_identity = identity or _identity_from_json_mapping(document)
+        resolved_identity = _resolve_adapter_identity(self, document, identity)
         if resolved_identity != self.identity:
             raise SerializedSchemaError(
                 "schema.identity.mismatch",
@@ -421,7 +457,7 @@ class LegacyCompatibilityBridge:
         *,
         identity: ArtifactIdentity | None = None,
     ) -> Any:
-        resolved_identity = identity or _identity_from_json_mapping(document)
+        resolved_identity = _resolve_adapter_identity(self, document, identity)
         if resolved_identity != self.identity:
             raise SerializedSchemaError(
                 "schema.identity.mismatch",
@@ -573,14 +609,6 @@ class RepresentationReaderRegistry:
             matches = [
                 item for item in opened if item.probe.outcome is ProbeOutcome.MATCH
             ]
-            if len(matches) > 1:
-                raise RepresentationUnreadableError(
-                    "representation.probe_ambiguous",
-                    "multiple representation readers matched the artifact location",
-                )
-            if len(matches) == 1:
-                yield matches[0]
-                return
             global_unreadable = [
                 item
                 for item in opened
@@ -594,6 +622,27 @@ class RepresentationReaderRegistry:
                     item.probe.message
                     or "representation probe could not read location",
                 )
+            if len(matches) > 1:
+                raise RepresentationUnreadableError(
+                    "representation.probe_ambiguous",
+                    "multiple representation readers matched the artifact location",
+                )
+            if len(matches) == 1:
+                yield matches[0]
+                return
+            local_unreadable = [
+                item
+                for item in opened
+                if item.probe.outcome is ProbeOutcome.UNREADABLE
+                and item.probe.failure_scope is ProbeFailureScope.READER_LOCAL
+            ]
+            if local_unreadable:
+                item = local_unreadable[0]
+                raise RepresentationUnreadableError(
+                    item.probe.reason_code or "representation.probe_unreadable",
+                    item.probe.message or "representation reader rejected the location",
+                    representation=item.representation,
+                )
             limited = [
                 item
                 for item in opened
@@ -604,6 +653,7 @@ class RepresentationReaderRegistry:
                 raise ReaderLimitError(
                     item.probe.reason_code or "reader_limit.representation_probe",
                     item.probe.message or "representation probe exceeded reader limits",
+                    representation=item.representation,
                 )
             unavailable = [
                 item
@@ -635,21 +685,30 @@ def _open_reader(
 ) -> OpenedRepresentation:
     try:
         opened = stack.enter_context(reader.open(path))
-    except (
-        RepresentationUnreadableError,
-        ReaderLimitError,
-        UnsupportedRepresentationError,
-    ):
-        raise
     except ArtifactValidationError as exc:
         raise ValidatorFailureError(
             "validator.reader_stage_contract_violation",
-            "reader open/probe raised a validation error for the wrong stage",
+            "reader open/probe must report expected failures through ProbeResult",
         ) from exc
     if not isinstance(opened, OpenedRepresentation):
         raise ValidatorFailureError(
             "validator.reader_contract_violation",
             "reader did not return OpenedRepresentation",
+        )
+    if not isinstance(opened.representation, ArtifactRepresentation):
+        raise ValidatorFailureError(
+            "validator.reader_contract_violation",
+            "reader returned an invalid representation",
+        )
+    if not isinstance(opened.probe, ProbeResult):
+        raise ValidatorFailureError(
+            "validator.reader_contract_violation",
+            "reader returned an invalid probe result",
+        )
+    if not callable(opened.parse_representation):
+        raise ValidatorFailureError(
+            "validator.reader_contract_violation",
+            "reader returned an invalid parse callback",
         )
     return opened
 
@@ -667,7 +726,9 @@ _MAX_JSON_INTEGER_DIGITS = 4300
 _MAX_JSON_DECIMAL_DIGITS = 4300
 _MAX_JSON_DECIMAL_EXPONENT = 1_000_000
 _MAX_JSON_BYTES = 16 * 1024 * 1024
+_JSON_PROBE_CHUNK_BYTES = 4096
 _JSON_START_BYTES = frozenset(b'{["-0123456789tfnNI')
+_JSON_WHITESPACE = b" \t\r\n"
 
 
 def _parse_json_integer(token: str) -> int:
@@ -690,7 +751,7 @@ def _parse_json_decimal(token: str) -> Decimal:
     try:
         value = Decimal(token)
     except InvalidOperation as exc:
-        raise RepresentationUnreadableError(
+        raise RepresentationParseError(
             "representation.json.number_invalid",
             "JSON decimal token is invalid",
         ) from exc
@@ -705,7 +766,7 @@ def _parse_json_decimal(token: str) -> Decimal:
 
 
 def _reject_json_constant(token: str) -> Any:
-    raise RepresentationUnreadableError(
+    raise RepresentationParseError(
         "representation.json.nonstandard_constant",
         f"non-standard JSON numeric constant {token!r} is not allowed",
     )
@@ -715,7 +776,7 @@ def _reject_duplicate_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
         if key in result:
-            raise SerializedSchemaError(
+            raise RepresentationStructureError(
                 "representation.json.duplicate_key",
                 f"duplicate JSON object key {key!r}",
             )
@@ -740,7 +801,7 @@ def _parse_json_text_value(text: str) -> Any:
             "JSON representation exceeds this reader's nesting limit",
         ) from exc
     except (json.JSONDecodeError, ValueError) as exc:
-        raise RepresentationUnreadableError(
+        raise RepresentationParseError(
             "representation.json.parse_error",
             "artifact JSON could not be parsed",
         ) from exc
@@ -750,7 +811,7 @@ def _parse_json_text_value(text: str) -> Any:
 def parse_json_text_mapping(text: str) -> dict[str, Any]:
     value = _parse_json_text_value(text)
     if not isinstance(value, dict):
-        raise SerializedSchemaError(
+        raise IdentityValidationError(
             "representation.json.root_invalid",
             "artifact JSON root must be a mapping",
         )
@@ -759,7 +820,7 @@ def parse_json_text_mapping(text: str) -> dict[str, Any]:
 
 def _parsed_json_representation(value: Any) -> ParsedRepresentation:
     if not isinstance(value, dict):
-        raise SerializedSchemaError(
+        raise IdentityValidationError(
             "representation.json.root_invalid",
             "artifact JSON root must be a mapping",
         )
@@ -890,7 +951,56 @@ class _JSONRepresentationReader(RepresentationReader):
             return
         with stream:
             try:
-                raw = stream.read(_MAX_JSON_BYTES + 1)
+                raw = bytearray()
+                looks_json: bool | None = None
+                probe_scanned = 0
+                bom_decided = False
+                while len(raw) <= _MAX_JSON_BYTES:
+                    chunk = stream.read(
+                        min(
+                            _JSON_PROBE_CHUNK_BYTES,
+                            _MAX_JSON_BYTES + 1 - len(raw),
+                        )
+                    )
+                    if not chunk:
+                        break
+                    raw.extend(chunk)
+                    if not bom_decided:
+                        if len(raw) < 3 and b"\xef\xbb\xbf".startswith(raw):
+                            continue
+                        probe_scanned = 3 if raw.startswith(b"\xef\xbb\xbf") else 0
+                        bom_decided = True
+                    first = next(
+                        (
+                            value
+                            for value in raw[probe_scanned:]
+                            if value not in _JSON_WHITESPACE
+                        ),
+                        None,
+                    )
+                    probe_scanned = len(raw)
+                    if first is None:
+                        continue
+                    looks_json = first in _JSON_START_BYTES
+                    break
+                if looks_json is False:
+                    yield OpenedRepresentation(
+                        self.representation,
+                        ProbeResult.no_match(),
+                        lambda: _raise_not_detected_json(),
+                    )
+                    return
+                if looks_json:
+                    while len(raw) <= _MAX_JSON_BYTES:
+                        chunk = stream.read(
+                            min(
+                                _JSON_PROBE_CHUNK_BYTES,
+                                _MAX_JSON_BYTES + 1 - len(raw),
+                            )
+                        )
+                        if not chunk:
+                            break
+                        raw.extend(chunk)
             except OSError:
                 yield OpenedRepresentation(
                     self.representation,
@@ -903,11 +1013,8 @@ class _JSONRepresentationReader(RepresentationReader):
                     lambda: _raise_not_detected_json(),
                 )
                 return
-            probe_raw = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
-            first = probe_raw.lstrip()[:1]
-            looks_json = bool(first and first[0] in _JSON_START_BYTES)
             if len(raw) > _MAX_JSON_BYTES:
-                if looks_json or not first:
+                if looks_json or looks_json is None:
                     yield OpenedRepresentation(
                         self.representation,
                         ProbeResult(
@@ -925,10 +1032,17 @@ class _JSONRepresentationReader(RepresentationReader):
                         lambda: _raise_not_detected_json(),
                     )
                 return
+            if looks_json is None:
+                yield OpenedRepresentation(
+                    self.representation,
+                    ProbeResult.no_match(),
+                    lambda: _raise_not_detected_json(),
+                )
+                return
             try:
-                text = raw.decode("utf-8-sig")
+                text = bytes(raw).decode("utf-8-sig")
             except UnicodeError:
-                decode_error = RepresentationUnreadableError(
+                decode_error = RepresentationParseError(
                     "representation.json.not_utf8",
                     "artifact JSON is not valid UTF-8",
                 )
@@ -1000,9 +1114,12 @@ def check_validity(
     reader_registry: RepresentationReaderRegistry | None = None,
 ) -> ValidityResult:
     """Compose one independently identifying reader and one exact contract."""
+    requested_artifact_type = (
+        artifact_type if isinstance(artifact_type, str) else repr(artifact_type)
+    )
     if not _is_artifact_type(artifact_type):
         return _result(
-            "unknown",
+            requested_artifact_type,
             ValidityOutcome.UNSUPPORTED,
             reason_codes=("artifact_type.invalid",),
             errors=("artifact_type must be a canonical identifier",),
@@ -1010,7 +1127,7 @@ def check_validity(
     artifact_path = Path(path)
     if not artifact_path.exists():
         return _result(
-            artifact_type,
+            requested_artifact_type,
             ValidityOutcome.UNREADABLE,
             reason_codes=("location.missing",),
             errors=("artifact location does not exist",),
@@ -1018,76 +1135,85 @@ def check_validity(
 
     adapters = adapter_registry or _BUILTIN_SCHEMA_ADAPTERS
     readers = reader_registry or _BUILTIN_REPRESENTATION_READERS
-    representation: ArtifactRepresentation | None = None
-    versions = ArtifactVersionSet()
+    identified_identity: ArtifactIdentity | None = None
+    identified_representation: ArtifactRepresentation | None = None
     try:
         with readers.open(artifact_path) as opened:
-            representation = opened.representation
+            identified_representation = opened.representation
             parsed = _parse_opened_representation(opened)
-            if parsed.identity.representation is not representation:
+            identified_identity = parsed.identity
+            if parsed.identity.representation is not identified_representation:
                 raise ValidatorFailureError(
                     "validator.reader_contract_violation",
                     "reader returned an identity for a different representation",
                 )
-            versions = parsed.identity.versions
             if parsed.identity.artifact_type != artifact_type:
-                raise SerializedSchemaError(
+                raise IdentityValidationError(
                     "schema.artifact_type.mismatch",
                     f"artifact_type mismatch: expected {artifact_type!r}, "
                     f"found {parsed.identity.artifact_type!r}",
                 )
-            adapter = adapters.get((artifact_type, representation, versions))
+            adapter = adapters.get(
+                (
+                    artifact_type,
+                    parsed.identity.representation,
+                    parsed.identity.versions,
+                )
+            )
             if adapter is None:
                 raise _missing_adapter_error(
                     artifact_type,
-                    representation,
-                    versions,
+                    parsed.identity.representation,
+                    parsed.identity.versions,
                     adapters,
                 )
             adapter.parse_and_validate(parsed.document, identity=parsed.identity)
             return _result(
-                artifact_type,
+                requested_artifact_type,
                 ValidityOutcome.VALID,
-                representation=representation,
-                versions=versions,
+                identified_identity=identified_identity,
             )
     except ArtifactValidationError as exc:
-        if representation is None and exc.representation is not None:
-            representation = exc.representation
+        if identified_representation is None and exc.representation is not None:
+            identified_representation = exc.representation
         return _result(
-            artifact_type,
+            requested_artifact_type,
             exc.outcome,
-            representation=representation,
-            versions=versions,
+            identified_identity=identified_identity,
+            identified_representation=(
+                None if identified_identity is not None else identified_representation
+            ),
             reason_codes=(exc.reason_code,),
             errors=(exc.message,),
         )
     except Exception as exc:  # noqa: BLE001 - undeclared programming failure.
         return _result(
-            artifact_type,
+            requested_artifact_type,
             ValidityOutcome.VALIDATOR_FAILED,
-            representation=representation,
-            versions=versions,
+            identified_identity=identified_identity,
+            identified_representation=(
+                None if identified_identity is not None else identified_representation
+            ),
             reason_codes=("validator.internal_failure",),
             errors=(f"validator raised {type(exc).__name__}",),
         )
 
 
 def _result(
-    artifact_type: str,
+    requested_artifact_type: str,
     outcome: ValidityOutcome,
     *,
-    representation: ArtifactRepresentation | None = None,
-    versions: ArtifactVersionSet | None = None,
+    identified_identity: ArtifactIdentity | None = None,
+    identified_representation: ArtifactRepresentation | None = None,
     reason_codes: tuple[str, ...] = (),
     errors: tuple[str, ...] = (),
     warnings: tuple[str, ...] = (),
 ) -> ValidityResult:
     return ValidityResult(
-        artifact_type=artifact_type,
+        requested_artifact_type=requested_artifact_type,
         outcome=outcome,
-        representation=representation,
-        versions=versions or ArtifactVersionSet(),
+        identified_identity=identified_identity,
+        identified_representation=identified_representation,
         reason_codes=reason_codes,
         errors=errors,
         warnings=warnings,
@@ -1118,9 +1244,9 @@ def _parse_opened_representation(
         parsed = opened.parse()
     except (
         RepresentationUnreadableError,
+        RepresentationParseError,
         ReaderLimitError,
-        SerializedSchemaError,
-        LegacyUnversionedValidationError,
+        IdentityValidationError,
     ):
         raise
     except ArtifactValidationError as exc:
@@ -1143,6 +1269,12 @@ def _validate_schema_contract(adapter: SchemaContract) -> None:
         raise ValueError("adapter allowed_fields must be frozenset or None")
     if type(adapter.required_fields) is not frozenset:
         raise ValueError("adapter required_fields must be frozenset")
+    for name, fields in (
+        ("allowed_fields", adapter.allowed_fields or frozenset()),
+        ("required_fields", adapter.required_fields),
+    ):
+        if any(not isinstance(field_name, str) for field_name in fields):
+            raise ValueError(f"adapter {name} must contain only strings")
     if (
         adapter.allowed_fields is not None
         and not adapter.required_fields <= adapter.allowed_fields
@@ -1206,6 +1338,26 @@ def _validate_document_fields(adapter: SchemaContract, document: Any) -> None:
         )
 
 
+def _resolve_adapter_identity(
+    adapter: SchemaContract,
+    document: Any,
+    identity: ArtifactIdentity | None,
+) -> ArtifactIdentity:
+    if identity is not None:
+        if not isinstance(identity, ArtifactIdentity):
+            raise ValidatorFailureError(
+                "validator.adapter_identity_invalid",
+                "adapter identity argument must be ArtifactIdentity",
+            )
+        return identity
+    if adapter.representation is not ArtifactRepresentation.JSON:
+        raise ValidatorFailureError(
+            "validator.adapter_identity_required",
+            "non-JSON schema adapter invocation requires explicit identity",
+        )
+    return _identity_from_json_mapping(document)
+
+
 def _deep_freeze(value: Any) -> Any:
     """Make exact JSON callback input transitively read-only."""
     if isinstance(value, Mapping):
@@ -1219,13 +1371,13 @@ def _deep_freeze(value: Any) -> Any:
 
 def _identity_from_json_mapping(document: Any) -> ArtifactIdentity:
     if not isinstance(document, Mapping):
-        raise SerializedSchemaError(
+        raise IdentityValidationError(
             "schema.identity.missing",
             "JSON identity requires a mapping document",
         )
     artifact_type = document.get("artifact_type")
     if not _is_artifact_type(artifact_type):
-        raise SerializedSchemaError(
+        raise IdentityValidationError(
             "schema.artifact_type.missing",
             "artifact_type is required and must be a canonical identifier",
         )
@@ -1236,7 +1388,7 @@ def _identity_from_json_mapping(document: Any) -> ArtifactIdentity:
         )
     version = document["schema_version"]
     if type(version) is not int or version < 1:
-        raise SerializedSchemaError(
+        raise IdentityValidationError(
             "schema.version.invalid",
             "schema_version must be a positive integer",
         )
@@ -1361,6 +1513,7 @@ __all__ = [
     "ConstructionValidationError",
     "LegacyCompatibilityBridge",
     "LegacyUnversionedValidationError",
+    "IdentityValidationError",
     "OpenedRepresentation",
     "ParsedRepresentation",
     "ProbeOutcome",
@@ -1369,6 +1522,8 @@ __all__ = [
     "ReaderLimitError",
     "RepresentationReader",
     "RepresentationReaderRegistry",
+    "RepresentationParseError",
+    "RepresentationStructureError",
     "RepresentationUnreadableError",
     "SchemaAdapter",
     "SchemaAdapterRegistry",

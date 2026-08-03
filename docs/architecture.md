@@ -266,9 +266,13 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   structured, scoped probe outcome (`match`, `no_match`, `unreadable`,
   `unsupported_limit`, or `unsupported_capability`), keeps representation
   resources alive through adapter validation, and extracts identity without
-  receiving the caller's expected artifact type. One unique match wins over
-  unrelated reader-local failures; ambiguous matches fail explicitly. The
-  HDF5 signature sentinel does not occupy or block a later full HDF5 reader.
+  receiving the caller's expected artifact type. Probe arbitration is ordered:
+  contract violations, location-global failures, ambiguous matches, one unique
+  match, reader-local unreadable, reader limits, unavailable capability, then
+  no recognized representation. Expected open/probe failures must be returned
+  as scoped `ProbeResult` values; direct validation exceptions are contract
+  violations. The HDF5 signature sentinel does not occupy or block a later
+  full HDF5 reader.
 - Schema dispatch is keyed by artifact type, representation, and an
   `ArtifactVersionSet` with independent manifest, payload, and bundle axes.
   `ArtifactIdentity` validates the legal axis shape for its representation.
@@ -286,12 +290,17 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   composite loaders use an explicit `LegacyCompatibilityBridge` and a narrow
   error translator rather than a cross-stage exception whitelist.
 - Reader open/probe and parse/identity stages have their own allowed error
-  sets. A reader that raises an artifact-validation error from the wrong stage
-  produces `validator.reader_stage_contract_violation`, never `invalid`.
+  sets. Representation parsing uses `RepresentationParseError`, identity
+  extraction uses `IdentityValidationError`, and `SerializedSchemaError` is
+  reserved for adapter serialized validation. A reader that raises an error
+  owned by another stage produces `validator.reader_stage_contract_violation`.
+  Non-JSON adapters require an explicit reader-produced identity.
 - Exact JSON adapters receive the same transitively read-only document in the
   serialized and construction stages. Serialized validation cannot mutate,
   repair, or migrate the value before construction; legacy bridges retain
-  their explicitly isolated compatibility behavior.
+  their explicitly isolated compatibility behavior. Frozen JSON callbacks use
+  the abstract `Mapping` / `Sequence` contract; concrete `dict` / `list`
+  container types are not promised.
 - Registries are private, reject duplicate identities, and freeze after an
   eager deterministic bootstrap. Each provider declares its complete identity
   set; bootstrap verifies actual registration against that declaration and
@@ -300,10 +309,12 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
 - Missing representation or version adapters fail closed with `unsupported`;
   unexpected callback failures use the distinct `validator_failed` outcome.
   Path existence is never validity evidence.
-- `ValidityResult` records the representation, version set, stable reason codes
-  and a closed outcome vocabulary. A valid result requires a complete legal
-  identity; representation/version shapes are checked with `ArtifactIdentity`,
-  and legacy-unversioned results retain their identified representation.
+- `ValidityResult` separates `requested_artifact_type` from the actual
+  `identified_identity`. A partial `identified_representation` is retained only
+  when parsing stopped before a complete identity was available. A valid result
+  requires a complete legal identity; mismatches never synthesize an identity
+  from the request type and file versions. Legacy-unversioned results retain
+  their identified representation.
   Reason codes use a validated lowercase dotted-identifier grammar. It
   intentionally does not retain the input path.
   A future catalog owns `(storage_root, rel_path)` separately, so
@@ -314,10 +325,12 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
 - JSON decimal tokens are parsed as `Decimal`, preserving underflow and decimal
   precision until the version-specific adapter chooses its numeric domain.
   Non-standard constants remain representation errors. The v1 profile bridge
-  explicitly converts accepted historical values to finite binary64 and
-  rejects overflow or non-zero underflow during construction.
-- The JSON reader performs one bounded read (currently 16 MiB), decodes and
-  parses once, then reuses the cached value for identity extraction. Every
+  converts only fields consumed by the historical loader to finite binary64;
+  ignored and opaque extension fields do not participate in validity. Consumed
+  values still reject overflow or non-zero underflow during construction.
+- The JSON reader probes in small chunks and stops at the first non-JSON token.
+  Once JSON is recognized it reads up to a 16 MiB limit, decodes and parses
+  once, then reuses the cached value for identity extraction. Every
   legal JSON root is recognized as JSON; non-mapping roots are subsequently
   rejected as `representation.json.root_invalid`. Leading whitespace has no
   separate probe cap, while oversized documents report
