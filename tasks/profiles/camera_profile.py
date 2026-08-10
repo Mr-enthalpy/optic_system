@@ -2,23 +2,37 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from decimal import Decimal
+import math
 from pathlib import Path
 from typing import Any
 
+from ._legacy_numeric import legacy_binary64 as _convert_legacy_binary64
+from ._legacy_numeric import legacy_int as _convert_legacy_int
 
 BROADBAND_PASSTHROUGH = "broadband_passthrough"
 PER_BAND_PUPIL_OPEN = "per_band_pupil_open"
 MONOCHROMATIC = "monochromatic"
-PSF_PRODUCING_TASK_FAMILIES = frozenset({
-    "psf_dictionary_capture",
-    "dotf_capture",
-    "mask_family_psf_capture",
-    "psf_capture",
-})
+PSF_PRODUCING_TASK_FAMILIES = frozenset(
+    {
+        "psf_dictionary_capture",
+        "dotf_capture",
+        "mask_family_psf_capture",
+        "psf_capture",
+    }
+)
 
 
 class ProfileError(ValueError):
     pass
+
+
+def _legacy_binary64(value: Any, name: str) -> float:
+    return _convert_legacy_binary64(value, name, ProfileError)
+
+
+def _legacy_int(value: Any, name: str) -> int:
+    return _convert_legacy_int(value, name, ProfileError)
 
 
 @dataclass
@@ -40,7 +54,9 @@ class CameraProfileIllumination:
             mode=_require_str(d, "mode"),
             tls_setpoint_nm=_optional_float(d.get("tls_setpoint_nm")),
             effective_wavelength_nm=_optional_float(d.get("effective_wavelength_nm")),
-            wavelengths_nm=[float(w) for w in wavelengths],
+            wavelengths_nm=[
+                _legacy_binary64(w, "illumination.wavelengths_nm") for w in wavelengths
+            ],
             source=_optional_str(d.get("source")),
         )
         spec.validate()
@@ -107,8 +123,8 @@ class PerWavelengthCameraSettings:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PerWavelengthCameraSettings:
         settings = cls(
-            exposure_us=float(_require_key(d, "exposure_us")),
-            gain_db=float(d.get("gain_db", 0.0)),
+            exposure_us=_legacy_binary64(_require_key(d, "exposure_us"), "exposure_us"),
+            gain_db=_legacy_binary64(d.get("gain_db", 0.0), "gain_db"),
             peak_pixel=_optional_float(d.get("peak_pixel")),
             saturation_margin=_optional_float(d.get("saturation_margin")),
             frames_per_capture=_optional_int(d.get("frames_per_capture")),
@@ -151,7 +167,9 @@ class PerWavelengthCameraSettings:
         if self.full_frame_peak_pixel is not None:
             result["full_frame_peak_pixel"] = self.full_frame_peak_pixel
         if self.full_frame_saturated_pixel_count is not None:
-            result["full_frame_saturated_pixel_count"] = self.full_frame_saturated_pixel_count
+            result["full_frame_saturated_pixel_count"] = (
+                self.full_frame_saturated_pixel_count
+            )
         return result
 
 
@@ -182,15 +200,18 @@ class CameraProfile:
         from tasks.artifact_versioning import read_schema_version
 
         read_schema_version(d, "camera_profile", legacy_mode=True)
+        return cls.from_v1_serialized_mapping(d)
+
+    @classmethod
+    def from_v1_serialized_mapping(cls, d: dict[str, Any]) -> CameraProfile:
+        """Construct the already-dispatched v1 contract without version lookup."""
         profile_family = _require_str(d, "profile_family")
         illumination = CameraProfileIllumination.from_dict(
             _require_dict(d, "illumination")
         )
         camera_block = _optional_dict(d.get("camera")) or {}
         per_wavelength_raw = (
-            d.get("per_wavelength")
-            or camera_block.get("per_wavelength")
-            or {}
+            d.get("per_wavelength") or camera_block.get("per_wavelength") or {}
         )
         if not isinstance(per_wavelength_raw, dict):
             raise ProfileError("per_wavelength must be a mapping")
@@ -201,12 +222,16 @@ class CameraProfile:
             lcd_state=_require_dict(d, "lcd_state"),
             valid_for=_require_str_list(d, "valid_for"),
             per_wavelength={
-                str(k): PerWavelengthCameraSettings.from_dict(v)
+                str(k): _per_wavelength_settings_from_value(v, str(k))
                 for k, v in per_wavelength_raw.items()
             },
-            exposure_us=_optional_float(d.get("exposure_us", camera_block.get("exposure_us"))),
+            exposure_us=_optional_float(
+                d.get("exposure_us", camera_block.get("exposure_us"))
+            ),
             gain_db=_optional_float(d.get("gain_db", camera_block.get("gain_db"))),
-            peak_pixel=_optional_float(d.get("peak_pixel", camera_block.get("peak_pixel"))),
+            peak_pixel=_optional_float(
+                d.get("peak_pixel", camera_block.get("peak_pixel"))
+            ),
             saturation_margin=_optional_float(
                 d.get("saturation_margin", camera_block.get("saturation_margin"))
             ),
@@ -217,7 +242,9 @@ class CameraProfile:
                 d.get("peak_pixel_domain", camera_block.get("peak_pixel_domain"))
             ),
             full_frame_peak_pixel=_optional_finite_number(
-                d.get("full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel")),
+                d.get(
+                    "full_frame_peak_pixel", camera_block.get("full_frame_peak_pixel")
+                ),
                 "full_frame_peak_pixel",
             ),
             full_frame_saturated_pixel_count=_optional_count(
@@ -301,7 +328,9 @@ class CameraProfile:
                 )
             return
 
-        raise ProfileError(f"unsupported camera profile family: {self.profile_family!r}")
+        raise ProfileError(
+            f"unsupported camera profile family: {self.profile_family!r}"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         from tasks.artifact_versioning import emit_schema_version
@@ -341,7 +370,9 @@ class CameraProfile:
             if self.full_frame_peak_pixel is not None:
                 camera["full_frame_peak_pixel"] = self.full_frame_peak_pixel
             if self.full_frame_saturated_pixel_count is not None:
-                camera["full_frame_saturated_pixel_count"] = self.full_frame_saturated_pixel_count
+                camera["full_frame_saturated_pixel_count"] = (
+                    self.full_frame_saturated_pixel_count
+                )
             if camera:
                 result["camera"] = camera
         for key in ("source_raw_capture_file", "created_at", "software_version"):
@@ -354,7 +385,10 @@ class CameraProfile:
         return result
 
     def to_json(self, path: str | Path | None = None) -> str:
-        text = json.dumps(self.to_dict(), indent=2, sort_keys=True)
+        from tasks.artifacts.json_io import json_dumps_stable
+
+        self.validate()
+        text = json_dumps_stable(self.to_dict())
         if path is not None:
             Path(path).write_text(text + "\n", encoding="utf-8")
         return text
@@ -471,32 +505,30 @@ def _optional_str(value: Any) -> str | None:
 def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ProfileError(f"expected float or null, got {value!r}") from None
+    return _legacy_binary64(value, "optional float")
 
 
 def _optional_finite_number(value: Any, name: str) -> float | None:
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         raise ProfileError(f"{name} must be a number or null")
-    import math
-
-    result = float(value)
-    if not math.isfinite(result):
-        raise ProfileError(f"{name} must be finite when present")
-    return result
+    return _legacy_binary64(value, name)
 
 
 def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        raise ProfileError(f"expected int or null, got {value!r}") from None
+    return _legacy_int(value, "optional int")
+
+
+def _per_wavelength_settings_from_value(
+    value: Any,
+    wavelength_key: str,
+) -> PerWavelengthCameraSettings:
+    if not isinstance(value, dict):
+        raise ProfileError(f"per_wavelength[{wavelength_key!r}] must be a mapping")
+    return PerWavelengthCameraSettings.from_dict(value)
 
 
 def _validate_optional_count(value: Any, name: str) -> None:

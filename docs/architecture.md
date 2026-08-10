@@ -252,21 +252,86 @@ Storage-location config layer (`tasks/storage_config.py`):
 
 Artifact schema versioning (`tasks/artifact_versioning.py`):
 
-- `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` are the single
-  source of truth for each artifact type's version and read-compatibility
-  window.
+- `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` are immutable
+  writer and legacy-compatibility declarations. An immutable artifact-type
+  vocabulary names known identities; current writer round-trip tests prove the
+  built-in registrations that matter in practice.
 - Every new serialized artifact emits a round-trippable integer
   `schema_version` via `emit_schema_version`. Strict reads reject a missing
   version as `legacy_unversioned`; compatibility loaders opt into legacy mode
   explicitly. Legacy compatibility is not catalog eligibility.
-- `check_validity(artifact_type, path)` is a strict local JSON-artifact check:
-  it requires an explicit artifact type and schema version, a readable loader,
-  and an implemented `.validate()` method. Types without a complete validator,
-  including current HDF5-only types, fail closed with
-  `validator_not_implemented`; path existence is never valid by itself.
-- `ValidityResult` intentionally does not retain the input path. A future
-  catalog owns `(storage_root, rel_path)` separately, so machine-specific
-  absolute paths cannot leak into tracked catalog records.
+- Representation dispatch is fixed and deterministic: a directory is a
+  bundle, an HDF5 signature (including a standard HDF5 user block) is HDF5,
+  and every other file is parsed as JSON. Only the selected reader opens the
+  path. JSON is fully parsed before it is accepted, so a damaged document is
+  unreadable rather than a competing lexical candidate.
+- Schema dispatch is keyed by artifact type, representation, and an
+  `ArtifactVersionSet` with independent manifest, payload, and bundle axes.
+  `ArtifactIdentity` validates the legal axis shape for its representation.
+  A scalar `schema_version` compatibility view is available only when at most
+  one axis is populated; multi-axis callers must use the named axis fields.
+- `check_validity()` selects one representation reader and then one exact
+  schema contract. Known artifact-type vocabulary and installed validation
+  capability are separate:
+  a known type without an adapter is `schema.adapter_not_registered`, not an
+  unknown identity.
+- Exact adapters always forbid undeclared fields and use stage-specific error
+  contracts: `SerializedSchemaError`, `ConstructionValidationError`, and
+  `SemanticValidationError`. A validation error raised from the wrong stage,
+  or any undeclared callback exception, is `validator_failed`. Historical
+  composite loaders use an explicit `LegacyCompatibilityBridge` and a narrow
+  error translator rather than a cross-stage exception whitelist.
+- Selected-reader parse/identity stages have their own allowed error sets.
+  Representation parsing uses `RepresentationParseError`, identity
+  extraction uses `IdentityValidationError`, and `SerializedSchemaError` is
+  reserved for adapter serialized validation. A reader that raises an error
+  owned by another stage produces `validator.reader_stage_contract_violation`.
+  `ParsedRepresentation` carries the reader-extracted `ArtifactIdentity`.
+  JSON reads it from the document; future HDF5 and bundle readers read their
+  native metadata. Non-JSON adapters require an explicit reader identity.
+- Serialized validators and constructors must not mutate their input document.
+  Built-in adapters are trusted project code and tests cover this contract, so
+  validation does not clone or freeze every legal JSON tree.
+- Registries reject duplicate exact identities and freeze after the small
+  built-in registration sequence. There are no provider or meta-registry
+  completeness authorities.
+- Missing representation or version adapters fail closed with `unsupported`;
+  unexpected callback failures use the distinct `validator_failed` outcome.
+  Path existence is never validity evidence.
+- `ValidityResult` separates `requested_artifact_type` from the actual
+  `identified_identity`. A partial `identified_representation` is retained only
+  when parsing stopped before a complete identity was available. A valid result
+  requires a complete legal identity; mismatches never synthesize an identity
+  from the request type and file versions. Legacy-unversioned results retain
+  their identified representation.
+  Reason codes use a validated lowercase dotted-identifier grammar. It
+  intentionally does not retain the input path.
+  A future catalog owns `(storage_root, rel_path)` separately, so
+  machine-specific absolute paths cannot leak into tracked catalog records.
+- The JSON integer digit cap is a local reader implementation limit and is
+  reported as `unsupported / reader_limit.json_integer_digits`, not as a claim
+  that the abstract artifact schema is mathematically invalid.
+- JSON decimal tokens are parsed as `Decimal`, preserving underflow and decimal
+  precision until the version-specific adapter chooses its numeric domain.
+  Non-standard constants remain representation errors. The v1 profile bridge
+  converts only fields consumed by the historical loader to finite binary64;
+  ignored and opaque extension fields do not participate in validity. Consumed
+  values retain the historical binary64 conversion behavior during construction.
+- The JSON reader reads up to a 16 MiB limit, decodes and parses once, then
+  reuses that value for identity extraction. Every legal JSON root is
+  recognized as JSON; non-mapping roots are subsequently rejected as
+  `representation.json.root_invalid`.
+- Current JSON writers use one stable serializer with `allow_nan=False` and
+  validate before emission. Round-trip tests require each production profile
+  writer's output to be accepted by the current reader and exact adapter.
+- This foundation change does not revise any artifact schema. Camera and pupil
+  remain schema v1. Their explicit compatibility bridges preserve the
+  historical open top-level field policy and translate expected `ProfileError`
+  rejections to `invalid`; Decimal-to-binary64 checks are confined to fields
+  consumed by the bridge and do not change the public domain loaders or inspect
+  ignored/opaque extensions. Strict recursive contracts remain later schema work.
+  The other measured manifests also remain schema v1 until their
+  version-specific adapters and migrations are introduced separately.
 
 The planned bundle and catalog-location contract is documented in
 [`artifact_bundle_design.md`](artifact_bundle_design.md). It is design work,
