@@ -69,11 +69,6 @@ from .validation import (
     register_representation_reader,
     register_schema_adapter,
 )
-from .reader_catalog import (
-    BUILTIN_READER_PROVIDERS,
-    RepresentationReaderProvider,
-    build_representation_reader_registry,
-)
 
 __all__ = [
     "AdditionalFieldsPolicy",
@@ -84,7 +79,6 @@ __all__ = [
     "ArtifactRef",
     "ArtifactVersionSet",
     "ConstructionValidationError",
-    "BUILTIN_READER_PROVIDERS",
     "CameraFrameExtent",
     "CoordinateFrameDescriptor",
     "FrameSource",
@@ -99,7 +93,6 @@ __all__ = [
     "ProbeFailureScope",
     "ProbeResult",
     "ReaderLimitError",
-    "RepresentationReaderProvider",
     "RepresentationParseError",
     "RepresentationStructureError",
     "RepresentationReader",
@@ -115,7 +108,6 @@ __all__ = [
     "ValidityOutcome",
     "ValidityResult",
     "build_default_representation_reader_registry",
-    "build_representation_reader_registry",
     "camera_frame_extent_from_camera_metadata",
     "camera_frame_extent_from_dict",
     "camera_frame_extent_json_dict",

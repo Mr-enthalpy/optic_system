@@ -3,8 +3,6 @@ from __future__ import annotations
 """Historical profile readers registered outside the validation mechanism."""
 
 from collections.abc import Mapping
-from decimal import Decimal
-import math
 from typing import Any
 
 from tasks.artifacts.validation import (
@@ -19,6 +17,7 @@ from tasks.artifacts.validation import (
 )
 
 from .camera_profile import CameraProfile, ProfileError
+from ._legacy_numeric import legacy_binary64, legacy_int
 from .pupil_profile import PupilProfile
 
 CAMERA_PROFILE_V1_FIELDS = frozenset(
@@ -87,25 +86,11 @@ def _construction_rejected(message: str) -> ConstructionValidationError:
 
 
 def _legacy_binary64(value: Any, field: str) -> float:
-    """Apply the v1 bridge's explicit Decimal-to-binary64 policy."""
-    try:
-        result = float(value)
-    except (TypeError, ValueError, OverflowError):
-        raise _construction_rejected(f"{field} must be numeric") from None
-    if not math.isfinite(result):
-        raise _construction_rejected(f"{field} must be finite")
-    if isinstance(value, Decimal) and value != 0 and result == 0:
-        raise _construction_rejected(f"{field} is outside the binary64 range")
-    return result
+    return legacy_binary64(value, field, ConstructionValidationError)
 
 
 def _legacy_integer(value: Any, field: str) -> int:
-    try:
-        if isinstance(value, Decimal):
-            return int(_legacy_binary64(value, field))
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        raise _construction_rejected(f"{field} must be integer-compatible") from None
+    return legacy_int(value, field, ConstructionValidationError)
 
 
 def _convert_present(

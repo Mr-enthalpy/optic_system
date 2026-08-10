@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from decimal import Decimal
+import math
 from pathlib import Path
 from typing import Any
+
+from ._legacy_numeric import legacy_binary64 as _convert_legacy_binary64
+from ._legacy_numeric import legacy_int as _convert_legacy_int
 
 BROADBAND_PASSTHROUGH = "broadband_passthrough"
 PER_BAND_PUPIL_OPEN = "per_band_pupil_open"
@@ -20,6 +25,14 @@ PSF_PRODUCING_TASK_FAMILIES = frozenset(
 
 class ProfileError(ValueError):
     pass
+
+
+def _legacy_binary64(value: Any, name: str) -> float:
+    return _convert_legacy_binary64(value, name, ProfileError)
+
+
+def _legacy_int(value: Any, name: str) -> int:
+    return _convert_legacy_int(value, name, ProfileError)
 
 
 @dataclass
@@ -41,7 +54,9 @@ class CameraProfileIllumination:
             mode=_require_str(d, "mode"),
             tls_setpoint_nm=_optional_float(d.get("tls_setpoint_nm")),
             effective_wavelength_nm=_optional_float(d.get("effective_wavelength_nm")),
-            wavelengths_nm=[float(w) for w in wavelengths],
+            wavelengths_nm=[
+                _legacy_binary64(w, "illumination.wavelengths_nm") for w in wavelengths
+            ],
             source=_optional_str(d.get("source")),
         )
         spec.validate()
@@ -108,8 +123,8 @@ class PerWavelengthCameraSettings:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PerWavelengthCameraSettings:
         settings = cls(
-            exposure_us=float(_require_key(d, "exposure_us")),
-            gain_db=float(d.get("gain_db", 0.0)),
+            exposure_us=_legacy_binary64(_require_key(d, "exposure_us"), "exposure_us"),
+            gain_db=_legacy_binary64(d.get("gain_db", 0.0), "gain_db"),
             peak_pixel=_optional_float(d.get("peak_pixel")),
             saturation_margin=_optional_float(d.get("saturation_margin")),
             frames_per_capture=_optional_int(d.get("frames_per_capture")),
@@ -207,7 +222,7 @@ class CameraProfile:
             lcd_state=_require_dict(d, "lcd_state"),
             valid_for=_require_str_list(d, "valid_for"),
             per_wavelength={
-                str(k): PerWavelengthCameraSettings.from_dict(v)
+                str(k): _per_wavelength_settings_from_value(v, str(k))
                 for k, v in per_wavelength_raw.items()
             },
             exposure_us=_optional_float(
@@ -490,32 +505,30 @@ def _optional_str(value: Any) -> str | None:
 def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ProfileError(f"expected float or null, got {value!r}") from None
+    return _legacy_binary64(value, "optional float")
 
 
 def _optional_finite_number(value: Any, name: str) -> float | None:
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         raise ProfileError(f"{name} must be a number or null")
-    import math
-
-    result = float(value)
-    if not math.isfinite(result):
-        raise ProfileError(f"{name} must be finite when present")
-    return result
+    return _legacy_binary64(value, name)
 
 
 def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        raise ProfileError(f"expected int or null, got {value!r}") from None
+    return _legacy_int(value, "optional int")
+
+
+def _per_wavelength_settings_from_value(
+    value: Any,
+    wavelength_key: str,
+) -> PerWavelengthCameraSettings:
+    if not isinstance(value, dict):
+        raise ProfileError(f"per_wavelength[{wavelength_key!r}] must be a mapping")
+    return PerWavelengthCameraSettings.from_dict(value)
 
 
 def _validate_optional_count(value: Any, name: str) -> None:

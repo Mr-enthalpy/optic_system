@@ -253,39 +253,26 @@ Storage-location config layer (`tasks/storage_config.py`):
 Artifact schema versioning (`tasks/artifact_versioning.py`):
 
 - `CURRENT_SCHEMA_VERSIONS` / `MIN_READABLE_SCHEMA_VERSIONS` are immutable
-  writer and legacy-compatibility declarations. An independent immutable
-  artifact-type vocabulary names known identities. Validation capability is
-  owned by the frozen adapter catalog; providers list exact identities and
-  bootstrap checks writer-current and readable-policy coverage separately.
+  writer and legacy-compatibility declarations. An immutable artifact-type
+  vocabulary names known identities; current writer round-trip tests prove the
+  built-in registrations that matter in practice.
 - Every new serialized artifact emits a round-trippable integer
   `schema_version` via `emit_schema_version`. Strict reads reject a missing
   version as `legacy_unversioned`; compatibility loaders opt into legacy mode
   explicitly. Legacy compatibility is not catalog eligibility.
-- Representation readers expose a context-managed `open(path)` operation.
-  Reader providers are composed at bootstrap. The opened session reports a
-  structured, scoped probe outcome (`match`, `no_match`, `unreadable`,
-  `unsupported_limit`, or `unsupported_capability`), keeps representation
-  resources alive through arbitration, and extracts identity without receiving
-  the caller's expected artifact type. After arbitration, unselected reader
-  contexts close immediately; only the selected reader remains open through
-  adapter validation. `match` is conclusive, not a lexical-format hint: a JSON
-  candidate that fails complete parsing reports reader-local unreadable. Probe
-  arbitration gives location-global failures and ambiguous conclusive matches
-  precedence, accepts one conclusive match over unrelated local failures, and
-  lets a strong capability signature (such as an HDF5 user-block signature)
-  outrank an unrelated malformed JSON candidate. A full reader's local failure
-  outranks a same-representation capability sentinel. Expected open/probe
-  failures must be returned as scoped `ProbeResult` values; direct validation
-  exceptions are contract violations. The HDF5 signature sentinel does not
-  occupy or block a later full HDF5 reader.
+- Representation dispatch is fixed and deterministic: a directory is a
+  bundle, an HDF5 signature (including a standard HDF5 user block) is HDF5,
+  and every other file is parsed as JSON. Only the selected reader opens the
+  path. JSON is fully parsed before it is accepted, so a damaged document is
+  unreadable rather than a competing lexical candidate.
 - Schema dispatch is keyed by artifact type, representation, and an
   `ArtifactVersionSet` with independent manifest, payload, and bundle axes.
   `ArtifactIdentity` validates the legal axis shape for its representation.
   A scalar `schema_version` compatibility view is available only when at most
   one axis is populated; multi-axis callers must use the named axis fields.
-- `check_validity()` only composes one independently identifying reader with
-  one exact schema contract; it contains no JSON/HDF5/bundle branches. Known
-  artifact-type vocabulary and installed validation capability are separate:
+- `check_validity()` selects one representation reader and then one exact
+  schema contract. Known artifact-type vocabulary and installed validation
+  capability are separate:
   a known type without an adapter is `schema.adapter_not_registered`, not an
   unknown identity.
 - Exact adapters always forbid undeclared fields and use stage-specific error
@@ -294,31 +281,20 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   or any undeclared callback exception, is `validator_failed`. Historical
   composite loaders use an explicit `LegacyCompatibilityBridge` and a narrow
   error translator rather than a cross-stage exception whitelist.
-- Reader open/probe and parse/identity stages have their own allowed error
-  sets. Representation parsing uses `RepresentationParseError`, identity
+- Selected-reader parse/identity stages have their own allowed error sets.
+  Representation parsing uses `RepresentationParseError`, identity
   extraction uses `IdentityValidationError`, and `SerializedSchemaError` is
   reserved for adapter serialized validation. A reader that raises an error
   owned by another stage produces `validator.reader_stage_contract_violation`.
-  `ParsedRepresentation` requires a real `ArtifactIdentity`. JSON adapters
-  independently extract the embedded identity and require it to equal the
-  reader identity; disagreement is a reader identity contract violation.
-  Non-JSON adapters require an explicit reader-produced identity and retain
-  responsibility for validating representation-native identity metadata.
-- Exact JSON adapters receive the same transitively read-only document in the
-  serialized and construction stages. Serialized validation cannot mutate,
-  repair, or migrate the value before construction; legacy bridges retain
-  their explicitly isolated compatibility behavior. Frozen JSON callbacks use
-  the abstract `Mapping` / `Sequence` contract; concrete `dict` / `list`
-  container types are not promised.
-- Registries are private, reject duplicate identities, and freeze after an
-  eager deterministic bootstrap. An independent requirements authority lists
-  required readable identities, current-writer identities, and identifying
-  representation capabilities. Each provider declares its implementation set;
-  bootstrap requires authority, provider declarations, registered adapters,
-  and installed identifying readers to agree. Removing an entire provider or
-  the JSON reader therefore fails bootstrap instead of shrinking the claimed
-  system requirements. Tests and later representations use independent
-  registry instances rather than replacing production contracts.
+  `ParsedRepresentation` carries the reader-extracted `ArtifactIdentity`.
+  JSON reads it from the document; future HDF5 and bundle readers read their
+  native metadata. Non-JSON adapters require an explicit reader identity.
+- Serialized validators and constructors must not mutate their input document.
+  Built-in adapters are trusted project code and tests cover this contract, so
+  validation does not clone or freeze every legal JSON tree.
+- Registries reject duplicate exact identities and freeze after the small
+  built-in registration sequence. There are no provider or meta-registry
+  completeness authorities.
 - Missing representation or version adapters fail closed with `unsupported`;
   unexpected callback failures use the distinct `validator_failed` outcome.
   Path existence is never validity evidence.
@@ -341,17 +317,13 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   converts only fields consumed by the historical loader to finite binary64;
   ignored and opaque extension fields do not participate in validity. Consumed
   values still reject overflow or non-zero underflow during construction.
-- The JSON reader probes in small chunks and stops at the first non-JSON token.
-  Once JSON is recognized it reads up to a 16 MiB limit, decodes and parses
-  once, then reuses the cached value for identity extraction. Every
-  legal JSON root is recognized as JSON; non-mapping roots are subsequently
-  rejected as `representation.json.root_invalid`. Leading whitespace has no
-  separate probe cap, while oversized documents report
-  `reader_limit.json_bytes`.
+- The JSON reader reads up to a 16 MiB limit, decodes and parses once, then
+  reuses that value for identity extraction. Every legal JSON root is
+  recognized as JSON; non-mapping roots are subsequently rejected as
+  `representation.json.root_invalid`.
 - Current JSON writers use one stable serializer with `allow_nan=False` and
-  validate before emission. Bootstrap owns explicit current-writer identities,
-  and round-trip tests require each production profile writer's output to be
-  accepted by the reader/adapter identity registered for that writer version.
+  validate before emission. Round-trip tests require each production profile
+  writer's output to be accepted by the current reader and exact adapter.
 - This foundation change does not revise any artifact schema. Camera and pupil
   remain schema v1. Their explicit compatibility bridges preserve the
   historical open top-level field policy and translate expected `ProfileError`

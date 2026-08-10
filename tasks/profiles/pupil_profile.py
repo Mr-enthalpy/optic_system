@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ._legacy_numeric import legacy_binary64, legacy_int
 from .camera_profile import ProfileError
 
 
@@ -38,8 +39,12 @@ class PupilProfile:
         profile = cls(
             pupil_profile_id=_require_str(d, "pupil_profile_id"),
             lcd_coordinate_convention=_require_str(d, "lcd_coordinate_convention"),
-            lcd_display_index=int(_require_key(d, "lcd_display_index")),
-            subpixel_axis=int(_require_key(d, "subpixel_axis")),
+            lcd_display_index=legacy_int(
+                _require_key(d, "lcd_display_index"), "lcd_display_index", ProfileError
+            ),
+            subpixel_axis=legacy_int(
+                _require_key(d, "subpixel_axis"), "subpixel_axis", ProfileError
+            ),
             lcd_physical_center=_float_pair(_require_key(d, "lcd_physical_center")),
             lcd_physical_radius=_optional_float(d.get("lcd_physical_radius")),
             aperture_window=_optional_int_quad(d.get("aperture_window")),
@@ -140,7 +145,10 @@ def _require_str(d: dict[str, Any], key: str) -> str:
 def _float_pair(value: Any) -> tuple[float, float]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ProfileError(f"expected a 2-element coordinate pair, got {value!r}")
-    return float(value[0]), float(value[1])
+    return (
+        legacy_binary64(value[0], "coordinate pair", ProfileError),
+        legacy_binary64(value[1], "coordinate pair", ProfileError),
+    )
 
 
 def _optional_float_pair(value: Any) -> tuple[float, float] | None:
@@ -154,16 +162,18 @@ def _optional_int_quad(value: Any) -> tuple[int, int, int, int] | None:
         return None
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         raise ProfileError(f"expected a 4-element integer tuple, got {value!r}")
-    return int(value[0]), int(value[1]), int(value[2]), int(value[3])
+    return (
+        legacy_int(value[0], "integer tuple", ProfileError),
+        legacy_int(value[1], "integer tuple", ProfileError),
+        legacy_int(value[2], "integer tuple", ProfileError),
+        legacy_int(value[3], "integer tuple", ProfileError),
+    )
 
 
 def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ProfileError(f"expected float or null, got {value!r}") from None
+    return legacy_binary64(value, "optional float", ProfileError)
 
 
 def _optional_str(value: Any) -> str | None:
