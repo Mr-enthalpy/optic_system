@@ -256,7 +256,7 @@ Every current raw capture HDF5 records audit flags equivalent to:
   "scientific_calibration_valid": false,
   "optical_alignment_validated":   false,
   "training_ready":                false,
-  "raw_capture_schema_version":    2,
+  "raw_capture_schema_version":    3,
   "capture_role":                  "minimal_capture"
 }
 ```

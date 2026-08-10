@@ -36,6 +36,22 @@ Active:
 - measured-response handoff publication (for `reconstruction` consumption)
 - reserve and define external-repository capture plan consumption protocol (placeholder until external repos exist)
 
+### Deferred Artifact Data Management
+
+Artifact-ID provenance, bundle integrity, and catalog/index work are deferred
+until multiple artifact generations must be located, selected, superseded, or
+cleaned up. When that need becomes concrete, implement the data-management
+sequence in this order:
+
+```text
+minimal artifact identity + catalog/index
+  -> provenance references resolved from source artifacts
+  -> optional integrity/hash policy
+```
+
+Current task APIs continue to use explicit paths or typed objects. They must not
+require callers to supply both a source path and a manually duplicated source ID.
+
 ## Repository Boundary
 
 `optic_system` is responsible for measured artifact construction:
