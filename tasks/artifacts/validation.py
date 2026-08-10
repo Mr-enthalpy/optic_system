@@ -15,6 +15,7 @@ from enum import Enum
 import json
 from pathlib import Path
 import re
+from types import MappingProxyType
 from typing import Any
 
 from tasks.artifact_versioning import ARTIFACT_TYPE_VOCABULARY

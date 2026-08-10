@@ -316,7 +316,7 @@ Artifact schema versioning (`tasks/artifact_versioning.py`):
   Non-standard constants remain representation errors. The v1 profile bridge
   converts only fields consumed by the historical loader to finite binary64;
   ignored and opaque extension fields do not participate in validity. Consumed
-  values still reject overflow or non-zero underflow during construction.
+  values retain the historical binary64 conversion behavior during construction.
 - The JSON reader reads up to a 16 MiB limit, decodes and parses once, then
   reuses that value for identity extraction. Every legal JSON root is
   recognized as JSON; non-mapping roots are subsequently rejected as

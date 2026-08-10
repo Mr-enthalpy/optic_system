@@ -246,6 +246,30 @@ def test_v1_bridge_restores_decimal_underflow_to_historical_float_behavior(
     assert check_validity("camera_profile", path).outcome is ValidityOutcome.VALID
 
 
+def test_v1_bridge_reports_bad_integer_as_invalid_not_validator_failure(
+    tmp_path: Path,
+) -> None:
+    data = pupil_profile_dict()
+    data.update({"artifact_type": "pupil_profile", "schema_version": 1})
+    data["lcd_display_index"] = "abc"
+    path = tmp_path / "pupil-bad-integer.json"
+    _write_json(path, data)
+
+    result = check_validity("pupil_profile", path)
+
+    assert result.outcome is ValidityOutcome.INVALID
+    assert result.reason_codes == ("schema.construction.profile_rejected",)
+
+
+def test_schema_registry_adapters_view_is_read_only() -> None:
+    from tasks.artifacts.adapter_catalog import build_builtin_schema_registry
+
+    registry = build_builtin_schema_registry()
+
+    with pytest.raises(TypeError):
+        registry.adapters["unexpected"] = None  # type: ignore[index]
+
+
 def test_wrong_version_and_wrong_type_fail_closed(tmp_path: Path) -> None:
     path = tmp_path / "profile.json"
     data = pupil_profile_dict()
