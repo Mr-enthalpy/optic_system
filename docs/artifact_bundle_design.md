@@ -87,9 +87,9 @@ generation.
 
 ## Deferred Implementation
 
-Before catalog implementation, the repository needs artifact-specific JSON and
-HDF5 validators, payload inventories and digests, and a canonical logical-key
-definition. Destructive garbage collection is out of scope for the first
-catalog version; initial tooling may only report orphan candidates or a dry-run
-plan. Resume semantics for large HDF5 products will use committed-entry markers
-and finalized state, while small JSON-derived artifacts can use atomic writes.
+Bundle implementation is deferred until a catalog/index has a concrete consumer.
+The intended order is a minimal catalog and resolver first, provenance references
+second, and optional payload integrity/hash policy only where its I/O cost has a
+demonstrated operational benefit. Cleanup must remain conservative and based on
+explicit reachability; initial tooling may only report orphan candidates or a
+dry-run plan.

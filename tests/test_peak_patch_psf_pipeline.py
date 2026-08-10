@@ -121,8 +121,8 @@ def _raw_psf_capture(
             frame[12, 14] = 80 + ci
             writer.append_capture(
                 capture_index=ci,
-                wavelength_index=ci % plan.n_wavelengths,
-                mask_index=ci // plan.n_wavelengths,
+                wavelength_index=ci // plan.n_masks,
+                mask_index=ci % plan.n_masks,
                 frames=None,
                 frames_avg=frame,
                 camera_meta={
@@ -218,7 +218,7 @@ def test_builds_full_frame_survey_as_scout_artifact(tmp_path: Path) -> None:
     )
 
     assert manifest.full_frame_role == "scout"
-    assert manifest.entry_mask_ids == ["mask_a", "mask_a", "mask_b", "mask_b"]
+    assert manifest.entry_mask_ids == ["mask_a", "mask_b", "mask_a", "mask_b"]
     assert manifest.unique_wavelengths_nm == [450.0, 550.0]
     with h5py.File(survey_path, "r") as f:
         assert f["full_frame_survey/frames_avg"].shape == (4, 20, 20)

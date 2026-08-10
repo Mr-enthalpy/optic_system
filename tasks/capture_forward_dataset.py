@@ -404,7 +404,7 @@ def run_capture_forward_dataset(
                 )
                 capture_idx += 1
 
-        writer.finalize(completed=True)
+        writer.finalize()
         _safe_status_update(
             status,
             phase="completed",
@@ -423,9 +423,7 @@ def run_capture_forward_dataset(
             completed=False,
             error=error,
         )
-        writer.finalize(completed=False, error=str(
-            _last_exc_info()
-        ))
+        writer.finalize(error=error)
         raise
 
     return output_path
