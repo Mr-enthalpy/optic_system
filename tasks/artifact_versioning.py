@@ -60,7 +60,7 @@ CURRENT_SCHEMA_VERSIONS: Mapping[str, int] = MappingProxyType(
         "peak_patch_psf_dictionary": 1,
         "sensor_energy_center_profile": 1,
         "peak_support_analysis_report": 1,
-        "raw_capture": 2,
+        "raw_capture": 3,
     }
 )
 

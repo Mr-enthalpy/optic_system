@@ -368,6 +368,132 @@ class TestRawCaptureWriter:
         assert bool(writer._file["capture/completed"][0]) is False
         writer.finalize(error="invalid camera metadata")
 
+    def test_failure_after_partial_hdf5_writes_does_not_commit_row(
+        self,
+        sample_plan: CapturePlan,
+        tmp_h5_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        writer = RawCaptureWriter(tmp_h5_path, sample_plan)
+        writer.open()
+
+        def reject_wavelength_metadata(*_args, **_kwargs) -> None:
+            raise RawCaptureWriteError("simulated shared metadata failure")
+
+        monkeypatch.setattr(
+            writer,
+            "_write_or_validate_wavelength_metadata",
+            reject_wavelength_metadata,
+        )
+        frame = np.arange(12, dtype=np.float32).reshape(3, 4)
+
+        with pytest.raises(RawCaptureWriteError, match="shared metadata failure"):
+            writer.append_capture(
+                capture_index=0,
+                wavelength_index=0,
+                mask_index=0,
+                frames=np.array([]),
+                frames_avg=frame,
+                camera_meta={"exposure_us": 123.0},
+            )
+
+        assert writer._file is not None
+        np.testing.assert_array_equal(writer._file["raw/frames_avg"][0], frame)
+        assert float(writer._file["camera/readback_exposure_us"][0]) == 123.0
+        assert bool(writer._file["capture/completed"][0]) is False
+        writer.finalize(error="simulated shared metadata failure")
+
+        with h5py.File(tmp_h5_path, "r") as f:
+            flags = json.loads(_h5_str(f["capture/processing_flags_json"]))
+            assert flags["n_captures_written"] == 0
+            assert flags["last_completed_capture_index"] == -1
+
+    def test_committed_frame_shape_cannot_be_resized_by_later_capture(
+        self, sample_plan: CapturePlan, tmp_h5_path: Path
+    ) -> None:
+        sample_plan.store_burst = True
+        writer = RawCaptureWriter(tmp_h5_path, sample_plan)
+        writer.open()
+        first_frame = np.arange(16, dtype=np.float32).reshape(4, 4)
+        first_burst = np.stack(
+            [first_frame + index for index in range(sample_plan.camera.frames_per_capture)]
+        )
+        writer.append_capture(
+            capture_index=0,
+            wavelength_index=0,
+            mask_index=0,
+            frames=first_burst,
+            frames_avg=first_frame,
+            camera_meta={},
+        )
+
+        with pytest.raises(RawCaptureWriteError, match="spatial shape cannot change"):
+            writer.append_capture(
+                capture_index=1,
+                wavelength_index=0,
+                mask_index=1,
+                frames=np.ones(
+                    (sample_plan.camera.frames_per_capture, 2, 2),
+                    dtype=np.float32,
+                ),
+                frames_avg=np.ones((2, 2), dtype=np.float32),
+                camera_meta={},
+            )
+        writer.finalize(error="frame shape changed")
+
+        with h5py.File(tmp_h5_path, "r") as f:
+            assert f["raw/frames_avg"].shape == (sample_plan.n_captures, 4, 4)
+            assert f["raw/frames"].shape == (
+                sample_plan.n_captures,
+                sample_plan.camera.frames_per_capture,
+                4,
+                4,
+            )
+            np.testing.assert_array_equal(f["raw/frames_avg"][0], first_frame)
+            np.testing.assert_array_equal(f["raw/frames"][0], first_burst)
+            np.testing.assert_array_equal(
+                f["capture/completed"][:],
+                np.array([True, False, False, False]),
+            )
+            flags = json.loads(_h5_str(f["capture/processing_flags_json"]))
+            assert flags["n_captures_written"] == 1
+
+    def test_rejects_changes_to_committed_wavelength_metadata(
+        self, sample_plan: CapturePlan, tmp_h5_path: Path
+    ) -> None:
+        writer = RawCaptureWriter(tmp_h5_path, sample_plan)
+        writer.open()
+        initial_tls = {"grating": 1, "timestamp_ns": 111, "state": "ready"}
+        writer.append_capture(
+            capture_index=0,
+            wavelength_index=0,
+            mask_index=0,
+            frames=np.array([]),
+            frames_avg=np.ones((3, 4), dtype=np.float32),
+            camera_meta={},
+            tls_status=initial_tls,
+        )
+
+        with pytest.raises(RawCaptureWriteError, match="shared wavelength metadata"):
+            writer.append_capture(
+                capture_index=1,
+                wavelength_index=0,
+                mask_index=1,
+                frames=np.array([]),
+                frames_avg=np.full((3, 4), 2.0, dtype=np.float32),
+                camera_meta={},
+                tls_status={"grating": 1, "timestamp_ns": 222, "state": "changed"},
+            )
+        writer.finalize(error="wavelength metadata changed")
+
+        with h5py.File(tmp_h5_path, "r") as f:
+            assert int(f["tls/timestamp_ns"][0]) == 111
+            assert json.loads(_h5_array_str(f["tls/status_json"])) == initial_tls
+            np.testing.assert_array_equal(
+                f["capture/completed"][:],
+                np.array([True, False, False, False]),
+            )
+
     def test_complete_capture_can_record_later_run_failure(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
     ) -> None:

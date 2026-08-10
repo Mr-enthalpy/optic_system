@@ -14,12 +14,13 @@ from .artifacts.coordinate_frame import (
     camera_frame_extent_from_camera_metadata,
     camera_frame_extent_json_dict,
 )
+from .artifact_versioning import schema_compat
 from .capture_plan import CapturePlan
 
 
 # Schema v3 makes the writer-emitted root identity and finalized capture-count
 # flags mandatory. Existing schema-v2 files remain historical artifacts.
-RAW_CAPTURE_SCHEMA_VERSION = 3
+RAW_CAPTURE_SCHEMA_VERSION = schema_compat("raw_capture").current
 SOFTWARE_NAME = "optic_system"
 DEFAULT_CAPTURE_ROLE = "minimal_capture"
 
@@ -131,6 +132,7 @@ class RawCaptureWriter:
         self._n_written: int = 0
         self._committed_capture_indices: set[int] = set()
         self._committed_capture_combinations: set[tuple[int, int]] = set()
+        self._committed_wavelength_indices: set[int] = set()
         self._mask_arrays_written: bool = False
         self._closed: bool = False
         self._created_at_ns: int = _now_ns()
@@ -469,10 +471,10 @@ class RawCaptureWriter:
         wl = self._plan.wavelengths[wavelength_index]
         if tls_status:
             grating = int(tls_status.get("grating") or wl.grating or -1)
-            tls_timestamp_ns = int(tls_status.get("timestamp_ns") or _now_ns())
+            tls_timestamp_ns = int(tls_status.get("timestamp_ns") or 0)
         else:
             grating = int(wl.grating or -1)
-            tls_timestamp_ns = _now_ns()
+            tls_timestamp_ns = 0
         illumination_data = _illumination_status_json(wl, tls_status)
         illumination_json = _json_str(illumination_data)
         tls_setpoint_nm = (
@@ -491,6 +493,11 @@ class RawCaptureWriter:
         # A row is committed only after every frame and metadata field succeeds.
         dset_avg: h5py.Dataset = f["raw/frames_avg"]
         if dset_avg.shape[1:] != avg.shape:
+            if self._n_written:
+                raise RawCaptureWriteError(
+                    "frame spatial shape cannot change after the first committed "
+                    f"capture: expected {dset_avg.shape[1:]}, got {avg.shape}"
+                )
             dset_avg.resize((self._plan.n_captures, avg.shape[0], avg.shape[1]))
         dset_avg[row] = avg
 
@@ -498,6 +505,11 @@ class RawCaptureWriter:
             dset = self._require_burst_dataset(burst_input.dtype)
             burst = burst_input.astype(dset.dtype, copy=False)
             if dset.shape[2:] != burst.shape[1:]:
+                if self._n_written:
+                    raise RawCaptureWriteError(
+                        "burst spatial shape cannot change after the first committed "
+                        f"capture: expected {dset.shape[2:]}, got {burst.shape[1:]}"
+                    )
                 dset.resize(
                     (
                         self._plan.n_captures,
@@ -534,21 +546,64 @@ class RawCaptureWriter:
         lcd_grp["settle_ms"][row] = self._plan.lcd_settle_ms
         lcd_grp["display_timestamp_ns"][row] = lcd_timestamp_ns
 
-        wl_grp = f["tls"]
-        f["illumination"]["illumination_json"][wavelength_index] = illumination_json
-        f["illumination"]["tls_setpoint_nm"][wavelength_index] = tls_setpoint_nm
-        f["illumination"]["effective_wavelength_nm"][wavelength_index] = (
-            effective_wavelength_nm
+        self._write_or_validate_wavelength_metadata(
+            wavelength_index,
+            illumination_json=illumination_json,
+            tls_setpoint_nm=tls_setpoint_nm,
+            effective_wavelength_nm=effective_wavelength_nm,
+            grating=grating,
+            tls_settle_ms=tls_settle_ms,
+            tls_timestamp_ns=tls_timestamp_ns,
+            tls_status_json=tls_status_json,
         )
-        wl_grp["grating"][wavelength_index] = grating
-        wl_grp["settle_ms"][wavelength_index] = tls_settle_ms
-        wl_grp["timestamp_ns"][wavelength_index] = tls_timestamp_ns
-        wl_grp["status_json"][wavelength_index] = tls_status_json
 
         cap_grp["completed"][row] = True
         self._committed_capture_indices.add(capture_index)
         self._committed_capture_combinations.add(combination)
+        self._committed_wavelength_indices.add(wavelength_index)
         self._n_written += 1
+
+    def _write_or_validate_wavelength_metadata(
+        self,
+        wavelength_index: int,
+        *,
+        illumination_json: str,
+        tls_setpoint_nm: float,
+        effective_wavelength_nm: float,
+        grating: int,
+        tls_settle_ms: int,
+        tls_timestamp_ns: int,
+        tls_status_json: str,
+    ) -> None:
+        """Write shared wavelength metadata once, then require exact agreement."""
+        assert self._file is not None
+        values = (
+            ("illumination/illumination_json", illumination_json),
+            ("illumination/tls_setpoint_nm", tls_setpoint_nm),
+            ("illumination/effective_wavelength_nm", effective_wavelength_nm),
+            ("tls/grating", grating),
+            ("tls/settle_ms", tls_settle_ms),
+            ("tls/timestamp_ns", tls_timestamp_ns),
+            ("tls/status_json", tls_status_json),
+        )
+        if wavelength_index in self._committed_wavelength_indices:
+            mismatches = [
+                path
+                for path, candidate in values
+                if not _h5_values_equal(
+                    self._file[path][wavelength_index],
+                    candidate,
+                )
+            ]
+            if mismatches:
+                raise RawCaptureWriteError(
+                    "shared wavelength metadata differs from the committed value "
+                    f"for wavelength_index {wavelength_index}: {', '.join(mismatches)}"
+                )
+            return
+
+        for path, value in values:
+            self._file[path][wavelength_index] = value
 
     def finalize(
         self,
@@ -655,6 +710,17 @@ def _validated_index(value: Any, *, upper_bound: int, name: str) -> int:
             f"{name} must be in [0, {upper_bound}), got {index}"
         )
     return index
+
+
+def _h5_values_equal(stored: Any, candidate: Any) -> bool:
+    if isinstance(stored, bytes):
+        stored = stored.decode("utf-8")
+    if isinstance(stored, np.generic):
+        stored = stored.item()
+    if isinstance(stored, float) and isinstance(candidate, float):
+        if np.isnan(stored) and np.isnan(candidate):
+            return True
+    return bool(stored == candidate)
 
 
 def _capture_schedule_is_complete(

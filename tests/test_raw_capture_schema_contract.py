@@ -6,8 +6,9 @@ import h5py
 import numpy as np
 import pytest
 
+from tasks.artifact_versioning import schema_compat
 from tasks.capture_plan import CapturePlan
-from tasks.raw_capture_h5 import RawCaptureWriter
+from tasks.raw_capture_h5 import RAW_CAPTURE_SCHEMA_VERSION, RawCaptureWriter
 
 
 def _sample_plan() -> CapturePlan:
@@ -138,3 +139,9 @@ def test_root_attrs_present(tmp_path: Path) -> None:
         assert "created_at_ns" in f.attrs
         assert "hdf5_writer_version" in f.attrs
         assert f.attrs["artifact_type"] == "raw_capture"
+
+
+def test_writer_schema_version_matches_central_authority() -> None:
+    compat = schema_compat("raw_capture")
+    assert RAW_CAPTURE_SCHEMA_VERSION == compat.current == 3
+    assert compat.min_readable == 2

@@ -138,7 +138,16 @@ Completed rows have unique capture indices and unique wavelength/mask
 combinations. A complete capture exactly covers the full Cartesian product.
 The writer sets
 `capture/completed[row]` only after the frame and all row metadata have been
-written. Processing flags record `n_captures_written` and `n_captures_total`,
+written. The first committed capture fixes the spatial shape of both
+`frames_avg` and the optional burst dataset; later appends with a different
+frame shape fail without resizing or changing earlier committed rows.
+
+Illumination and TLS datasets are shared by every capture with the same
+`wavelength_index`. The first committed capture for an index establishes those
+values. Later captures must supply exactly matching shared metadata or the row
+is rejected without changing the established wavelength entry.
+
+Processing flags record `n_captures_written` and `n_captures_total`,
 which must agree with the capture bitmap and planned frame rows. They also
 separate:
 
