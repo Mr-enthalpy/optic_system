@@ -235,6 +235,17 @@ def test_legacy_profile_defaults_and_window_semantics_remain_readable(
     assert check_validity("pupil_profile", pupil_path).outcome is ValidityOutcome.VALID
 
 
+def test_v1_bridge_restores_decimal_underflow_to_historical_float_behavior(
+    tmp_path: Path,
+) -> None:
+    profile = CameraProfile.from_dict(per_band_camera_profile_dict())
+    text = profile.to_json().replace('"gain_db": 0.0', '"gain_db": 1e-999')
+    path = tmp_path / "camera-underflow.json"
+    path.write_text(text, encoding="utf-8")
+
+    assert check_validity("camera_profile", path).outcome is ValidityOutcome.VALID
+
+
 def test_wrong_version_and_wrong_type_fail_closed(tmp_path: Path) -> None:
     path = tmp_path / "profile.json"
     data = pupil_profile_dict()

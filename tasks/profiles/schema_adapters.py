@@ -3,6 +3,7 @@ from __future__ import annotations
 """Historical profile readers registered outside the validation mechanism."""
 
 from collections.abc import Mapping
+import math
 from typing import Any
 
 from tasks.artifacts.validation import (
@@ -17,7 +18,7 @@ from tasks.artifacts.validation import (
 )
 
 from .camera_profile import CameraProfile, ProfileError
-from ._legacy_numeric import legacy_binary64, legacy_int
+from ._legacy_numeric import legacy_int
 from .pupil_profile import PupilProfile
 
 CAMERA_PROFILE_V1_FIELDS = frozenset(
@@ -86,7 +87,14 @@ def _construction_rejected(message: str) -> ConstructionValidationError:
 
 
 def _legacy_binary64(value: Any, field: str) -> float:
-    return legacy_binary64(value, field, ConstructionValidationError)
+    """Restore the binary64 value that the historical JSON loader received."""
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise _construction_rejected(f"{field} must be numeric") from None
+    if not math.isfinite(result):
+        raise _construction_rejected(f"{field} must be finite")
+    return result
 
 
 def _legacy_integer(value: Any, field: str) -> int:
