@@ -6,10 +6,10 @@
 
 - 分支：`udc-main`。
 - 起点：`19bdbe7242ea036d38753e1d91653aa036b97798`（PR #59）。
-- 工作区：`C:/Users/hanni/PycharmProjects/optic_system-udc`，独立 Git worktree。
+- 工作区：独立 Git worktree（示例目录名 `optic_system-udc/`）；实际位置由开发者选择。
 - 原 `master` 保持 `93d06ad`，其未跟踪 `outputs/` 和实验数据未修改。只 fetch 了 origin；检查到远端最新 `1bea821`（#98）。
 - 未 reset、强制推送、修改默认分支、删除远端分支/tag 或创建 Meta Repository。
-- 全部实现按文件/功能选择性恢复，没有整条 PR cherry-pick。该报告中的实际路径仅是交付记录，不是运行配置。
+- 全部实现按文件/功能选择性恢复，没有整条 PR cherry-pick。目录名仅作说明，不是运行配置；仓库不依赖特定父目录或本机路径。
 
 ## 历史资产的复用
 
