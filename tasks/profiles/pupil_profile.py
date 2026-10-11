@@ -17,8 +17,6 @@ class PupilProfile:
     lcd_physical_center: tuple[float, float]
     lcd_physical_radius: float | None = None
     aperture_window: tuple[int, int, int, int] | None = None
-    camera_psf_center: tuple[float, float] | None = None
-    recommended_roi: tuple[int, int, int, int] | None = None
     fit_quality: dict[str, Any] = field(default_factory=dict)
     source_raw_capture_file: str | None = None
     created_at: str | None = None
@@ -27,6 +25,8 @@ class PupilProfile:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PupilProfile:
+        if "camera_psf_center" in d or "recommended_roi" in d:
+            raise ProfileError("sensor center and ROI geometry are separate measurements/configuration, not PupilProfile fields")
         profile = cls(
             pupil_profile_id=_require_str(d, "pupil_profile_id"),
             lcd_coordinate_convention=_require_str(d, "lcd_coordinate_convention"),
@@ -35,8 +35,6 @@ class PupilProfile:
             lcd_physical_center=_float_pair(_require_key(d, "lcd_physical_center")),
             lcd_physical_radius=_optional_float(d.get("lcd_physical_radius")),
             aperture_window=_optional_int_quad(d.get("aperture_window")),
-            camera_psf_center=_optional_float_pair(d.get("camera_psf_center")),
-            recommended_roi=_optional_int_quad(d.get("recommended_roi")),
             fit_quality=_optional_dict(d.get("fit_quality")) or {},
             source_raw_capture_file=_optional_str(d.get("source_raw_capture_file")),
             created_at=_optional_str(d.get("created_at")),
@@ -71,10 +69,6 @@ class PupilProfile:
             result["lcd_physical_radius"] = self.lcd_physical_radius
         if self.aperture_window is not None:
             result["aperture_window"] = list(self.aperture_window)
-        if self.camera_psf_center is not None:
-            result["camera_psf_center"] = list(self.camera_psf_center)
-        if self.recommended_roi is not None:
-            result["recommended_roi"] = list(self.recommended_roi)
         if self.fit_quality:
             result["fit_quality"] = self.fit_quality
         for key in ("source_raw_capture_file", "created_at", "software_version"):
@@ -127,12 +121,6 @@ def _float_pair(value: Any) -> tuple[float, float]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ProfileError(f"expected a 2-element coordinate pair, got {value!r}")
     return float(value[0]), float(value[1])
-
-
-def _optional_float_pair(value: Any) -> tuple[float, float] | None:
-    if value is None:
-        return None
-    return _float_pair(value)
 
 
 def _optional_int_quad(value: Any) -> tuple[int, int, int, int] | None:

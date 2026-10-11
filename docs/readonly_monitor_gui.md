@@ -24,7 +24,7 @@ The monitor merges them for display but does not connect to hardware.
 Terminal 1 runs a capture task with `--status-dir`:
 
 ```bash
-python scripts/capture_forward_dataset.py --plan plan.yaml --hardware --status-dir outputs/run_status/latest
+python scripts/capture_dataset.py --plan plan.yaml --hardware --status-dir outputs/run_status/latest
 ```
 
 Terminal 2 opens the monitor with the same `--status-dir`:

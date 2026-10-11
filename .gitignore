@@ -1,8 +1,11 @@
-.idea/
 .venv/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-data/raw/
-plans/generated_masks/
+*.py[cod]
+.pytest_cache/
+.idea/
+outputs/
+data/
+local_config/
+*.h5
+*.hdf5
+*.dll

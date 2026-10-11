@@ -47,8 +47,6 @@ def pupil_profile_dict() -> dict:
         "subpixel_axis": 1,
         "lcd_physical_center": [1065.25, 1871.54],
         "lcd_physical_radius": 52.8,
-        "camera_psf_center": [1149.13, 934.51],
-        "recommended_roi": [893, 679, 512, 512],
         "fit_quality": {"r2": 0.9992},
     }
 
@@ -89,9 +87,9 @@ def per_band_camera_profile_dict() -> dict:
             }
         },
         "valid_for": [
-            "psf_dictionary_capture",
-            "dotf_capture",
-            "mask_family_psf_capture",
+            "psf_survey_capture",
+            "optical_diagnostic_capture",
+            "display_response_capture",
         ],
     }
 
@@ -131,7 +129,7 @@ def test_pupil_profile_roundtrip_json(tmp_path: Path) -> None:
 
     assert loaded.pupil_profile_id == "pupil_profile_v1"
     assert loaded.subpixel_axis == 1
-    assert loaded.recommended_roi == (893, 679, 512, 512)
+    assert loaded.lcd_physical_radius == 52.8
 
 
 def test_per_band_profile_requires_selected_pupil_open() -> None:
@@ -178,7 +176,7 @@ def test_psf_plan_requires_matching_pupil_and_per_band_profile() -> None:
     pupil = PupilProfile.from_dict(pupil_profile_dict())
     camera = CameraProfile.from_dict(per_band_camera_profile_dict())
     plan = {
-        "task_type": "psf_dictionary_capture",
+        "task_type": "psf_survey_capture",
         "requires": {
             "pupil_profile_id": "pupil_profile_v1",
             "camera_profile_id": "per_band_pupil_open_v1",
@@ -200,7 +198,7 @@ def test_psf_plan_wavelengths_must_be_covered_by_camera_profile() -> None:
     pupil = PupilProfile.from_dict(pupil_profile_dict())
     camera = CameraProfile.from_dict(per_band_camera_profile_dict())
     plan = {
-        "task_type": "psf_dictionary_capture",
+        "task_type": "psf_survey_capture",
         "requires": {
             "pupil_profile_id": "pupil_profile_v1",
             "camera_profile_id": "per_band_pupil_open_v1",
@@ -223,7 +221,7 @@ def test_psf_plan_rejects_broadband_camera_profile() -> None:
     pupil = PupilProfile.from_dict(pupil_profile_dict())
     camera = CameraProfile.from_dict(broadband_camera_profile_dict())
     plan = {
-        "task_type": "psf_dictionary_capture",
+        "task_type": "psf_survey_capture",
         "requires": {
             "pupil_profile_id": "pupil_profile_v1",
             "camera_profile_id": "broadband_passthrough_safe_v1",

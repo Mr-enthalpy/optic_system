@@ -1,0 +1,15 @@
+plan_id: synthetic_capture
+wavelengths:
+  - illumination:
+      mode: monochromatic
+      effective_wavelength_nm: 550.0
+      tls_setpoint_nm: null
+    settle_ms: 0
+masks:
+  - mask_id: synthetic_a
+  - mask_id: synthetic_b
+camera:
+  frames_per_capture: 2
+lcd_settle_ms: 0
+store_burst: true
+notes: Synthetic device/placeholder-mask IO check; not physical spectral evidence.

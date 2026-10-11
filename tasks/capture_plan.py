@@ -7,6 +7,12 @@ from typing import Any
 
 import numpy as np
 
+from .illumination import (
+    IlluminationSpec,
+    IlluminationSpecError,
+    normalize_illumination_spec,
+)
+
 
 class CapturePlanError(ValueError):
     pass
@@ -15,34 +21,42 @@ class CapturePlanError(ValueError):
 @dataclass
 class CameraCaptureConfig:
     frames_per_capture: int = 1
-    average_burst: bool = True
     exposure_us: float | None = None
     gain_db: float | None = None
-    roi: tuple[int, int, int, int] | None = None
+    frame_extent: dict[str, Any] | None = None
     trigger_mode: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CameraCaptureConfig:
+        if "roi" in d or "camera_roi" in d:
+            raise CapturePlanError(
+                "camera.roi / camera.camera_roi are no longer supported; "
+                "use camera.frame_extent"
+            )
+        if "average_burst" in d:
+            raise CapturePlanError(
+                "camera.average_burst is no longer supported; "
+                "use store_burst at plan level"
+            )
+        extent_value = d.get("frame_extent")
         return cls(
             frames_per_capture=int(d.get("frames_per_capture", 1)),
-            average_burst=bool(d.get("average_burst", True)),
             exposure_us=_optional_float(d.get("exposure_us")),
             gain_db=_optional_float(d.get("gain_db")),
-            roi=_optional_int_quadruple(d.get("roi")),
+            frame_extent=_optional_camera_frame_extent(extent_value),
             trigger_mode=_optional_str(d.get("trigger_mode")),
         )
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "frames_per_capture": self.frames_per_capture,
-            "average_burst": self.average_burst,
         }
         if self.exposure_us is not None:
             result["exposure_us"] = self.exposure_us
         if self.gain_db is not None:
             result["gain_db"] = self.gain_db
-        if self.roi is not None:
-            result["roi"] = list(self.roi)
+        if self.frame_extent is not None:
+            result["frame_extent"] = dict(self.frame_extent)
         if self.trigger_mode is not None:
             result["trigger_mode"] = self.trigger_mode
         return result
@@ -86,16 +100,26 @@ class LCDMaskEntry:
 
 
 @dataclass
-class TLSWavelengthEntry:
-    wavelength_nm: float
+class IlluminationEntry:
+    """Capture-plan row entry carrying an explicit illumination spec."""
+
+    illumination: IlluminationSpec
     grating: int | None = None
     settle_ms: int = 2000
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> TLSWavelengthEntry:
+    def from_dict(cls, d: dict[str, Any]) -> IlluminationEntry:
+        if "wavelength_nm" in d:
+            raise CapturePlanError(
+                "wavelength_nm compatibility input is no longer supported; use illumination"
+            )
+        try:
+            spec = normalize_illumination_spec(d)
+        except IlluminationSpecError as exc:
+            raise CapturePlanError(str(exc)) from exc
         return cls(
-            wavelength_nm=float(_require_key(d, "wavelength_nm")),
+            illumination=spec,
             grating=_optional_int(d.get("grating")),
             settle_ms=int(d.get("settle_ms", 2000)),
             extra=_optional_dict(d.get("extra")) or {},
@@ -103,8 +127,8 @@ class TLSWavelengthEntry:
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
-            "wavelength_nm": self.wavelength_nm,
             "settle_ms": self.settle_ms,
+            "illumination": self.illumination.to_dict(),
         }
         if self.grating is not None:
             result["grating"] = self.grating
@@ -117,7 +141,7 @@ class TLSWavelengthEntry:
 class CapturePlan:
     plan_id: str
     requires: dict[str, Any] = field(default_factory=dict)
-    wavelengths: list[TLSWavelengthEntry] = field(default_factory=list)
+    wavelengths: list[IlluminationEntry] = field(default_factory=list)
     masks: list[LCDMaskEntry] = field(default_factory=list)
     camera: CameraCaptureConfig = field(default_factory=CameraCaptureConfig)
     lcd_settle_ms: int = 500
@@ -131,7 +155,7 @@ class CapturePlan:
         plan_id = _require_str(d, "plan_id")
         requires = _optional_dict(d.get("requires")) or {}
         wavelengths = [
-            TLSWavelengthEntry.from_dict(w)
+            IlluminationEntry.from_dict(w)
             for w in _require_list(d, "wavelengths")
         ]
         masks = [
@@ -216,11 +240,6 @@ class CapturePlan:
             raise CapturePlanError("lcd_settle_ms must be >= 0")
 
         for i, w in enumerate(self.wavelengths):
-            if w.wavelength_nm <= 0:
-                raise CapturePlanError(
-                    f"wavelengths[{i}].wavelength_nm must be positive, "
-                    f"got {w.wavelength_nm}"
-                )
             if w.settle_ms < 0:
                 raise CapturePlanError(
                     f"wavelengths[{i}].settle_ms must be >= 0, got {w.settle_ms}"
@@ -230,13 +249,14 @@ class CapturePlan:
             if not m.mask_id:
                 raise CapturePlanError(f"masks[{i}].mask_id must not be empty")
 
-        seen_wavelengths: set[float] = set()
+        seen_wavelengths: set[str] = set()
         for w in self.wavelengths:
-            if w.wavelength_nm in seen_wavelengths:
+            key = _illumination_identity_key(w.illumination)
+            if key in seen_wavelengths:
                 raise CapturePlanError(
-                    f"duplicate wavelength {w.wavelength_nm} in plan"
+                    f"duplicate illumination {key!r} in plan"
                 )
-            seen_wavelengths.add(w.wavelength_nm)
+            seen_wavelengths.add(key)
 
         seen_mask_ids: set[str] = set()
         for m in self.masks:
@@ -257,6 +277,17 @@ class CapturePlan:
     @property
     def n_captures(self) -> int:
         return self.n_wavelengths * self.n_masks
+
+    def resolved_illumination_specs(self) -> list[IlluminationSpec]:
+        return [entry.illumination for entry in self.wavelengths]
+
+
+def _illumination_identity_key(spec: IlluminationSpec) -> str:
+    if spec.is_broadband_passthrough:
+        return "broadband_passthrough"
+    if spec.effective_wavelength_nm is not None:
+        return f"monochromatic:{spec.effective_wavelength_nm}"
+    return f"monochromatic:{spec.wavelength_label_nm}"
 
 
 def _require_key(d: dict[str, Any], key: str) -> Any:
@@ -318,18 +349,39 @@ def _optional_dict(value: Any) -> dict[str, Any] | None:
     return None
 
 
-def _optional_int_quadruple(value: Any) -> tuple[int, int, int, int] | None:
+def _optional_camera_frame_extent(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
-    if not isinstance(value, (list, tuple)) or len(value) != 4:
-        raise CapturePlanError(
-            f"roi must be a list or tuple of 4 ints, got {type(value).__name__}: {value!r}"
-        )
+    if isinstance(value, dict):
+        origin = value.get("origin_xy", [0, 0])
+        shape = value.get("shape_hw")
+        if shape is None:
+            raise CapturePlanError("frame_extent.shape_hw is required")
+        result: dict[str, Any] = {
+            "mode": str(value.get("mode") or "acquired_frame"),
+            "origin_xy": list(_int_pair(origin, "frame_extent.origin_xy")),
+            "shape_hw": list(_int_pair(shape, "frame_extent.shape_hw")),
+            "sensor_shape_hw": None,
+        }
+        sensor_shape = value.get("sensor_shape_hw")
+        if sensor_shape is not None:
+            result["sensor_shape_hw"] = list(
+                _int_pair(sensor_shape, "frame_extent.sensor_shape_hw")
+            )
+        return result
+    raise CapturePlanError(
+        f"camera.frame_extent must be a mapping, got {type(value).__name__}: {value!r}"
+    )
+
+
+def _int_pair(value: Any, name: str) -> tuple[int, int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise CapturePlanError(f"{name} must contain two integers")
     try:
-        return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))
+        return (int(value[0]), int(value[1]))
     except (TypeError, ValueError):
         raise CapturePlanError(
-            f"roi elements must be ints, got {value!r}"
+            f"{name} elements must be ints, got {value!r}"
         ) from None
 
 

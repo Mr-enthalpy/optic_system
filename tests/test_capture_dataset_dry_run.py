@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import h5py
@@ -7,13 +8,46 @@ import numpy as np
 import pytest
 
 from tasks.capture_plan import CapturePlan, CapturePlanError
-from tasks.capture_forward_dataset import (
+from tasks.capture_dataset import run_capture_dataset
+from tasks.testing import (
     FakeCamera,
     FakeDeviceBundle,
     FakeLCD,
     FakeTLS,
-    run_capture_forward_dataset,
 )
+
+
+def _mono_entry(wavelength_nm: float, **extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "monochromatic",
+            "effective_wavelength_nm": float(wavelength_nm),
+            "tls_setpoint_nm": float(wavelength_nm),
+        },
+        **extra,
+    }
+
+
+def _label_entry(wavelength_nm: float, **extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "monochromatic",
+            "effective_wavelength_nm": float(wavelength_nm),
+            "tls_setpoint_nm": None,
+        },
+        **extra,
+    }
+
+
+def _pass_entry(**extra) -> dict:
+    return {
+        "illumination": {
+            "mode": "broadband_passthrough",
+            "effective_wavelength_nm": None,
+            "tls_setpoint_nm": 0.0,
+        },
+        **extra,
+    }
 
 
 def _h5_str(dset) -> str:
@@ -38,7 +72,7 @@ class TestCaptureForwardDatasetDryRun:
             tls=None,
         )
 
-        result = run_capture_forward_dataset(
+        result = run_capture_dataset(
             plan=sample_plan,
             devices=devices,
             output_path=tmp_h5_path,
@@ -60,8 +94,22 @@ class TestCaptureForwardDatasetDryRun:
             assert f["capture/completed"][:].all()
 
     def test_dry_run_with_tls(
-        self, sample_plan: CapturePlan, tmp_h5_path: Path
+        self, tmp_h5_path: Path
     ) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "tls_dry_run",
+            "wavelengths": [
+                _mono_entry(532.0, grating=1, settle_ms=3000),
+                _mono_entry(633.0, grating=1, settle_ms=2000),
+            ],
+            "masks": [
+                {"mask_id": "mask_a", "family_id": "f1"},
+                {"mask_id": "mask_b", "family_id": "f1"},
+            ],
+            "camera": {"frames_per_capture": 5},
+            "lcd_settle_ms": 500,
+            "store_burst": False,
+        })
         tls = FakeTLS()
         tls.connect()
 
@@ -71,8 +119,8 @@ class TestCaptureForwardDatasetDryRun:
             tls=tls,
         )
 
-        result = run_capture_forward_dataset(
-            plan=sample_plan,
+        result = run_capture_dataset(
+            plan=plan,
             devices=devices,
             output_path=tmp_h5_path,
             enable_tls=True,
@@ -81,8 +129,45 @@ class TestCaptureForwardDatasetDryRun:
 
         assert result == tmp_h5_path
         with h5py.File(tmp_h5_path, "r") as f:
-            wl = f["tls/wavelength_nm"][()]
-            assert wl[0] > 0
+            illum_raw = f["illumination/illumination_json"][0]
+            illum = json.loads(
+                illum_raw.decode("utf-8") if isinstance(illum_raw, bytes) else str(illum_raw)
+            )
+            assert illum["effective_wavelength_nm"] > 0
+
+    def test_dry_run_with_tls_pass_through(
+        self, tmp_h5_path: Path
+    ) -> None:
+        plan = CapturePlan.from_dict({
+            "plan_id": "pass_through_test",
+            "wavelengths": [_pass_entry()],
+            "masks": [{"mask_id": "m1"}],
+            "camera": {"frames_per_capture": 1},
+        })
+        tls = FakeTLS()
+        tls.connect()
+
+        devices = FakeDeviceBundle(
+            camera=FakeCamera(height=240, width=320),
+            lcd=FakeLCD(height=600, width_phys=2400),
+            tls=tls,
+        )
+
+        run_capture_dataset(
+            plan=plan,
+            devices=devices,
+            output_path=tmp_h5_path,
+            enable_tls=True,
+            dry_run=True,
+        )
+
+        assert tls._target_nm == 0.0
+        assert tls._current_nm == 0.0
+        with h5py.File(tmp_h5_path, "r") as f:
+            assert float(f["illumination"]["tls_setpoint_nm"][0]) == 0.0
+            raw_status = f["tls/status_json"][0]
+            status = json.loads(raw_status.decode() if isinstance(raw_status, bytes) else str(raw_status))
+            assert float(status["target_wavelength_nm"]) == 0.0
 
     def test_dry_run_writes_correct_capture_count(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
@@ -91,7 +176,7 @@ class TestCaptureForwardDatasetDryRun:
             camera=FakeCamera(height=480, width=640),
             lcd=FakeLCD(height=1080, width_phys=5760),
         )
-        run_capture_forward_dataset(
+        run_capture_dataset(
             plan=sample_plan,
             devices=devices,
             output_path=tmp_h5_path,
@@ -118,7 +203,7 @@ class TestCaptureForwardDatasetDryRun:
             lcd=FakeLCD(height=1080, width_phys=5760),
         )
 
-        run_capture_forward_dataset(
+        run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=tmp_h5_path,
@@ -134,13 +219,13 @@ class TestCaptureForwardDatasetDryRun:
     def test_tls_unavailable_error(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
     ) -> None:
-        from tasks.capture_forward_dataset import TLSUnavailableError
+        from tasks.capture_dataset import TLSUnavailableError
 
         devices = FakeDeviceBundle(tls=None)
 
         with pytest.raises(TLSUnavailableError):
-            run_capture_forward_dataset(
-                plan=sample_plan,
+            run_capture_dataset(
+            plan=sample_plan,
                 devices=devices,
                 output_path=tmp_h5_path,
                 enable_tls=True,
@@ -159,10 +244,8 @@ class TestCaptureForwardDatasetDryRun:
             sys.modules.pop(mod, None)
 
         try:
-            from tasks.capture_forward_dataset import (
-                FakeDeviceBundle,
-                run_capture_forward_dataset,
-            )
+            from tasks.capture_dataset import run_capture_dataset
+            from tasks.testing import FakeDeviceBundle
         except ImportError as e:
             pytest.fail(f"imports should be hardware-free: {e}")
 
@@ -174,7 +257,7 @@ class TestCaptureForwardDatasetDryRun:
             lcd=FakeLCD(height=600, width_phys=2400),
         )
 
-        run_capture_forward_dataset(
+        run_capture_dataset(
             plan=sample_plan,
             devices=devices,
             output_path=tmp_h5_path,
@@ -197,7 +280,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "burst_frames_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 3},
             "store_burst": True,
@@ -208,7 +291,7 @@ class TestCaptureForwardDatasetDryRun:
             lcd=FakeLCD(height=600, width_phys=2400),
         )
 
-        run_capture_forward_dataset(
+        run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=tmp_h5_path,
@@ -229,14 +312,14 @@ class TestCaptureForwardDatasetDryRun:
             assert int(avg_dset.shape[1]) == 240
             assert int(avg_dset.shape[2]) == 320
 
-    def test_average_burst_false_still_writes_2d_avg(
+    def test_writes_2d_avg_when_store_burst_false(
         self, tmp_h5_path: Path
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "noburst_avg_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
-            "camera": {"frames_per_capture": 3, "average_burst": False},
+            "camera": {"frames_per_capture": 3},
             "store_burst": False,
         })
 
@@ -245,7 +328,7 @@ class TestCaptureForwardDatasetDryRun:
             lcd=FakeLCD(height=600, width_phys=2400),
         )
 
-        run_capture_forward_dataset(
+        run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=tmp_h5_path,
@@ -263,7 +346,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "grating_test",
-            "wavelengths": [{"wavelength_nm": 532, "grating": 3}],
+            "wavelengths": [_mono_entry(532, grating=3)],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 1},
         })
@@ -277,7 +360,7 @@ class TestCaptureForwardDatasetDryRun:
             tls=tls,
         )
 
-        run_capture_forward_dataset(
+        run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=tmp_h5_path,
@@ -301,7 +384,7 @@ class TestCaptureForwardDatasetDryRun:
         )
         status_dir = tmp_path / "run_status" / "dry_run_001"
 
-        run_capture_forward_dataset(
+        run_capture_dataset(
             plan=sample_plan,
             devices=devices,
             output_path=tmp_h5_path,
@@ -320,10 +403,62 @@ class TestCaptureForwardDatasetDryRun:
         assert status.completed is True
         assert status.error is None
 
+    def test_run_status_gets_frame_preview_stats_and_log(
+        self,
+        sample_plan: CapturePlan,
+        tmp_h5_path: Path,
+        tmp_path: Path,
+    ) -> None:
+        from diagnostics.run_status import RunStatusReader
+
+        devices = FakeDeviceBundle(
+            camera=FakeCamera(height=24, width=32, exposure_us=5000.0, gain_db=2.0),
+            lcd=FakeLCD(height=1080, width_phys=5760),
+        )
+        status_dir = tmp_path / "run_status" / "diagnostics_001"
+
+        run_capture_dataset(
+            plan=sample_plan,
+            devices=devices,
+            output_path=tmp_h5_path,
+            enable_tls=False,
+            dry_run=True,
+            status_dir=status_dir,
+            run_id="diagnostics_001",
+        )
+
+        reader = RunStatusReader(status_dir)
+        status = reader.read()
+        assert status is not None
+        assert status.phase == "completed"
+        assert status.latest_frame_preview == "latest_frame_preview.npy"
+        assert status.frame_stats == "frame_stats.json"
+        assert status.log_file == "log.jsonl"
+
+        preview = reader.read_frame_preview()
+        assert preview is not None
+        assert preview.shape == (24, 32)
+
+        stats = reader.read_frame_stats()
+        assert stats is not None
+        assert stats["capture_index"] == sample_plan.n_captures - 1
+        assert stats["frame_shape_hw"] == [24, 32]
+        assert stats["frames_per_capture"] == sample_plan.camera.frames_per_capture
+        assert stats["max_pixel"] is not None
+        assert 0.0 <= stats["saturated_fraction"] <= 1.0
+        assert stats["exposure_us"] == 5000.0
+        assert stats["gain_db"] == 2.0
+
+        rows = reader.tail_log(max_lines=10)
+        assert any(
+            row.get("source") == "camera" and row.get("message") == "burst captured"
+            for row in rows
+        )
+
     def test_hardware_materialization_rejects_missing_mask(
         self, sample_plan: CapturePlan, tmp_h5_path: Path
     ) -> None:
-        from tasks.capture_forward_dataset import _materialize_masks
+        from tasks.capture_dataset import _materialize_masks
 
         with pytest.raises(CapturePlanError, match="placeholder"):
             _materialize_masks(sample_plan, allow_placeholder=False,
@@ -334,7 +469,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "shape_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "bad_shape", "array": np.zeros((100, 200), dtype=np.uint8)}],
             "camera": {"frames_per_capture": 1},
         })
@@ -345,7 +480,7 @@ class TestCaptureForwardDatasetDryRun:
         )
 
         with pytest.raises(CapturePlanError, match="shape"):
-            run_capture_forward_dataset(
+            run_capture_dataset(
                 plan=plan,
                 devices=devices,
                 output_path=tmp_h5_path,
@@ -358,7 +493,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "camera_params_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
             "camera": {
                 "frames_per_capture": 2,
@@ -373,7 +508,7 @@ class TestCaptureForwardDatasetDryRun:
             lcd=FakeLCD(height=600, width_phys=2400),
         )
 
-        run_capture_forward_dataset(
+        run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=tmp_h5_path,
@@ -405,7 +540,7 @@ class TestCaptureForwardDatasetDryRun:
     ) -> None:
         plan = CapturePlan.from_dict({
             "plan_id": "no_camera_params_test",
-            "wavelengths": [{"wavelength_nm": 500}],
+            "wavelengths": [_label_entry(500)],
             "masks": [{"mask_id": "m1"}],
             "camera": {"frames_per_capture": 2},
         })
@@ -416,7 +551,7 @@ class TestCaptureForwardDatasetDryRun:
             lcd=FakeLCD(height=600, width_phys=2400),
         )
 
-        run_capture_forward_dataset(
+        run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=tmp_h5_path,

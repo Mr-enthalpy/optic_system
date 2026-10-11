@@ -66,7 +66,6 @@ class FrameCaptureHelper:
         raw_mean = raw_acc / n
         rgb_mean = rgb_acc / n
 
-        # 保持和旧 cam.py 接近的返回语义
         if packet.meta["format"] == "raw16":
             rgb_mean = rgb_mean / 256.0
 

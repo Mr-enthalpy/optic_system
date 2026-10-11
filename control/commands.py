@@ -63,6 +63,11 @@ class SetTLSWavelength(Command):
 
 
 @dataclass(frozen=True)
+class SetTLSPassThrough(Command):
+    timeout_s: float = 60.0
+
+
+@dataclass(frozen=True)
 class MoveTLS(Command):
     timeout_s: float = 60.0
 

@@ -34,6 +34,7 @@ class FakeTLSC1:
     def __init__(self):
         self.status = FakeBackendStatus()
         self.raise_on_set_grating = False
+        self.pass_through_calls = 0
 
     def connect(self, Mono="Omni", port_type="USB", serial_number=None):
         self.status.connected = True
@@ -58,6 +59,12 @@ class FakeTLSC1:
 
     def set_wavelength(self, wavelength):
         self.status.target_wavelength_nm = float(wavelength)
+
+    def set_pass_through(self, timeout=60.0):
+        self.pass_through_calls += 1
+        self.status.target_wavelength_nm = 0.0
+        self.status.current_wavelength_nm = 0.0
+        self.status.moving = False
 
     def move(self, timeout=60.0):
         self.status.moving = True
@@ -117,6 +124,22 @@ def test_tls_service_wraps_high_level_backend(monkeypatch):
 
     status = service.disconnect()
     assert status.connected is False
+
+
+def test_tls_service_pass_through_uses_backend_api(monkeypatch):
+    monkeypatch.setattr(
+        "devices.tls_service.importlib.import_module",
+        lambda name: make_fake_module(),
+    )
+
+    service = TLSService(default_serial_number="OM123")
+    service.connect()
+
+    status = service.set_pass_through(timeout_s=12.0)
+
+    assert status.target_wavelength_nm == 0.0
+    assert status.current_wavelength_nm == 0.0
+    assert service._device.pass_through_calls == 1
 
 
 def test_tls_service_converts_backend_errors(monkeypatch):

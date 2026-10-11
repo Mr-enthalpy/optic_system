@@ -1,15 +1,15 @@
 """
-Minimal CLI entry-point for Phase 2 raw capture.
+Minimal CLI entry-point for raw observation capture.
 
 Usage (dry-run — no hardware required)::
 
-    python scripts/capture_forward_dataset.py --plan example_plan.json --output out.h5 --dry-run
+    python scripts/capture_dataset.py --plan example_plan.json --output out.h5 --dry-run
 
 Hardware mode::
 
-    python scripts/capture_forward_dataset.py --plan plan.yaml --output out.h5 --hardware --enable-tls
+    python scripts/capture_dataset.py --plan plan.yaml --output out.h5 --hardware --enable-tls
 
-Defaults are safe: CLI runs as dry-run unless ``--hardware`` is passed.
+Select --hardware or --dry-run explicitly.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def _ensure_repo_on_path() -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Phase 2 minimal capture — raw HDF5 export"
+        description="Minimal synchronized capture — raw HDF5 export"
     )
     parser.add_argument(
         "--plan",
@@ -111,28 +111,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="disable optional run-status output",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--runtime-mode",
+        choices=("hardware", "no_hardware", "synthetic", "diagnostic"),
+        default=None,
+        help="runtime validation mode; defaults to no_hardware for dry-run and hardware for --hardware",
+    )
+    parser.add_argument("--camera-profile", help="per-band pupil-open CameraProfile JSON")
+    parser.add_argument("--pupil-profile", help="PupilProfile JSON")
+    args = parser.parse_args(argv)
+    if args.hardware == args.dry_run:
+        parser.error("select exactly one of --hardware or --dry-run")
+    if bool(args.camera_profile) != bool(args.pupil_profile):
+        parser.error("--camera-profile and --pupil-profile must be supplied together")
+    return args
+
+
+def _profiles(args) -> dict:
+    if not args.camera_profile:
+        return {}
+    from tasks.profiles import CameraProfile, PupilProfile
+    return {"camera_profile": CameraProfile.load_json(args.camera_profile), "pupil_profile": PupilProfile.load_json(args.pupil_profile)}
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    if not args.hardware and not args.dry_run:
-        print(
-            "No execution mode selected. Defaulting to --dry-run.\n"
-            "Pass --hardware for real device execution."
-        )
-        args.dry_run = True
-
     _ensure_repo_on_path()
 
     from tasks.capture_plan import CapturePlan, CapturePlanError
-    from tasks.capture_forward_dataset import (
+    from tasks.capture_dataset import run_capture_dataset
+    from tasks.testing import (
         FakeCamera,
         FakeDeviceBundle,
         FakeLCD,
         FakeTLS,
-        run_capture_forward_dataset,
     )
 
     plan_path = Path(args.plan)
@@ -172,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.enable_tls:
             devices.tls.connect()
 
-        result = run_capture_forward_dataset(
+        result = run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=output_path,
@@ -180,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=True,
             status_dir=status_dir,
             run_id=run_id,
+            runtime_policy=args.runtime_mode or "no_hardware",
+            **_profiles(args),
         )
         print(f"[dry-run] wrote {plan.n_captures} captures to {result}")
         return 0
@@ -210,17 +225,17 @@ def _run_hardware(
     from devices.lcd_service import LCDService
     from devices.tls_service import TLSService, TLSServiceUnavailableError
     from capture.frame_capture import FrameCaptureHelper
-    from tasks.capture_forward_dataset import (
+    from tasks.capture_dataset import (
         CameraCaptureAdapter,
         LCDAdapter,
         TLSAdapter,
-        run_capture_forward_dataset,
+        run_capture_dataset,
     )
 
     camera_service = CameraServiceClient(
         auto_ensure=not args.no_auto_sidecar,
     )
-
+    tls_service = lcd_service = frame_stream = None
     try:
         open_reply = camera_service.open_camera(
             index=args.camera_index,
@@ -263,13 +278,13 @@ def _run_hardware(
 
         devices: FakeDeviceBundle = type(
             "_Bundle", (), {
-                "camera": CameraCaptureAdapter(capture_helper),
+                "camera": CameraCaptureAdapter(capture_helper, camera_service=camera_service),
                 "lcd": LCDAdapter(lcd_service),
                 "tls": tls_adapter,
             }
         )()
 
-        result = run_capture_forward_dataset(
+        result = run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=output_path,
@@ -277,9 +292,15 @@ def _run_hardware(
             dry_run=False,
             status_dir=status_dir,
             run_id=run_id,
+            runtime_policy=args.runtime_mode or "hardware",
+            **_profiles(args),
         )
         print(f"Capture complete: {result}")
     finally:
+        for obj in (frame_stream, lcd_service):
+            if obj is not None:
+                try: obj.close()
+                except Exception: pass
         try:
             camera_service.stop_stream()
         except Exception:

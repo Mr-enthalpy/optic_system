@@ -1,0 +1,25 @@
+# Calibration and measured PSF workflow
+
+The three calibration stages are independently callable Python APIs and an explicit hardware CLI `scripts/calibrate_profiles.py`. Each writes a profile JSON plus a probe/scan report; outputs must be new paths. They use camera/LCD/TLS services and default to hardware runtime. Pure/fake regression callers must pass a non-hardware policy.
+
+1. `BroadbandCameraCalibrationPlan` + `calibrate_broadband_camera_profile`: show an all-transmissive physical mask, explicitly move TLS into broadband pass-through, search exposure/gain by burst saturation in the valid sensor domain. Only use this CameraProfile for pupil scanning.
+2. `PupilScanPlan` + `run_broadband_pupil_scan`: use that profile under broadband illumination, measure bar/radius energy scans, fit pupil geometry, preserve physical LCD shape/identity in PupilProfile and write diagnostic fit/report data.
+3. `PerBandPupilOpenCalibrationPlan` + `calibrate_per_band_pupil_open_camera_profile`: show the calibrated pupil-open physical mask, move TLS at each positive wavelength, search exposure/gain and report probe settings/readback. Produce a CameraProfile dependent on the same pupil. Per-band wavelength settling defaults to 3000 ms; explicit `settle_ms` is recorded in probes.
+
+CLI example (all paths and hardware identity selected for the actual setup):
+
+```powershell
+.\.venv\Scripts\python.exe scripts/calibrate_profiles.py broadband --plan local_config/broadband_plan.json --output local_config/broadband.json --report data/broadband_report.json --lcd-display-index 1 --lcd-subpixel-axis 1
+.\.venv\Scripts\python.exe scripts/calibrate_profiles.py pupil --plan local_config/pupil_plan.json --camera-profile local_config/broadband.json --output local_config/pupil.json --report data/pupil_report.json --lcd-display-index 1 --lcd-subpixel-axis 1
+.\.venv\Scripts\python.exe scripts/calibrate_profiles.py per-band --plan local_config/bands_plan.json --pupil-profile local_config/pupil.json --output local_config/bands.json --report data/bands_report.json --lcd-display-index 1 --lcd-subpixel-axis 1
+```
+
+JSON plan fields correspond directly to the exported dataclasses/from_dict methods. Exposure search uses `min_exposure_us`, `max_exposure_us`, `gains_db`, `iterations`, `safety_fraction`; verify full_scale against actual camera bit depth. Broadband plans specify `camera_profile_id`. Pupil plans specify both profile IDs, physical shape, display index/axis and scan geometry. Per-band plans specify both IDs and `wavelengths` with `wavelength_nm`, optional grating/settle_ms and exposure_search. CLI --valid-pixel-mask accepts an explicit boolean NPY mask for exposure calibration. Report capture metadata carries readback; commanded settings are not assumed to equal hardware settings.
+
+Hardware parameter changes default to 300 ms settling plus 80 discarded frames in exposure search and profile-dependent PSF capture. Test settling shortcuts require an explicit non-hardware policy. LCD settle defaults to 20 ms; tune and validate on the actual panel. Calibration reports preserve measured probes/scan curves; raw full-frame PSF captures are separate acquisitions and must be retained.
+
+Use `scripts/capture_dataset.py` with profile JSONs for PSF capture. Plan `requires` must match IDs; the per-band profile must depend on the pupil. Include explicit physical display masks and verified sensor frame extent. For one fixed display state, keep one mask constant across wavelengths. Capture applies per-band settings and records requested/readback values at every row. Source power and gain changes still need experimental radiometric controls.
+
+Convert the complete successful RawCapture using `build_full_frame_psf_survey`, with both profile manifests. Use `derive_sensor_energy_center_profile` if an energy-based origin is needed; percentile background and corrected-energy diagnostics belong to the estimator and do not change stored PSFs. Explicit sensor valid masks record excluded coordinates; keep the source mask for reproduction. ROI extraction accepts an explicit ROI or that center profile plus `[H,W]` size. It rejects a different source survey, frame extent or coordinate convention. ROI origin rounds to the nearest pixel with half ties upward, without clipping.
+
+The next acceptance is real calibration/acquisition and fixed-state wavelength response repeatability, not a synthetic test or a learned model result.

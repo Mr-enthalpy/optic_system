@@ -40,8 +40,7 @@ def _format_flycapture2_import_error(import_error: Exception | None) -> str:
     return (
         "Unable to import flycapture2_c. Install Mr-enthalpy/flycapture2_c "
         "as package 'flycapture2_c' in the same Python environment that runs "
-        "optic_system. For local development, run: python -m pip install -e "
-        '"C:\\Users\\teacher H\\PycharmProjects\\flycapture2_c". '
+        "optic_system. Install the driver package using its own installation instructions. "
         "Diagnostics: "
         f"sys.executable={sys.executable!r}; "
         f"sys.version={sys.version!r}; "

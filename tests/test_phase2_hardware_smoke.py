@@ -29,7 +29,7 @@ import h5py
 import numpy as np
 import pytest
 
-_SYS_MODULE = "tasks.capture_forward_dataset"
+_SYS_MODULE = "tasks.capture_dataset"
 
 pytestmark = pytest.mark.phase2_hardware
 
@@ -323,12 +323,12 @@ def test_capture_no_tls_hardware() -> None:
         capture_helper = FrameCaptureHelper(frame_stream)
         devices = _make_bundle(
             mod,
-            camera=mod.CameraCaptureAdapter(capture_helper),
+            camera=mod.CameraCaptureAdapter(capture_helper, camera_service=camera_service),
             lcd=mod.LCDAdapter(lcd_service),
             tls=None,
         )
 
-        actual = mod.run_capture_forward_dataset(
+        actual = mod.run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=output,
@@ -413,12 +413,12 @@ def test_capture_with_tls_hardware() -> None:
         capture_helper = FrameCaptureHelper(frame_stream)
         devices = _make_bundle(
             mod,
-            camera=mod.CameraCaptureAdapter(capture_helper),
+            camera=mod.CameraCaptureAdapter(capture_helper, camera_service=camera_service),
             lcd=mod.LCDAdapter(lcd_service),
             tls=mod.TLSAdapter(tls_service),
         )
 
-        actual = mod.run_capture_forward_dataset(
+        actual = mod.run_capture_dataset(
             plan=plan,
             devices=devices,
             output_path=output,
@@ -497,12 +497,12 @@ def _verify_hdf5_structure(path: Path, plan, *, expect_tls: bool) -> None:
         assert bool(completed.all())
 
         if expect_tls:
-            assert "tls/wavelength_nm" in f
+            assert "illumination/illumination_json" in f
             assert "tls/grating" in f
             assert "tls/status_json" in f
 
         pf_raw = f["capture/processing_flags_json"][()]
         if isinstance(pf_raw, bytes):
             pf_raw = pf_raw.decode()
-        assert "training_ready" in pf_raw
+        assert "training_ready" not in pf_raw
         assert "false" in pf_raw.lower()

@@ -122,6 +122,11 @@ class TLSWavelengthTargetSet(Event):
 
 
 @dataclass(frozen=True)
+class TLSPassThroughSet(Event):
+    target_wavelength_nm: float = 0.0
+
+
+@dataclass(frozen=True)
 class TLSMoveStarted(Event):
     target_wavelength_nm: float | None
 

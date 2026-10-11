@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from control.commands import ConnectTLS, MoveTLS, SetTLSWavelength
-from control.events import TLSError, TLSConnected, TLSMoveFinished, TLSMoveStarted, TLSWavelengthTargetSet
+from control.commands import ConnectTLS, MoveTLS, SetTLSPassThrough, SetTLSWavelength
+from control.events import TLSError, TLSConnected, TLSMoveFinished, TLSMoveStarted, TLSPassThroughSet, TLSWavelengthTargetSet
 from control.session_controller import SessionController
 from devices.tls_service import TLSServiceError, TLSStatus
 
@@ -48,6 +48,7 @@ class FakeControllerTLSService:
         self.current = None
         self.target = None
         self.grating = None
+        self.pass_through_calls = 0
 
     def connect(self, *, mono=None, port_type=None, serial_number=None) -> TLSStatus:
         self.connected = True
@@ -71,6 +72,12 @@ class FakeControllerTLSService:
         if self.fail_on_set_wavelength:
             raise TLSServiceError("set_wavelength", "fake target failure")
         self.target = float(wavelength_nm)
+        return self.get_status()
+
+    def set_pass_through(self, timeout_s: float = 60.0) -> TLSStatus:
+        self.pass_through_calls += 1
+        self.target = 0.0
+        self.current = 0.0
         return self.get_status()
 
     def move(self, timeout_s: float = 60.0) -> TLSStatus:
@@ -158,5 +165,24 @@ def test_tls_controller_captures_error_into_state_and_events():
         state = controller.state.get()
         assert "fake target failure" in (state.tls_last_error or "")
         assert "fake target failure" in (state.last_error or "")
+    finally:
+        controller.shutdown(force=True)
+
+
+def test_tls_controller_pass_through_flow():
+    tls = FakeControllerTLSService()
+    controller = build_controller(tls)
+    events = []
+    controller.bus.subscribe(events.append)
+
+    try:
+        controller.dispatch(ConnectTLS(serial_number="OM999"))
+        controller.dispatch(SetTLSPassThrough(timeout_s=0.5))
+
+        assert tls.pass_through_calls == 1
+        assert any(isinstance(event, TLSPassThroughSet) for event in events)
+        state = controller.state.get()
+        assert state.tls_target_wavelength_nm == 0.0
+        assert state.tls_current_wavelength_nm == 0.0
     finally:
         controller.shutdown(force=True)

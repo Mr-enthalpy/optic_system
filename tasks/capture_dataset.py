@@ -1,0 +1,804 @@
+"""
+Minimal synchronous raw observation capture.
+
+This task intentionally uses a narrow synchronous CaptureDeviceBundle
+instead of SessionController.dispatch().  Reasons:
+
+* capture needs blocking TLS move / wait_until_idle semantics;
+* capture needs a private FrameStreamClient (cannot share the
+  PreviewWorker PUB/SUB socket);
+* no CaptureBurst command exists on SessionController yet;
+* SessionController remains the GUI / control path — this bundle is a
+  minimal capture-task synchronous execution adapter, not a replacement.
+
+Do not add neural network code, LCD_forward imports, or pywinauto
+automation here.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import time
+import warnings
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Protocol as _Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tasks.profiles import CameraProfile, PupilProfile
+
+import numpy as np
+
+from diagnostics.run_status import RunStatusPublisher
+
+from .capture_plan import CapturePlan, CapturePlanError
+from .illumination import (
+    IlluminationSpec,
+    apply_illumination_to_tls,
+    illumination_status_without_tls,
+)
+from .raw_capture_h5 import RawCaptureWriter, RawCaptureWriteError
+from .runtime_mode import (
+    RuntimePolicy,
+    RuntimeModeError,
+    hardware_runtime_policy,
+    no_hardware_runtime_policy,
+    normalize_runtime_policy,
+    validate_no_fake_devices,
+    validate_required_devices,
+    validate_tls_for_illumination,
+)
+
+
+# ---------------------------------------------------------------------------
+# Error types
+# ---------------------------------------------------------------------------
+
+
+class DeviceNotReadyError(RuntimeError):
+    pass
+
+
+class TLSUnavailableError(RuntimeError):
+    def __init__(self):
+        super().__init__(
+            "TLS is requested but no TLS device is available. "
+            "Install tls_c1 and enable TLS, or disable --enable-tls."
+        )
+
+
+class CameraUnavailableError(RuntimeError):
+    pass
+
+
+class LCDDisplayError(RuntimeError):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Capture result
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CaptureFrames:
+    burst: np.ndarray          # [K, H, W]
+    frames_avg: np.ndarray     # [H, W]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Capture-device bundle — uses shared hardware protocols
+# ---------------------------------------------------------------------------
+
+from .hardware_protocols import (
+    CameraBurstDevice,
+    LCDPhysicalMaskDevice,
+    TLSIlluminationDevice,
+)
+
+
+class CaptureDeviceBundle(_Protocol):
+    camera: CameraBurstDevice
+    lcd: LCDPhysicalMaskDevice
+    tls: TLSIlluminationDevice | None
+
+
+# ---------------------------------------------------------------------------
+# Real-device adapters  (wrap existing device services)
+# ---------------------------------------------------------------------------
+
+
+class CameraCaptureAdapter:
+    """
+    Synchronous frame-capture adapter.
+
+    *capture_helper* must be a ``FrameCaptureHelper`` with its own
+    ``FrameStreamClient`` (not shared with PreviewWorker).
+
+    *camera_service* is an optional ``CameraServiceClient`` reference.
+    When provided, the adapter can set / read camera properties
+    (exposure, gain) and includes them in capture metadata.
+
+    Unit convention
+    --------------
+    * ``plan.camera.exposure_us`` is in **microseconds**.
+    * FlyCapture2 SHUTTER absolute property is in **milliseconds**.
+    * This adapter converts us <-> ms:
+      ``apply_camera_params`` divides exposure_us by 1000 to get SHUTTER ms;
+      ``read_camera_params`` multiplies SHUTTER ms by 1000 to get exposure_us.
+    * GAIN units are passed through directly.
+    """
+
+    def __init__(self, capture_helper, camera_service=None):
+        self._helper = capture_helper
+        self._camera = camera_service
+
+    def apply_camera_params(self, exposure_us=None, gain_db=None):
+        if self._camera is None:
+            return
+        if exposure_us is not None:
+            self._camera.set_value("SHUTTER", float(exposure_us) / 1000.0)
+        if gain_db is not None:
+            self._camera.set_value("GAIN", float(gain_db))
+
+    def read_camera_params(self) -> dict:
+        if self._camera is None:
+            return {"exposure_us": None, "gain_db": None}
+        try:
+            shutter_ms = self._camera.get_value("SHUTTER")
+            return {
+                "exposure_us": float(shutter_ms) * 1000.0 if shutter_ms is not None else None,
+                "gain_db": self._camera.get_value("GAIN"),
+            }
+        except Exception:
+            return {"exposure_us": None, "gain_db": None}
+
+    def read_exposure_bounds_us(self) -> tuple[float, float]:
+        if self._camera is None:
+            raise CameraUnavailableError("camera service is required to read SHUTTER bounds")
+        shutter_min_ms, shutter_max_ms = self._camera.get_range("SHUTTER")
+        return float(shutter_min_ms) * 1000.0, float(shutter_max_ms) * 1000.0
+
+    def acquire_burst(self, k: int) -> CaptureFrames:
+        frames: list[np.ndarray] = []
+        for _ in range(k):
+            raw, _rgb = self._helper.capture_one()
+            frames.append(np.asarray(raw))
+        burst = np.stack(frames, axis=0)
+        avg = burst.mean(axis=0, dtype=np.float64)
+        cam_params = self.read_camera_params()
+        return CaptureFrames(
+            burst=burst,
+            frames_avg=avg,
+            metadata={
+                "acquisition": "burst",
+                "n": k,
+                "timestamp_ns": time.monotonic_ns(),
+                "exposure_us": cam_params.get("exposure_us"),
+                "gain_db": cam_params.get("gain_db"),
+                "frame_dtype": str(burst.dtype),
+                "frame_shape": [int(burst.shape[1]), int(burst.shape[2])],
+            },
+        )
+
+
+class LCDAdapter:
+    def __init__(self, lcd_service):
+        self._service = lcd_service
+
+    def show_physical_mask(self, mask: np.ndarray, *, mask_id: str | None = None) -> None:
+        self._service.show_mono_mask(mask, mask_id=mask_id)
+
+    def metadata(self) -> dict[str, Any]:
+        return self._service.get_metadata()
+
+    def physical_shape(self) -> tuple[int, int]:
+        meta = self._service.get_metadata()
+        h, w = meta["physical_shape"]
+        return (int(h), int(w))
+
+    def subpixel_axis(self) -> int:
+        return int(self._service.subpixel_axis)
+
+
+class TLSAdapter:
+    def __init__(self, tls_service):
+        self._service = tls_service
+
+    def set_grating(self, grating: int) -> None:
+        self._service.set_grating(int(grating))
+
+    def set_wavelength(self, wavelength_nm: float) -> None:
+        self._service.set_wavelength_nm(wavelength_nm)
+
+    def set_pass_through(self, timeout_s: float) -> None:
+        self._service.set_pass_through(timeout_s=timeout_s)
+
+    def move_and_wait(self, timeout_s: float) -> None:
+        self._service.move(timeout_s=timeout_s)
+        self._service.wait_until_idle(timeout_s=timeout_s)
+
+    def status(self) -> dict[str, Any]:
+        st = self._service.get_status()
+        return {
+            "connected": st.connected,
+            "current_wavelength_nm": st.current_wavelength_nm,
+            "target_wavelength_nm": st.target_wavelength_nm,
+            "grating": st.grating,
+            "moving": st.moving,
+            "timestamp_ns": time.monotonic_ns(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Main capture orchestration
+# ---------------------------------------------------------------------------
+
+
+def run_capture_dataset(
+    plan: CapturePlan,
+    devices: CaptureDeviceBundle,
+    output_path: Path,
+    *,
+    enable_tls: bool = False,
+    dry_run: bool = False,
+    status_dir: Path | None = None,
+    run_id: str | None = None,
+    runtime_policy: RuntimePolicy | str | None = None,
+    camera_profile: CameraProfile | None = None,
+    pupil_profile: PupilProfile | None = None,
+) -> Path:
+    plan.validate()
+    if plan.requires.get("camera_profile_id") or plan.requires.get("pupil_profile_id"):
+        if camera_profile is None or pupil_profile is None:
+            raise CapturePlanError("profile-dependent captures require camera_profile and pupil_profile objects")
+    if camera_profile is not None or pupil_profile is not None:
+        if camera_profile is None or pupil_profile is None:
+            raise CapturePlanError("both camera_profile and pupil_profile are required")
+        from tasks.psf.profile_requirements import validate_psf_profile_dependencies
+        validate_psf_profile_dependencies(
+            {"requires": plan.requires, "illumination": {"mode": "monochromatic", "wavelengths_nm": [
+                w.illumination.effective_wavelength_nm or w.illumination.wavelength_label_nm for w in plan.wavelengths
+            ]}}, pupil_profile=pupil_profile, camera_profile=camera_profile,
+        )
+        if any(w.illumination.is_broadband_passthrough for w in plan.wavelengths):
+            raise CapturePlanError("PSF capture requires monochromatic illumination")
+    policy = _resolve_runtime_policy(runtime_policy, dry_run=dry_run)
+    illuminations = [entry.illumination for entry in plan.wavelengths]
+    require_tls = bool(enable_tls or any(_illumination_requires_tls(item) for item in illuminations))
+    validate_required_devices(
+        devices,
+        policy=policy,
+        require_camera=True,
+        require_lcd=True,
+        require_tls=require_tls,
+    )
+    validate_no_fake_devices(devices, policy=policy)
+    if dry_run and policy.mode.value == "hardware" and not policy.allow_dry_run_hardware_write:
+        raise RuntimeModeError("dry_run=True requires an explicit non-hardware runtime policy")
+    for illumination in illuminations:
+        validate_tls_for_illumination(illumination, devices.tls, policy=policy)
+
+    if enable_tls and devices.tls is None:
+        raise TLSUnavailableError()
+
+    status = (
+        RunStatusPublisher(status_dir, run_id or _default_run_id(plan))
+        if status_dir is not None
+        else None
+    )
+    _safe_status_update(
+        status,
+        plan_id=plan.plan_id,
+        runtime_mode=policy.mode.value,
+        runtime_policy=policy.to_dict(),
+        phase="starting",
+        capture_index=0,
+        n_captures=plan.n_captures,
+        completed=False,
+        error=None,
+    )
+
+    physical_masks = _materialize_masks(plan, allow_placeholder=dry_run, placeholder_shape=devices.lcd.physical_shape())
+    for entry, mask in zip(plan.masks, physical_masks):
+        _validate_mask_shape(mask, entry.mask_id, devices.lcd)
+    if pupil_profile is not None:
+        from tasks.profiles.scan_pupil_broadband import circular_window_mask
+        meta = devices.lcd.metadata()
+        if meta.get("display_index") != pupil_profile.lcd_display_index or meta.get("subpixel_axis") != pupil_profile.subpixel_axis:
+            raise CapturePlanError("LCD identity does not match PupilProfile")
+        shape = pupil_profile.extra.get("physical_shape")
+        if shape is None or tuple(shape) != tuple(devices.lcd.physical_shape()) or pupil_profile.lcd_physical_radius is None:
+            raise CapturePlanError("PupilProfile physical shape/radius does not match LCD")
+        aperture = circular_window_mask(tuple(shape), center=pupil_profile.lcd_physical_center, radius=pupil_profile.lcd_physical_radius)
+        if any(np.any(mask[aperture == 0]) for mask in physical_masks):
+            raise CapturePlanError("PSF display states must be contained within the calibrated pupil")
+
+    writer = RawCaptureWriter(output_path, plan)
+    writer.open()
+
+    try:
+        writer.write_runtime_metadata(policy.to_dict())
+        writer.write_lcd_metadata(devices.lcd.metadata())
+        writer.write_physical_masks(physical_masks)
+
+        cam_requested_exposure_us = plan.camera.exposure_us
+        cam_requested_gain_db = plan.camera.gain_db
+        if hasattr(devices.camera, "apply_camera_params") and (
+            cam_requested_exposure_us is not None or cam_requested_gain_db is not None
+        ):
+            devices.camera.apply_camera_params(
+                exposure_us=cam_requested_exposure_us,
+                gain_db=cam_requested_gain_db,
+            )
+        cam_readback = (
+            devices.camera.read_camera_params()
+            if camera_profile is None and hasattr(devices.camera, "read_camera_params")
+            else {}
+        )
+
+        capture_idx = 0
+        for wi, wl_entry in enumerate(plan.wavelengths):
+            illumination = illuminations[wi]
+            if camera_profile is not None:
+                wavelength = illumination.effective_wavelength_nm or illumination.wavelength_label_nm
+                key = str(int(wavelength)) if float(wavelength).is_integer() else str(float(wavelength))
+                setting = camera_profile.per_wavelength[key]
+                cam_requested_exposure_us, cam_requested_gain_db = setting.exposure_us, setting.gain_db
+                devices.camera.apply_camera_params(exposure_us=cam_requested_exposure_us, gain_db=cam_requested_gain_db)
+                if policy.mode.value == "hardware":
+                    time.sleep(0.3)
+                    devices.camera.acquire_burst(80)
+                cam_readback = devices.camera.read_camera_params()
+                if cam_readback.get("exposure_us") is None or cam_readback.get("gain_db") is None:
+                    raise CameraUnavailableError("profile-dependent capture requires exposure/gain readback")
+            if enable_tls and devices.tls is not None:
+                tls = devices.tls
+                if wl_entry.grating is not None:
+                    tls.set_grating(wl_entry.grating)
+                tls_status = apply_illumination_to_tls(
+                    tls,
+                    illumination,
+                    timeout_s=60.0,
+                )
+                if wl_entry.settle_ms > 0 and not dry_run:
+                    time.sleep(wl_entry.settle_ms / 1000.0)
+            else:
+                if _illumination_requires_tls(illumination):
+                    raise RuntimeModeError(
+                        "illumination requires TLS hardware; "
+                        "use a non-hardware runtime policy for no-TLS captures"
+                    )
+                tls_status = illumination_status_without_tls(illumination)
+                tls_status["grating"] = wl_entry.grating
+                tls_status["timestamp_ns"] = time.monotonic_ns()
+
+            _safe_status_update(
+                status,
+                phase="wavelength_ready",
+                capture_index=capture_idx,
+                n_captures=plan.n_captures,
+            )
+
+            for mi, mask_entry in enumerate(plan.masks):
+                lcd = devices.lcd
+                mask_array = physical_masks[mi]
+
+                _validate_mask_shape(mask_array, mask_entry.mask_id, lcd)
+
+                lcd.show_physical_mask(mask_array, mask_id=mask_entry.mask_id)
+                lcd_display_ts = time.monotonic_ns()
+                _safe_status_update(
+                    status,
+                    phase="mask_shown",
+                    capture_index=capture_idx,
+                    n_captures=plan.n_captures,
+                )
+
+                if plan.lcd_settle_ms > 0 and not dry_run:
+                    time.sleep(plan.lcd_settle_ms / 1000.0)
+
+                k = plan.camera.frames_per_capture
+                capture = devices.camera.acquire_burst(k)
+                if plan.camera.frame_extent is not None:
+                    recorded = capture.metadata.get("frame_extent")
+                    if recorded is not None and any(recorded.get(key) != plan.camera.frame_extent.get(key) for key in ("origin_xy", "shape_hw", "sensor_shape_hw")):
+                        raise CapturePlanError("camera frame extent disagrees with plan")
+                    capture.metadata["frame_extent"] = dict(plan.camera.frame_extent)
+                if camera_profile is not None:
+                    cam_readback = devices.camera.read_camera_params()
+                    if cam_readback.get("exposure_us") is None or cam_readback.get("gain_db") is None:
+                        raise CameraUnavailableError("profile-dependent capture requires exposure/gain readback")
+                _safe_status_update(
+                    status,
+                    phase="burst_captured",
+                    capture_index=capture_idx,
+                    n_captures=plan.n_captures,
+                )
+                _publish_capture_diagnostics(
+                    status,
+                    capture,
+                    capture_index=capture_idx,
+                    wavelength_index=wi,
+                    mask_index=mi,
+                    mask_id=mask_entry.mask_id,
+                    requested_exposure_us=cam_requested_exposure_us,
+                    requested_gain_db=cam_requested_gain_db,
+                    readback_exposure_us=(
+                        cam_readback.get("exposure_us")
+                    ),
+                    readback_gain_db=(
+                        cam_readback.get("gain_db")
+                    ),
+                )
+                frames_to_store = capture.burst if plan.store_burst else None
+
+                writer.append_capture(
+                    capture_index=capture_idx,
+                    wavelength_index=wi,
+                    mask_index=mi,
+                    frames=frames_to_store,
+                    frames_avg=capture.frames_avg,
+                    camera_meta=capture.metadata,
+                    tls_status=tls_status,
+                    lcd_display_timestamp_ns=lcd_display_ts,
+                    requested_exposure_us=cam_requested_exposure_us,
+                    requested_gain_db=cam_requested_gain_db,
+                    readback_exposure_us=cam_readback.get("exposure_us"),
+                    readback_gain_db=cam_readback.get("gain_db"),
+                )
+
+                _safe_status_update(
+                    status,
+                    phase="capture_appended",
+                    capture_index=capture_idx + 1,
+                    n_captures=plan.n_captures,
+                )
+                capture_idx += 1
+
+        writer.finalize()
+        _safe_status_update(
+            status,
+            phase="completed",
+            capture_index=capture_idx,
+            n_captures=plan.n_captures,
+            completed=True,
+            error=None,
+        )
+    except Exception:
+        error = str(_last_exc_info())
+        _safe_status_update(
+            status,
+            phase="error",
+            capture_index=None,
+            n_captures=plan.n_captures,
+            completed=False,
+            error=error,
+        )
+        writer.finalize(error=str(
+            _last_exc_info()
+        ))
+        raise
+
+    return output_path
+
+
+def _resolve_runtime_policy(
+    value: RuntimePolicy | str | None,
+    *,
+    dry_run: bool,
+) -> RuntimePolicy:
+    if value is not None:
+        return normalize_runtime_policy(value)
+    if dry_run:
+        return no_hardware_runtime_policy()
+    return hardware_runtime_policy()
+
+
+def _illumination_requires_tls(spec: IlluminationSpec) -> bool:
+    return bool(spec.requires_tls_pass_through or spec.requires_tls_wavelength_move)
+
+
+def _validate_mask_shape(
+    mask_array: np.ndarray,
+    mask_id: str,
+    lcd: LCDPhysicalMaskDevice,
+) -> None:
+    expected_h, expected_w = lcd.physical_shape()
+    if mask_array.shape != (expected_h, expected_w):
+        raise CapturePlanError(
+            f"mask {mask_id!r} shape {mask_array.shape} "
+            f"does not match LCD physical shape ({expected_h}, {expected_w})"
+        )
+    axis = lcd.subpixel_axis()
+    divisor = mask_array.shape[1] if axis == 1 else mask_array.shape[0]
+    if divisor % 3 != 0:
+        raise CapturePlanError(
+            f"mask {mask_id!r}: physical mono mask shape {mask_array.shape} "
+            f"incompatible with subpixel_axis={axis}; "
+            f"the expanded axis length must be divisible by 3"
+        )
+
+
+def _materialize_masks(
+    plan: CapturePlan,
+    *,
+    allow_placeholder: bool = False,
+    placeholder_shape: tuple[int, int] = (60, 180),
+) -> list[np.ndarray]:
+    masks: list[np.ndarray] = []
+    for entry in plan.masks:
+        if entry.array is not None:
+            mask = np.asarray(entry.array, dtype=np.uint8)
+        elif entry.path is not None:
+            mask = _load_mask_from_path(entry.path)
+        elif allow_placeholder:
+            mask = _generate_placeholder_mask(entry, placeholder_shape)
+        else:
+            raise CapturePlanError(
+                f"mask {entry.mask_id!r}: either 'array' or 'path' "
+                f"must be provided; placeholder masks are allowed "
+                f"only in dry-run mode"
+            )
+        if mask.ndim != 2:
+            raise CapturePlanError(
+                f"mask {entry.mask_id!r}: expected 2D array [H, 3W], "
+                f"got shape {mask.shape}"
+            )
+        masks.append(mask.astype(np.uint8, copy=False))
+    return masks
+
+
+def _generate_placeholder_mask(entry, shape: tuple[int, int]) -> np.ndarray:
+    digest = hashlib.sha256(entry.mask_id.encode("utf-8")).hexdigest()
+    seed = int(digest[:16], 16) & 0xFFFFFFFF
+    rng = np.random.default_rng(seed)
+    h, w = shape
+    return rng.integers(0, 256, (h, w), dtype=np.uint8)
+
+
+def _load_mask_from_path(path: str) -> np.ndarray:
+    p = Path(path)
+    if p.suffix in (".npy",):
+        return np.load(str(p))
+    if p.suffix in (".npz",):
+        data = np.load(str(p))
+        arrays = [v for v in data.values() if isinstance(v, np.ndarray)]
+        if len(arrays) != 1:
+            raise CapturePlanError(
+                f"expected exactly one array in {path}, got {len(arrays)}"
+            )
+        return arrays[0]
+    if p.suffix in (".png", ".tiff", ".tif", ".bmp", ".jpg", ".jpeg"):
+        try:
+            import cv2
+            img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                raise CapturePlanError(f"failed to read image: {path}")
+            return np.asarray(img, dtype=np.uint8)
+        except ImportError:
+            raise CapturePlanError(
+                "opencv-python is required to load image masks. "
+                "Install it with: pip install opencv-python"
+            )
+    raise CapturePlanError(f"unsupported mask file format: {p.suffix}")
+
+
+def _last_exc_info() -> str:
+    import sys
+    exc = sys.exc_info()[1]
+    return str(exc) if exc is not None else "unknown error"
+
+
+def _default_run_id(plan: CapturePlan) -> str:
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return f"{plan.plan_id}_{stamp}"
+
+
+def _safe_status_update(status: RunStatusPublisher | None, **kwargs: Any) -> None:
+    if status is None:
+        return
+    try:
+        status.update(**kwargs)
+    except Exception as exc:
+        warnings.warn(f"run status update failed: {exc}", RuntimeWarning)
+
+
+def _publish_capture_diagnostics(
+    status: RunStatusPublisher | None,
+    capture: CaptureFrames,
+    *,
+    capture_index: int,
+    wavelength_index: int,
+    mask_index: int,
+    mask_id: str,
+    requested_exposure_us: float | None,
+    requested_gain_db: float | None,
+    readback_exposure_us: float | None,
+    readback_gain_db: float | None,
+) -> None:
+    if status is None:
+        return
+    try:
+        preview = _latest_preview_frame(capture)
+        status.write_frame_preview(preview, filename="latest_frame_preview.npy")
+        stats = _capture_frame_stats(
+            capture,
+            capture_index=capture_index,
+            wavelength_index=wavelength_index,
+            mask_index=mask_index,
+            mask_id=mask_id,
+            requested_exposure_us=requested_exposure_us,
+            requested_gain_db=requested_gain_db,
+            readback_exposure_us=readback_exposure_us,
+            readback_gain_db=readback_gain_db,
+        )
+        status.write_frame_stats(stats)
+        status.append_log(
+            "info",
+            "burst captured",
+            source="camera",
+            capture_index=capture_index,
+            wavelength_index=wavelength_index,
+            mask_index=mask_index,
+            mask_id=mask_id,
+            max_pixel=stats.get("max_pixel"),
+            saturated_fraction=stats.get("saturated_fraction"),
+            exposure_us=stats.get("exposure_us"),
+            gain_db=stats.get("gain_db"),
+        )
+    except Exception as exc:
+        warnings.warn(f"capture diagnostics publish failed: {exc}", RuntimeWarning)
+
+
+def _latest_preview_frame(capture: CaptureFrames) -> np.ndarray:
+    burst = np.asarray(capture.burst)
+    if burst.ndim == 3 and burst.shape[0] > 0:
+        return burst[-1]
+    return np.asarray(capture.frames_avg)
+
+
+def _capture_frame_stats(
+    capture: CaptureFrames,
+    *,
+    capture_index: int,
+    wavelength_index: int,
+    mask_index: int,
+    mask_id: str,
+    requested_exposure_us: float | None,
+    requested_gain_db: float | None,
+    readback_exposure_us: float | None,
+    readback_gain_db: float | None,
+) -> dict[str, Any]:
+    burst = np.asarray(capture.burst)
+    if burst.size == 0:
+        h, w = _frame_shape_hw(capture)
+        return {
+            "capture_index": int(capture_index),
+            "wavelength_index": int(wavelength_index),
+            "mask_index": int(mask_index),
+            "mask_id": str(mask_id),
+            "timestamp_ns": int(capture.metadata.get("timestamp_ns") or time.monotonic_ns()),
+            "frame_shape_hw": [h, w],
+            "frames_per_capture": 0,
+            "frame_dtype": str(burst.dtype),
+            "max_pixel": None,
+            "min_pixel": None,
+            "mean_pixel": None,
+            "saturated_pixel_count": None,
+            "saturated_fraction": None,
+            "frame_dtype_full_scale": None,
+            "frame_dtype_full_scale_source": "unavailable",
+            "requested_exposure_us": _optional_float_value(requested_exposure_us),
+            "requested_gain_db": _optional_float_value(requested_gain_db),
+            "readback_exposure_us": _optional_float_value(readback_exposure_us),
+            "readback_gain_db": _optional_float_value(readback_gain_db),
+            "exposure_us": _optional_float_value(capture.metadata.get("exposure_us")),
+            "gain_db": _optional_float_value(capture.metadata.get("gain_db")),
+        }
+
+    finite = _finite_values(burst)
+    if finite.size == 0:
+        max_pixel = min_pixel = mean_pixel = None
+    else:
+        max_pixel = float(np.max(finite))
+        min_pixel = float(np.min(finite))
+        mean_pixel = float(np.mean(finite, dtype=np.float64))
+
+    full_scale, full_scale_source = _capture_full_scale(capture, burst, max_pixel=max_pixel)
+    if full_scale is None:
+        saturated_count = None
+        saturated_fraction = None
+    else:
+        saturated_count = int(np.count_nonzero(burst >= full_scale))
+        saturated_fraction = float(saturated_count) / float(burst.size)
+
+    h, w = _frame_shape_hw(capture)
+    return {
+        "capture_index": int(capture_index),
+        "wavelength_index": int(wavelength_index),
+        "mask_index": int(mask_index),
+        "mask_id": str(mask_id),
+        "timestamp_ns": int(capture.metadata.get("timestamp_ns") or time.monotonic_ns()),
+        "frame_shape_hw": [h, w],
+        "frames_per_capture": int(burst.shape[0]) if burst.ndim >= 3 else 1,
+        "frame_dtype": str(burst.dtype),
+        "max_pixel": max_pixel,
+        "min_pixel": min_pixel,
+        "mean_pixel": mean_pixel,
+        "saturated_pixel_count": saturated_count,
+        "saturated_fraction": saturated_fraction,
+        "frame_dtype_full_scale": full_scale,
+        "frame_dtype_full_scale_source": full_scale_source,
+        "requested_exposure_us": _optional_float_value(requested_exposure_us),
+        "requested_gain_db": _optional_float_value(requested_gain_db),
+        "readback_exposure_us": _optional_float_value(readback_exposure_us),
+        "readback_gain_db": _optional_float_value(readback_gain_db),
+        "exposure_us": _optional_float_value(capture.metadata.get("exposure_us")),
+        "gain_db": _optional_float_value(capture.metadata.get("gain_db")),
+    }
+
+
+def _frame_shape_hw(capture: CaptureFrames) -> tuple[int | None, int | None]:
+    avg = np.asarray(capture.frames_avg)
+    if avg.ndim >= 2:
+        return int(avg.shape[-2]), int(avg.shape[-1])
+    burst = np.asarray(capture.burst)
+    if burst.ndim >= 2:
+        return int(burst.shape[-2]), int(burst.shape[-1])
+    return None, None
+
+
+def _finite_values(array: np.ndarray) -> np.ndarray:
+    if np.issubdtype(array.dtype, np.floating):
+        return array[np.isfinite(array)]
+    return array.reshape(-1)
+
+
+def _capture_full_scale(
+    capture: CaptureFrames,
+    burst: np.ndarray,
+    *,
+    max_pixel: float | None,
+) -> tuple[float | None, str]:
+    explicit = _optional_float_value(
+        capture.metadata.get("frame_dtype_full_scale")
+        or capture.metadata.get("full_scale")
+        or capture.metadata.get("saturation_level")
+    )
+    if explicit is not None:
+        return explicit, "metadata"
+    if np.issubdtype(burst.dtype, np.integer):
+        return float(np.iinfo(burst.dtype).max), "dtype"
+    if max_pixel is None:
+        return None, "unavailable"
+    if max_pixel <= 255.0:
+        return 255.0, "inferred_from_max_pixel"
+    if max_pixel <= 65535.0:
+        return 65535.0, "inferred_from_max_pixel"
+    return None, "unavailable"
+
+
+def _optional_float_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int_value(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_bool_value(value: Any) -> bool | None:
+    if value is None:
+        return None
+    return bool(value)

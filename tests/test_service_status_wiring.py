@@ -9,7 +9,7 @@ import pytest
 def test_mask_id_flows_through_adapter_to_lcd_service(monkeypatch):
     """mask_id reaches LCDService.show_mono_mask() via adapter chain."""
     from devices.lcd_service import LCDService
-    from tasks.capture_forward_dataset import LCDAdapter
+    from tasks.capture_dataset import LCDAdapter
 
     calls = []
     original = LCDService.show_mono_mask
@@ -35,7 +35,7 @@ def test_mask_id_flows_through_adapter_to_lcd_service(monkeypatch):
 def test_mask_id_appears_in_lcd_state(monkeypatch, tmp_path: Path):
     """Via real LCDService, show_physical_mask writes mask_id into lcd_state.json."""
     from devices.lcd_service import LCDService
-    from tasks.capture_forward_dataset import LCDAdapter
+    from tasks.capture_dataset import LCDAdapter
     from diagnostics.run_status import read_lcd_state
 
     monkeypatch.setattr(LCDService, "initialize", lambda self: None)
@@ -56,7 +56,7 @@ def test_mask_id_appears_in_lcd_state(monkeypatch, tmp_path: Path):
 
 
 def test_fake_lcd_stores_mask_id():
-    from tasks.capture_forward_dataset import FakeLCD
+    from tasks.testing import FakeLCD
 
     lcd = FakeLCD()
     mask = np.zeros((60, 180), dtype=np.uint8)
@@ -76,7 +76,7 @@ def test_hardware_lcd_service_gets_status_dir(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr("devices.lcd_service.LCDService", _CapturingLCD)
 
-    from scripts.capture_forward_dataset import _run_hardware
+    from scripts.capture_dataset import _run_hardware
 
     class FakeArgs:
         plan = str(tmp_path / "plan.yaml")
@@ -92,7 +92,13 @@ def test_hardware_lcd_service_gets_status_dir(monkeypatch, tmp_path: Path):
     from tasks.capture_plan import CapturePlan
     plan = CapturePlan.from_dict({
         "plan_id": "wire_test",
-        "wavelengths": [{"wavelength_nm": 550}],
+        "wavelengths": [{
+            "illumination": {
+                "mode": "monochromatic",
+                "effective_wavelength_nm": 550.0,
+                "tls_setpoint_nm": None,
+            }
+        }],
         "masks": [{"mask_id": "m1"}],
         "camera": {"height": 60, "width": 60, "frames_per_capture": 2},
         "lcd_settle_ms": 0,
@@ -107,6 +113,72 @@ def test_hardware_lcd_service_gets_status_dir(monkeypatch, tmp_path: Path):
 
     assert passed.get("called") is True
     assert str(passed.get("status_dir")) == str(sd)
+
+
+def test_hardware_camera_adapter_gets_camera_service(monkeypatch, tmp_path: Path):
+    """Hardware CLI path wires CameraServiceClient into CameraCaptureAdapter."""
+    passed = {}
+
+    class _FakeLCD:
+        def __init__(self, **kw): pass
+        def get_metadata(self):
+            return {
+                "display_index": 1,
+                "reported_shape": (60, 60, 3),
+                "physical_shape": (60, 180),
+                "logical_shape": (60, 60),
+                "subpixel_axis": 1,
+            }
+
+    class _CapturingAdapter:
+        def __init__(self, helper, camera_service=None):
+            passed["helper"] = helper
+            passed["camera_service"] = camera_service
+
+    def _stop_before_capture(**kwargs):
+        raise RuntimeError("stop after wiring")
+
+    fake_camera_service = _FakeCC()
+    monkeypatch.setattr("devices.camera_service.CameraServiceClient", lambda **kw: fake_camera_service)
+    monkeypatch.setattr("devices.lcd_service.LCDService", _FakeLCD)
+    monkeypatch.setattr("devices.frame_stream.FrameStreamClient", lambda: object())
+    monkeypatch.setattr("capture.frame_capture.FrameCaptureHelper", lambda fs: "helper")
+    monkeypatch.setattr("tasks.capture_dataset.CameraCaptureAdapter", _CapturingAdapter)
+    monkeypatch.setattr("tasks.capture_dataset.run_capture_dataset", _stop_before_capture)
+
+    from scripts.capture_dataset import _run_hardware
+
+    class FakeArgs:
+        enable_tls = False
+        no_auto_sidecar = True
+        camera_index = 0
+        lcd_display_index = 1
+        lcd_subpixel_axis = 1
+        tls_serial_number = ""
+        runtime_mode = None
+        camera_profile = None
+        pupil_profile = None
+
+    from tasks.capture_plan import CapturePlan
+    plan = CapturePlan.from_dict({
+        "plan_id": "camera_wire_test",
+        "wavelengths": [{
+            "illumination": {
+                "mode": "monochromatic",
+                "effective_wavelength_nm": 550.0,
+                "tls_setpoint_nm": None,
+            }
+        }],
+        "masks": [{"mask_id": "m1"}],
+        "camera": {"height": 60, "width": 60, "frames_per_capture": 2},
+        "lcd_settle_ms": 0,
+    })
+
+    with pytest.raises(RuntimeError, match="stop after wiring"):
+        _run_hardware(FakeArgs(), plan, tmp_path / "out.h5", status_dir=None, run_id=None)
+
+    assert passed["helper"] == "helper"
+    assert passed["camera_service"] is fake_camera_service
 
 
 def test_hardware_tls_service_gets_status_dir(monkeypatch, tmp_path: Path):
@@ -131,7 +203,7 @@ def test_hardware_tls_service_gets_status_dir(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("devices.frame_stream.FrameStreamClient", lambda: None)
     monkeypatch.setattr("capture.frame_capture.FrameCaptureHelper", lambda fs: None)
 
-    from scripts.capture_forward_dataset import _run_hardware
+    from scripts.capture_dataset import _run_hardware
 
     class FakeArgs:
         plan = str(tmp_path / "plan.yaml")
@@ -147,7 +219,13 @@ def test_hardware_tls_service_gets_status_dir(monkeypatch, tmp_path: Path):
     from tasks.capture_plan import CapturePlan
     plan = CapturePlan.from_dict({
         "plan_id": "tls_wire_test",
-        "wavelengths": [{"wavelength_nm": 550}],
+        "wavelengths": [{
+            "illumination": {
+                "mode": "monochromatic",
+                "effective_wavelength_nm": 550.0,
+                "tls_setpoint_nm": 550.0,
+            }
+        }],
         "masks": [{"mask_id": "m1"}],
         "camera": {"height": 60, "width": 60, "frames_per_capture": 2},
         "lcd_settle_ms": 0,

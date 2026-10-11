@@ -1,151 +1,52 @@
-"""
-Print structure and key metadata of a raw capture HDF5 file.
-
-No scientific interpretation — purely structural inspection.
-
-Usage::
-
-    python scripts/inspect_raw_capture.py data/raw/example.h5
-"""
-
+"""Inspect the explicit RawCapture v3 observation contract, without hardware."""
 from __future__ import annotations
-
 import argparse
-import sys
+import json
 from pathlib import Path
+import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import h5py
-import numpy as np
+from tasks.raw_capture_h5 import RAW_CAPTURE_SCHEMA_VERSION
+from tasks.measurement.json_io import decode_h5_string
 
 
-def _h5_str(val) -> str:
-    if isinstance(val, bytes):
-        return val.decode()
-    if isinstance(val, np.ndarray) and val.size == 1:
-        return _h5_str(val.flat[0])
-    return str(val)
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Inspect a raw capture HDF5 file"
-    )
-    parser.add_argument("path", help="path to raw_capture.h5")
-    parser.add_argument("--verbose", action="store_true",
-                       help="list all datasets with shapes")
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    path = Path(args.path)
-    if not path.exists():
-        print(f"Error: file not found: {path}")
-        return 1
-
+def capture_summary(path: str | Path) -> dict:
     with h5py.File(path, "r") as f:
+        if f.attrs.get("raw_capture_schema_version") != RAW_CAPTURE_SCHEMA_VERSION:
+            raise ValueError("unsupported RawCapture version; explicit conversion required")
+        def read_json(name):
+            return json.loads(decode_h5_string(f[name][()]))
+        def array_info(name):
+            return {"shape": list(f[name].shape), "dtype": str(f[name].dtype)} if name in f else None
+        return {
+            "plan_id": decode_h5_string(f["capture/plan_id"][()]),
+            "raw_capture_schema_version": int(f.attrs["raw_capture_schema_version"]),
+            "capture_role": decode_h5_string(f.attrs["capture_role"]),
+            "runtime_mode": decode_h5_string(f["capture/runtime_mode"][()]),
+            "processing_flags": read_json("capture/processing_flags_json"),
+            "illumination": [json.loads(decode_h5_string(v)) for v in f["illumination/illumination_json"][()]],
+            "display_state_ids": [decode_h5_string(v) for v in f["masks/mask_id"][()]],
+            "masks_physical": array_info("masks/masks_physical"),
+            "frames_avg": array_info("raw/frames_avg"),
+            "frames_burst": array_info("raw/frames"),
+            "camera_settings": {name: f["camera/" + name][()].tolist() for name in (
+                "requested_exposure_us", "requested_gain_db", "readback_exposure_us", "readback_gain_db")},
+            "lcd_metadata": read_json("lcd/metadata_json"),
+            "profile_requirements": read_json("profiles/requirements_json"),
+        }
 
-        header(f, "Plan")
-        plan_json = _h5_str(f.get("capture/plan_json", ""))
-        plan_id = _h5_str(f.attrs.get("plan_id", _h5_str(f.get("capture/plan_id", ""))))
-        print(f"  plan_id:         {plan_id}")
 
-        header(f, "Capture index")
-        n_captures = _ds_len(f, "capture/capture_index")
-        n_completed = int(np.sum(f["capture/completed"][:] == 1)
-                         if "capture/completed" in f else 0)
-        print(f"  n_captures:      {n_captures}")
-        print(f"  n_completed:     {n_completed}")
-
-        header(f, "Wavelengths")
-        if "tls/wavelength_nm" in f:
-            wl = f["tls/wavelength_nm"][:]
-            grat = f["tls/grating"][:] if "tls/grating" in f else None
-            n_wl = len(wl)
-            print(f"  n_wavelengths:   {n_wl}")
-            for i in range(min(n_wl, 10)):
-                g_val = int(grat[i]) if grat is not None else -1
-                print(f"  [{i}] {float(wl[i]):.1f} nm  grating={g_val}")
-        else:
-            print("  (no TLS data)")
-
-        header(f, "Masks")
-        if "masks/mask_id" in f:
-            mask_ids = f["masks/mask_id"][:]
-            n_masks = len(mask_ids)
-            print(f"  n_masks:         {n_masks}")
-            for i in range(min(n_masks, 10)):
-                mid = _h5_str(mask_ids[i])
-                print(f"  [{i}] {mid}")
-        if "masks/masks_physical" in f:
-            d = f["masks/masks_physical"]
-            print(f"  mask_shape:      {d.shape[1]}×{d.shape[2]}")
-
-        header(f, "Frames")
-        if "raw/frames_avg" in f:
-            d = f["raw/frames_avg"]
-            print(f"  frames_avg:      {d.shape[1]}×{d.shape[2]}  ({d.shape[0]} captures)")
-        if "raw/frames" in f:
-            d = f["raw/frames"]
-            print(f"  frames (burst):  {d.shape[1]} frames, {d.shape[2]}×{d.shape[3]}  ({d.shape[0]} captures)")
-        store_burst = f["raw"].attrs.get("store_burst", False) if "raw" in f else False
-        fps = f["raw"].attrs.get("frames_per_capture", 0) if "raw" in f else 0
-        print(f"  store_burst:     {store_burst}")
-        print(f"  fps_per_capture: {fps}")
-
-        header(f, "Camera")
-        if "camera/timestamp_ns" in f:
-            cam_ts = f["camera/timestamp_ns"][:]
-            print(f"  timestamps:      {len(cam_ts)} entries")
-            if "camera/status_json" in f and len(f["camera/status_json"][:]) > 0:
-                print(f"  status[0]:       {_h5_str(f['camera/status_json'][0])[:120]}")
-
-        header(f, "LCD")
-        if "lcd/display_timestamp_ns" in f:
-            print(f"  timestamps:      {len(f['lcd/display_timestamp_ns'][:])} entries")
-        if "lcd/mapping_policy_json" in f:
-            print(f"  mapping_policy:  {_h5_str(f['lcd/mapping_policy_json'])[:100]}")
-
-        header(f, "TLS")
-        if "tls/status_json" in f and len(f["tls/status_json"][:]) > 0:
-            print(f"  status[0]:       {_h5_str(f['tls/status_json'][0])[:120]}")
-
-        header(f, "Processing flags")
-        pf_str = _h5_str(f.get("capture/processing_flags_json", "{}"))
-        import json as _json
-        try:
-            pf = _json.loads(pf_str)
-            for k, v in pf.items():
-                print(f"  {k}:{' '*(30-len(k))}{v}")
-        except Exception:
-            print(f"  {pf_str}")
-
-        if args.verbose:
-            header(f, "All groups and datasets")
-            _print_tree(f)
-
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("path")
+    parser.add_argument("--verbose", action="store_true", help="also list dataset shapes")
+    args = parser.parse_args(argv)
+    print(json.dumps(capture_summary(args.path), indent=2, sort_keys=True))
+    if args.verbose:
+        with h5py.File(args.path, "r") as f:
+            f.visititems(lambda name, item: print(name, item.shape, item.dtype) if isinstance(item, h5py.Dataset) else None)
     return 0
-
-
-def header(f: h5py.File, title: str) -> None:
-    print(f"\n{'─' * 56}")
-    print(f"  {title}")
-
-
-def _ds_len(f: h5py.File, name: str) -> int:
-    if name in f:
-        return len(f[name])
-    return 0
-
-
-def _print_tree(f: h5py.File, prefix: str = "") -> None:
-    for key in sorted(f.keys()):
-        obj = f[key]
-        if isinstance(obj, h5py.Group):
-            print(f"  {prefix}{key}/")
-            _print_tree(obj, prefix=prefix + key + "/")
-        else:
-            print(f"  {prefix}{key}  shape={obj.shape}  dtype={obj.dtype}")
 
 
 if __name__ == "__main__":

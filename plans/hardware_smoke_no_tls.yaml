@@ -1,6 +1,9 @@
 plan_id: hardware_smoke_no_tls
 wavelengths:
-  - wavelength_nm: 550.0
+  - illumination:
+      mode: monochromatic
+      effective_wavelength_nm: 550.0
+      tls_setpoint_nm: null
     grating: null
     settle_ms: 0
 masks:
@@ -12,7 +15,6 @@ masks:
     path: plans/generated_masks/vertical_stripes_coarse.npy
 camera:
   frames_per_capture: 3
-  average_burst: false
 lcd_settle_ms: 200
 store_burst: true
-notes: Phase 2B camera+LCD hardware smoke — no TLS
+notes: camera+LCD hardware smoke — no TLS

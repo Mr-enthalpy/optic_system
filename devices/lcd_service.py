@@ -20,7 +20,7 @@ class LCDService:
 
     ``subpixel_axis`` can be set explicitly or via the environment variable
     ``OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS``.  If ``subpixel_axis`` is ``None``,
-    defaults to axis=1 (legacy width-tripling).
+    real devices require an explicitly configured display index and axis.
 
     If *status_dir* is provided, the service independently writes
     ``lcd_state.json`` and a mask preview on every display update so that a
@@ -38,14 +38,17 @@ class LCDService:
         status_dir: Path | str | None = None,
     ):
         self._backend = backend
+        if display_index is None and os.environ.get("OPTIC_SYSTEM_LCD_DISPLAY_INDEX"):
+            display_index = int(os.environ["OPTIC_SYSTEM_LCD_DISPLAY_INDEX"])
         self._display_index = display_index
+        self._axis_explicit = subpixel_axis is not None or os.environ.get("OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS") in ("0", "1")
 
         if subpixel_axis is None:
             env_val = os.environ.get("OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS", "")
             if env_val in ("0", "1"):
                 subpixel_axis = int(env_val)
             else:
-                subpixel_axis = 1  # legacy default: width-tripling
+                subpixel_axis = 1  # inert default for injected test backends
         if subpixel_axis not in (0, 1):
             raise ValueError(f"subpixel_axis must be 0 or 1, got {subpixel_axis}")
         self.subpixel_axis = int(subpixel_axis)
@@ -63,6 +66,8 @@ class LCDService:
 
     def initialize(self) -> None:
         if self._backend is None:
+            if self._display_index is None or not self._axis_explicit:
+                raise ValueError("Select LCD display_index and subpixel_axis explicitly or through OPTIC_SYSTEM_LCD_DISPLAY_INDEX / OPTIC_SYSTEM_LCD_SUBPIXEL_AXIS")
             self._backend = LCDBackend(display_index=self._display_index)
 
     def get_metadata(self) -> dict[str, object]:

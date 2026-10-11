@@ -7,15 +7,6 @@ import numpy as np
 import pygame
 
 
-def _find_lcd_index() -> int:
-    pygame.display.init()
-    sizes = pygame.display.get_desktop_sizes()
-    display_count = pygame.display.get_num_displays()
-    if display_count <= 0 or not sizes:
-        raise RuntimeError("No SDL display was detected for the LCD backend")
-    return 1 if display_count > 1 else 0
-
-
 def _validate_rgb_buffer(frame: np.ndarray, size: tuple[int, int]) -> None:
     if frame.dtype != np.uint8:
         raise TypeError(f"Expected uint8 RGB buffer, got {frame.dtype!r}")
@@ -38,10 +29,9 @@ class LCDBackend:
     """
 
     def __init__(self, display_index: Optional[int] = None):
-        pygame.display.init()
-
         if display_index is None:
-            display_index = _find_lcd_index()
+            raise ValueError("LCD display_index must be selected explicitly")
+        pygame.display.init()
 
         sizes = pygame.display.get_desktop_sizes()
         if display_index < 0 or display_index >= len(sizes):

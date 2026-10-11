@@ -11,10 +11,10 @@ import pytest
 from tasks.capture_plan import (
     CameraCaptureConfig,
     CapturePlan,
+    IlluminationEntry,
     LCDMaskEntry,
-    TLSWavelengthEntry,
 )
-from tasks.capture_forward_dataset import (
+from tasks.testing import (
     FakeCamera,
     FakeDeviceBundle,
     FakeLCD,
@@ -38,8 +38,24 @@ def sample_plan_dict() -> dict[str, Any]:
     return {
         "plan_id": "test_plan_01",
         "wavelengths": [
-            {"wavelength_nm": 532.0, "grating": 1, "settle_ms": 3000},
-            {"wavelength_nm": 633.0, "grating": 1, "settle_ms": 2000},
+            {
+                "illumination": {
+                    "mode": "monochromatic",
+                    "effective_wavelength_nm": 532.0,
+                    "tls_setpoint_nm": None,
+                },
+                "grating": 1,
+                "settle_ms": 3000,
+            },
+            {
+                "illumination": {
+                    "mode": "monochromatic",
+                    "effective_wavelength_nm": 633.0,
+                    "tls_setpoint_nm": None,
+                },
+                "grating": 1,
+                "settle_ms": 2000,
+            },
         ],
         "masks": [
             {"mask_id": "mask_a", "family_id": "f1"},
@@ -47,7 +63,6 @@ def sample_plan_dict() -> dict[str, Any]:
         ],
         "camera": {
             "frames_per_capture": 5,
-            "average_burst": True,
         },
         "lcd_settle_ms": 500,
         "store_burst": False,
