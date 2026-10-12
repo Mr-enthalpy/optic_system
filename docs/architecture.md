@@ -29,3 +29,5 @@ Data follows RawCapture -> FullFramePSFSurvey -> center/ROI -> dense measured RO
 Sensor coordinates use x right, y down; frame arrays use `[H,W]`. Full-sensor extent must be verified explicitly. SensorEnergyCenterProfile stores an origin and estimator diagnostics. Experiment-selected ROI geometry is separate. Intensity processing operates on copies. Source/gain/sensor-response radiometric calibration remains an experimental responsibility.
 
 No sibling repository import, implicit external command, cross-repository RPC or parent-name dependency is permitted. A future Meta Repository may consume these measured outputs and pin this independent repository as a Submodule; its integration plans and version pins remain outside this checkout.
+
+Acquisition services/calibration/capture stay local to the acquisition host. Offline Survey/center/ROI processing needs only the analysis dependencies and explicit delivered-file paths. Hosts exchange closed, verified files through existing transport; no frame stream or timing-sensitive control crosses the network. See [dual-environment workflow](dual_environment_workflow.md).

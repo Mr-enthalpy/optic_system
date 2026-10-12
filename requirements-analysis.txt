@@ -1,0 +1,5 @@
+# Offline measured-data processing; no device services or vendor SDKs.
+numpy
+h5py
+PyYAML
+scipy

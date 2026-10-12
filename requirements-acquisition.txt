@@ -1,0 +1,8 @@
+# Local capture/calibration, device services and file-status previews.
+numpy
+opencv-python
+pyzmq
+Pillow
+pygame
+h5py
+PyYAML
