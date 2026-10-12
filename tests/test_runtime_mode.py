@@ -237,3 +237,43 @@ def test_profile_task_rejects_missing_tls_in_hardware_mode():
             tls=None,
             runtime_policy="hardware",
         )
+
+
+def test_no_tls_smoke_plan_requires_explicit_diagnostic_mode(tmp_path: Path):
+    plan = CapturePlan.load_yaml(
+        str(Path(__file__).resolve().parents[1] / "plans/hardware_smoke_no_tls.yaml")
+    )
+    devices = SimpleNamespace(camera=DummyCamera(), lcd=DummyLCD(), tls=None)
+    output = tmp_path / "smoke.h5"
+    with pytest.raises(RuntimeModeError, match="tls_setpoint_nm"):
+        run_capture_dataset(plan, devices, output, enable_tls=False)
+    assert not output.exists()
+
+    # These are offline test doubles, not evidence of a hardware measurement.
+    for entry in plan.masks:
+        mask_path = tmp_path / f"{entry.mask_id}.npy"
+        np.save(mask_path, np.ones(devices.lcd.physical_shape(), dtype=np.uint8))
+        entry.path = str(mask_path)
+    plan.lcd_settle_ms = 0
+    run_capture_dataset(
+        plan, devices, output, enable_tls=False, runtime_policy="diagnostic"
+    )
+    with h5py.File(output, "r") as f:
+        assert f["capture/runtime_mode"][()] == b"diagnostic"
+        assert bool(f["capture/completed"][:].all())
+        assert f["raw/frames_avg"].shape == (3, 4, 5)
+        flags = json.loads(f["capture/processing_flags_json"][()])
+        assert flags["run_succeeded"] is True
+        assert flags["scientific_calibration_valid"] is False
+        assert flags["optical_alignment_validated"] is False
+        status = json.loads(f["tls/status_json"][0])
+        assert status["connected"] is False
+        assert status["illumination"]["tls_setpoint_nm"] is None
+
+
+def test_diagnostic_policy_still_forbids_fake_devices():
+    with pytest.raises(RuntimeModeError, match="fake"):
+        validate_no_fake_devices(
+            FakeDeviceBundle(camera=FakeCamera(), lcd=FakeLCD()),
+            policy=diagnostic_runtime_policy(),
+        )

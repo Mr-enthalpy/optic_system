@@ -334,9 +334,12 @@ def test_capture_no_tls_hardware() -> None:
             output_path=output,
             enable_tls=False,
             dry_run=False,
+            runtime_policy="diagnostic",
         )
 
         _verify_hdf5_structure(actual, plan, expect_tls=False)
+        with h5py.File(actual, "r") as f:
+            assert _h5_str_scalar(f["capture/runtime_mode"]) == "diagnostic"
         print(f"  OK: {actual}")
     finally:
         try:

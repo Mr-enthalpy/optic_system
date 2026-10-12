@@ -17,4 +17,4 @@ camera:
   frames_per_capture: 3
 lcd_settle_ms: 200
 store_burst: true
-notes: camera+LCD hardware smoke — no TLS
+notes: camera+LCD diagnostic smoke — no TLS; 550 nm is a nominal label, not verified illumination
