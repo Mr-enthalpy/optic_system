@@ -77,7 +77,7 @@ def test_frame_metadata_builder_raw8_raw16_and_rgb() -> None:
     raw8 = layout_mod.frame_layout_from_array(np.zeros((3, 4), dtype=np.uint8), pixel_format="RAW8")
     raw8_meta = layout_mod.build_frame_metadata(raw8, index=0, seq=1, ts_ns=10)
 
-    assert raw8_meta["protocol_version"] == 2
+    assert raw8_meta["protocol_version"] == 3
     assert raw8_meta["backend"] == "flycapture2_c"
     assert raw8_meta["shape"] == [3, 4]
     assert raw8_meta["dtype"] == "uint8"

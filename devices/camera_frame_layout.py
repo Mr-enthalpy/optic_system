@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 BACKEND_NAME = "flycapture2_c"
 DEFAULT_SHM_NAME = "flycap2_ring_A"
 DEFAULT_RING_SIZE = 8

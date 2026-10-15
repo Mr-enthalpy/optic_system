@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import threading
@@ -722,6 +723,9 @@ def stream_loop(state: CameraServiceState, pub: zmq.Socket) -> None:
                     embedded_metadata=getattr(frame, "metadata", None),
                     dropped_frames=state.dropped_frames,
                 )
+                # Bind the notification to these exact bytes, not a ring slot
+                # that may already belong to a newer frame when read.
+                meta["frame_sha256"] = hashlib.sha256(frame_bytes).hexdigest()
                 meta.setdefault("bayer_pattern", "GB")
                 state.widx = (state.widx + 1) % RING
                 state.seq += 1

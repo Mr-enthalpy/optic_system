@@ -30,7 +30,7 @@ def test_camera_service_flycapture2_sidecar_hardware_smoke() -> None:
         packets = [stream.recv_frame() for _ in range(frame_count)]
 
         assert len(packets) == frame_count
-        assert packets[-1].meta["protocol_version"] == 2
+        assert packets[-1].meta["protocol_version"] == 3
         assert packets[-1].meta["backend"] == "flycapture2_c"
         assert packets[-1].raw.nbytes == packets[-1].meta["frame_nbytes"]
         assert packets[-1].raw.size > 0

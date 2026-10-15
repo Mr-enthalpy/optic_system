@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import time
 from dataclasses import dataclass
 from multiprocessing import shared_memory
 from threading import get_ident
@@ -12,6 +14,7 @@ import numpy as np
 import zmq
 
 from .camera_service import DEFAULT_PORT_PUB, DEFAULT_SHM_NAME
+from .camera_frame_layout import PROTOCOL_VERSION
 
 
 _RAW_DEFAULT_BAYER_PATTERN = os.environ.get("CAM_BAYER_PATTERN", "").strip().upper()
@@ -62,6 +65,7 @@ class FrameStreamClient:
         self._shm_name: Optional[str] = None
         self._shm: Optional[shared_memory.SharedMemory] = None
         self._last_packet: Optional[FramePacket] = None
+        self.stale_notifications_discarded = 0
 
     @staticmethod
     def _normalize_bayer_pattern(pattern: str) -> str:
@@ -188,18 +192,41 @@ class FrameStreamClient:
     def recv_frame(self) -> FramePacket:
         self._ensure_sub()
         assert self._sub is not None
+        deadline = (time.monotonic() + self.recv_timeout_ms / 1000.0
+                    if self.recv_timeout_ms is not None and self.recv_timeout_ms >= 0 else None)
+        first_attempt = True
 
-        while True:
+        def read_notification() -> dict:
             topic, payload = self._sub.recv_multipart()
             if topic == b"status":
                 status = json.loads(payload)
                 message = status.get("err") or status.get("message") or repr(status)
                 raise RuntimeError(f"Camera sidecar reported stream status: {message}")
-
             if topic != self.topic:
                 raise RuntimeError(f"Received unexpected topic {topic!r}")
+            return json.loads(payload)
 
-            meta = json.loads(payload)
+        while True:
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if ((remaining <= 0 and not first_attempt)
+                        or not self._sub.poll(max(0, int(remaining * 1000)))):
+                    raise zmq.Again()
+            first_attempt = False
+            meta = read_notification()
+            # A pause for display changes, analysis or disk I/O must not make
+            # the next capture replay queued notifications from an old state.
+            while self._sub.poll(0):
+                meta = read_notification()
+                self.stale_notifications_discarded += 1
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise zmq.Again()
+            if meta.get("protocol_version") != PROTOCOL_VERSION:
+                raise RuntimeError("Unsupported camera frame protocol; restart client and sidecar from the same checkout")
+            digest = meta.get("frame_sha256")
+            if (not isinstance(digest, str) or len(digest) != 64
+                    or any(c not in "0123456789abcdef" for c in digest)):
+                raise RuntimeError("Camera frame notification is missing a valid frame_sha256")
             shm_name = meta.get("shm", self.default_shm_name)
             self._ensure_shm(shm_name)
             assert self._shm is not None
@@ -210,6 +237,12 @@ class FrameStreamClient:
                 self.bayer_pattern,
                 user_bayer_pattern=self._bayer_pattern_user,
             )
+            if hashlib.sha256(raw).hexdigest() != digest:
+                # The producer reused this slot, possibly during our copy.
+                # Never return its pixels paired with an older notification.
+                self.stale_notifications_discarded += 1
+                continue
+            meta["stale_notifications_discarded"] = self.stale_notifications_discarded
             packet = FramePacket(raw=raw, preview_bgr=preview_bgr, meta=meta)
             self._last_packet = packet
             return packet
