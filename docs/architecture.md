@@ -11,6 +11,8 @@ Manual/debug GUI hardware lifecycle belongs to SessionController. Device wrapper
 
 Camera stream protocol v3 binds each notification to the exact producer frame bytes with `frame_sha256`. The client drains queued notifications before copying a frame, verifies its copy and discards overwritten or torn snapshots within its receive timeout. `stale_notifications_discarded` is a consumer count, distinct from sidecar capture errors. Client and sidecar must use the same protocol; v2 notifications are rejected. This is a local transport integrity check, not a change to RawCapture v3 or a calibration validity claim. At low frame rates, the experiment must still allow sufficient LCD/exposure settling before acquisition.
 
+Run-status JSON and preview replacement retries Windows access/sharing/locking errors up to five attempts, with at most 150 ms of backoff. The previous complete file remains in place until replacement succeeds; persistent permissions/storage failures still propagate. This permits a concurrent read-only monitor without changing directory ACLs or suppressing acquisition failures.
+
 ```text
 app/, gui/      manual controls and preview
 control/        commands, events, state, session lifecycle

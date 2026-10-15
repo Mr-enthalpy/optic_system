@@ -301,6 +301,19 @@ def _status_from_dict(data: dict[str, Any]) -> RunStatus:
     return RunStatus(**filtered)
 
 
+def _replace_status_file(source: str, destination: Path) -> None:
+    # On Windows an otherwise readable status/preview file can briefly deny
+    # replacement while the monitor or a file-copy client has it open.
+    for attempt in range(5):
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 4:
+                raise
+            time.sleep(0.01 * (2 ** attempt))
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
@@ -313,7 +326,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
             f.write("\n")
-        os.replace(tmp_name, path)
+        _replace_status_file(tmp_name, path)
     finally:
         try:
             os.unlink(tmp_name)
@@ -332,7 +345,7 @@ def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
     try:
         with open(tmp_name, "wb") as f:
             np.save(f, array)
-        os.replace(tmp_name, path)
+        _replace_status_file(tmp_name, path)
     finally:
         try:
             os.unlink(tmp_name)
@@ -356,7 +369,7 @@ def _atomic_write_image(path: Path, image: np.ndarray) -> None:
     try:
         if not cv2.imwrite(tmp_name, image):
             raise RuntimeError(f"failed to write image preview: {path}")
-        os.replace(tmp_name, path)
+        _replace_status_file(tmp_name, path)
     finally:
         try:
             os.unlink(tmp_name)
