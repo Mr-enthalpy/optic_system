@@ -202,6 +202,7 @@ def run_broadband_pupil_scan(
     camera: PupilScanCamera,
     lcd: PupilScanLCD,
     tls: PupilScanTLS | None = None,
+    valid_pixel_mask: np.ndarray | None = None,
     runtime_policy: RuntimePolicy | str | None = None,
 ) -> PupilScanReport:
     policy = normalize_runtime_policy(runtime_policy)
@@ -222,6 +223,7 @@ def run_broadband_pupil_scan(
     _validate_broadband_camera_profile(plan, camera_profile)
     if camera_profile.camera_profile_id != plan.camera_profile_id:
         raise PupilScanError("plan camera_profile_id does not match camera_profile")
+    valid_pixel_mask = _pupil_valid_mask(valid_pixel_mask, camera_profile)
     validate_lcd_geometry(lcd, physical_shape=plan.physical_shape, display_index=plan.lcd_display_index, subpixel_axis=plan.subpixel_axis)
     if tls is not None:
         tls.set_pass_through(timeout_s=60.0)
@@ -230,6 +232,9 @@ def run_broadband_pupil_scan(
         exposure_us=camera_profile.exposure_us,
         gain_db=camera_profile.gain_db,
     )
+    # Match the established exposure-change settle policy before any scan sample.
+    time.sleep(0.3)
+    camera.acquire_burst(80)
     physical_shape = tuple(int(v) for v in plan.physical_shape)
     bright = _capture_mask(
         camera,
@@ -240,7 +245,7 @@ def run_broadband_pupil_scan(
         plan.lcd_settle_ms,
         plan.allow_test_lcd_settle_below_refresh,
     )
-    bright_sum = float(np.sum(bright))
+    bright_sum = _energy_sum(bright, valid_pixel_mask)
 
     x_positions, x_energies = _scan_axis(
         "x",
@@ -248,6 +253,7 @@ def run_broadband_pupil_scan(
         camera=camera,
         lcd=lcd,
         bright_sum=bright_sum,
+        valid_pixel_mask=valid_pixel_mask,
     )
     y_positions, y_energies = _scan_axis(
         "y",
@@ -255,6 +261,7 @@ def run_broadband_pupil_scan(
         camera=camera,
         lcd=lcd,
         bright_sum=bright_sum,
+        valid_pixel_mask=valid_pixel_mask,
     )
     fit = solve_pupil_from_bar_profiles(x_positions, x_energies, y_positions, y_energies)
     center = (float(fit["xc"]), float(fit["yc"]))
@@ -267,7 +274,7 @@ def run_broadband_pupil_scan(
         plan.lcd_settle_ms,
         plan.allow_test_lcd_settle_below_refresh,
     )
-    dark_sum = float(np.sum(dark))
+    dark_sum = _energy_sum(dark, valid_pixel_mask)
     radii, radius_energies = _run_radius_scan(
         plan=plan,
         camera=camera,
@@ -275,6 +282,7 @@ def run_broadband_pupil_scan(
         center=center,
         initial_radius=float(fit["r_avg"]),
         dark_sum=dark_sum,
+        valid_pixel_mask=valid_pixel_mask,
     )
     ellipse = estimate_ellipse_parameters(radius_energies, radii)
     radius = float(plan.radius_factor) * float(ellipse.semi_minor)
@@ -308,6 +316,11 @@ def run_broadband_pupil_scan(
             "camera_profile_id": plan.camera_profile_id,
             "illumination_mode": BROADBAND_PASSTHROUGH,
             "physical_shape": list(physical_shape),
+            "valid_pixel_domain": ({"type": "full_frame"} if valid_pixel_mask is None else {
+                "type": "explicit_mask", "shape_hw": list(valid_pixel_mask.shape),
+                "excluded_xy": np.argwhere(~valid_pixel_mask)[:, ::-1].tolist(),
+            }),
+            "camera_parameter_settle": {"settle_ms": 300.0, "discard_frames": 80},
         },
     )
     pupil.validate()
@@ -502,6 +515,7 @@ def _scan_axis(
     camera: PupilScanCamera,
     lcd: PupilScanLCD,
     bright_sum: float,
+    valid_pixel_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     positions: list[float] = []
     energies: list[float] = []
@@ -521,7 +535,7 @@ def _scan_axis(
             plan.allow_test_lcd_settle_below_refresh,
         )
         positions.append(position)
-        energies.append(float(abs(bright_sum - np.sum(frame))))
+        energies.append(float(abs(bright_sum - _energy_sum(frame, valid_pixel_mask))))
     return np.asarray(positions, dtype=np.float64), np.asarray(energies, dtype=np.float64)
 
 
@@ -533,6 +547,7 @@ def _run_radius_scan(
     center: tuple[float, float],
     initial_radius: float,
     dark_sum: float,
+    valid_pixel_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     if int(plan.radius_scan_steps) < 8:
         raise PupilScanError("radius_scan_steps must be >= 8 for ellipse fitting")
@@ -564,8 +579,37 @@ def _run_radius_scan(
             plan.lcd_settle_ms,
             plan.allow_test_lcd_settle_below_refresh,
         )
-        energies.append(float(abs(np.sum(frame) - dark_sum)))
+        energies.append(float(abs(_energy_sum(frame, valid_pixel_mask) - dark_sum)))
     return radii, np.asarray(energies, dtype=np.float64)
+
+
+def _pupil_valid_mask(mask: np.ndarray | None, profile: CameraProfile) -> np.ndarray | None:
+    domain = profile.extra.get("valid_pixel_domain", {})
+    if mask is None:
+        if domain.get("type") == "explicit_mask":
+            raise PupilScanError("CameraProfile requires its explicit valid_pixel_mask")
+        return None
+    mask = np.asarray(mask)
+    if mask.ndim != 2 or mask.dtype != np.bool_ or not np.any(mask):
+        raise PupilScanError("valid_pixel_mask must be a nonempty 2D boolean mask")
+    if domain.get("type") == "explicit_mask":
+        excluded = {tuple(xy) for xy in np.argwhere(~mask)[:, ::-1].tolist()}
+        expected = {tuple(xy) for xy in domain.get("excluded_xy", [])}
+        if list(mask.shape) != domain.get("shape_hw") or excluded != expected:
+            raise PupilScanError("valid_pixel_mask differs from CameraProfile valid pixel domain")
+    return mask.copy()
+
+
+def _energy_sum(frame: np.ndarray, mask: np.ndarray | None) -> float:
+    frame = np.asarray(frame)
+    if frame.ndim != 2:
+        raise PupilScanError("pupil scan requires a 2D camera frame")
+    if mask is not None and mask.shape != frame.shape:
+        raise PupilScanError("valid_pixel_mask shape does not match camera frame")
+    values = frame if mask is None else frame[mask]
+    if not np.all(np.isfinite(values)):
+        raise PupilScanError("pupil scan has nonfinite values in the valid pixel domain")
+    return float(np.sum(values, dtype=np.float64))
 
 
 def _capture_mask(

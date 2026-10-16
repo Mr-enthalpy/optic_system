@@ -30,8 +30,6 @@ def main(argv=None) -> int:
         parser.error("pupil scan requires --camera-profile")
     if args.stage == "per-band" and not args.pupil_profile:
         parser.error("per-band calibration requires --pupil-profile")
-    if args.stage == "pupil" and args.valid_pixel_mask:
-        parser.error("pupil scan integrates full-frame energy; valid pixel exclusion is for exposure/center analysis")
 
     import numpy as np
     from devices.camera_service import CameraServiceClient
@@ -65,7 +63,7 @@ def main(argv=None) -> int:
             result = calibrate_broadband_camera_profile(BroadbandCameraCalibrationPlan.from_dict(data), camera=camera, lcd=lcd, tls=tls, valid_pixel_mask=valid)
             profile = result.camera_profile
         elif args.stage == "pupil":
-            result = run_broadband_pupil_scan(PupilScanPlan.from_dict(data), camera_profile=CameraProfile.load_json(args.camera_profile), camera=camera, lcd=lcd, tls=tls)
+            result = run_broadband_pupil_scan(PupilScanPlan.from_dict(data), camera_profile=CameraProfile.load_json(args.camera_profile), camera=camera, lcd=lcd, tls=tls, valid_pixel_mask=valid)
             profile = result.pupil_profile
         else:
             result = calibrate_per_band_pupil_open_camera_profile(PerBandPupilOpenCalibrationPlan.from_dict(data), pupil_profile=PupilProfile.load_json(args.pupil_profile), camera=camera, lcd=lcd, tls=tls, valid_pixel_mask=valid)

@@ -32,6 +32,8 @@ from tasks.profiles.scan_pupil_broadband import _bar_starts
 from tasks.profiles.scan_pupil_broadband import (
     estimate_ellipse_parameters,
     fit_radius_overlap_function,
+    PupilScanError,
+    _energy_sum,
 )
 
 
@@ -529,6 +531,92 @@ def test_broadband_pupil_scan_outputs_pupil_profile() -> None:
     assert report.fit_quality["ellipse_semi_major"] >= report.fit_quality["ellipse_semi_minor"] > 0.0
     assert len(report.radii) == 40
     assert pupil.extra["illumination_mode"] == BROADBAND_PASSTHROUGH
+
+
+def _masked_scan_inputs():
+    valid = np.ones((24, 32), dtype=bool)
+    valid[0, :8] = False
+    profile = CameraProfile.from_dict({
+        "camera_profile_id": "masked_broadband",
+        "profile_family": BROADBAND_PASSTHROUGH,
+        "illumination": {"mode": BROADBAND_PASSTHROUGH, "tls_setpoint_nm": 0},
+        "lcd_state": {"mode": "all_transmissive"},
+        "camera": {"exposure_us": 1200.0, "gain_db": 0.0},
+        "valid_for": ["pupil_scan_broadband"],
+        "extra": {"valid_pixel_domain": {"type": "explicit_mask", "shape_hw": [24, 32],
+                                          "excluded_xy": [[x, 0] for x in range(8)]}},
+    })
+    plan = PupilScanPlan(
+        pupil_profile_id="masked_pupil", camera_profile_id=profile.camera_profile_id,
+        physical_shape=(80, 120), lcd_display_index=1, subpixel_axis=1,
+        frames_per_capture=2, lcd_settle_ms=0, allow_test_lcd_settle_below_refresh=True,
+        bar_width=6, scan_step=4, radius_scan_steps=24,
+    )
+    return plan, profile, valid
+
+
+def test_pupil_scan_excludes_varying_embedded_pixels_and_settles(monkeypatch):
+    events = []
+    monkeypatch.setattr("tasks.profiles.scan_pupil_broadband.time.sleep", lambda t: events.append(("sleep", t)))
+    plan, profile, valid = _masked_scan_inputs()
+    lcd = SyntheticLCD()
+    clean = SyntheticCamera(lcd, pupil_axes=(24, 16))
+    baseline = run_broadband_pupil_scan(plan, camera_profile=profile, camera=clean, lcd=lcd,
+        tls=FakePassThroughTLS(), valid_pixel_mask=valid, runtime_policy="no_hardware")
+
+    class EmbeddedCamera(SyntheticCamera):
+        def apply_camera_params(self, *args, **kwargs):
+            events.append(("apply",))
+            return super().apply_camera_params(*args, **kwargs)
+
+        def acquire_burst(self, k):
+            events.append(("capture", k))
+            capture = super().acquire_burst(k)
+            value = 1e8 * len(self.acquire_counts)
+            capture.burst[:, 0, :8] = value
+            capture.frames_avg[0, :8] = value
+            return capture
+
+    events.clear()
+    polluted_lcd = SyntheticLCD()
+    camera = EmbeddedCamera(polluted_lcd, pupil_axes=(24, 16))
+    observed = run_broadband_pupil_scan(plan, camera_profile=profile, camera=camera, lcd=polluted_lcd,
+        tls=FakePassThroughTLS(), valid_pixel_mask=valid, runtime_policy="no_hardware")
+    assert events[:3] == [("apply",), ("sleep", 0.3), ("capture", 80)]
+    np.testing.assert_allclose(observed.x_energies, baseline.x_energies)
+    np.testing.assert_allclose(observed.y_energies, baseline.y_energies)
+    np.testing.assert_allclose(observed.radius_energies, baseline.radius_energies)
+    assert observed.pupil_profile.extra["valid_pixel_domain"] == profile.extra["valid_pixel_domain"]
+    assert observed.pupil_profile.extra["camera_parameter_settle"] == {"settle_ms": 300, "discard_frames": 80}
+
+
+@pytest.mark.parametrize("kind", ["missing", "different_exclusion", "integer", "empty", "different_shape"])
+def test_pupil_scan_rejects_wrong_valid_domain_before_hardware(kind):
+    plan, profile, valid = _masked_scan_inputs()
+    if kind == "missing": valid = None
+    elif kind == "different_exclusion": valid[1, 1] = False
+    elif kind == "integer": valid = valid.astype(int)
+    elif kind == "empty": valid[:] = False
+    elif kind == "different_shape": valid = valid[:-1]
+    lcd = SyntheticLCD()
+    camera = SyntheticCamera(lcd)
+    tls = FakePassThroughTLS()
+    with pytest.raises(PupilScanError, match="valid.pixel"):
+        run_broadband_pupil_scan(plan, camera_profile=profile, camera=camera, lcd=lcd,
+            tls=tls, valid_pixel_mask=valid, runtime_policy="no_hardware")
+    assert not camera.applied_params and not camera.acquire_counts and tls.pass_through_calls == 0
+
+
+def test_pupil_energy_domain_is_explicit_and_preserves_input():
+    frame = np.array([[5., np.nan], [8., 2.]])
+    before = frame.copy()
+    valid = np.array([[True, False], [True, True]])
+    assert _energy_sum(frame, valid) == 15
+    np.testing.assert_array_equal(frame, before)
+    with pytest.raises(PupilScanError, match="nonfinite"):
+        _energy_sum(frame, None)
+    with pytest.raises(PupilScanError, match="shape"):
+        _energy_sum(frame, valid[:1])
 
 
 def test_ellipse_overlap_fit_recovers_synthetic_axes() -> None:
