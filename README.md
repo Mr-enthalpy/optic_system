@@ -6,6 +6,14 @@ The scientific question is whether display-induced diffraction contains reproduc
 
 This repository owns hardware control, calibration, raw observations, measured PSFs and basic optical diagnostics. It does not implement mask optimization, forward surrogate training, classification or reconstruction training. Complete spectral recovery is not a required output here. First experiments measure wavelength-dependent response at a fixed display state; dynamic display coding is a separate subsequent experimental variable.
 
+## Validated state
+
+The maintained development and default branch is `udc-main`. The historical `master` history is retained; new acquisition work belongs on `udc-main` or a feature branch based on it.
+
+On 2026-10-17 the laboratory completed real broadband camera calibration, LCD pupil scanning, per-band calibration and three fixed-display 450/550/650 nm PSF runs, with three 550 nm reference runs and matching blocked-light darks. The 384 illuminated and 96 dark frames were transferred with SHA-256 verification and processed offline into surveys, dense ROIs and basic response diagnostics. The configured optical system showed repeatable wavelength-dependent shapes; the independent display contribution and material/task information gain remain unestablished. See the [dated experimental acceptance report](docs/reports/2026-10-17-fixed-display-psf.md) for measured results, failure records and limits.
+
+The current source integrates the separately tested dual-host workflow and the acquisition fixes used during that experiment. It is not the exact historical acquisition commit; source versions and regression results are distinguished in the report. Raw data, Profiles, private desktop launch helpers and generated analysis outputs remain outside Git.
+
 ## Local setup
 
 Use Python 3.12 or 3.13 and a repository-local virtual environment. From this checkout in PowerShell:
@@ -75,6 +83,6 @@ RawCapture v3 commits a row only after its frames and metadata succeed. `capture
 
 `scripts/monitor_run_status.py` reads only task-published files. Missing previews/stats/logs are valid. It does not connect to hardware. Passing default tests or smoke tests does not establish radiometric calibration, optical alignment or a scientifically useful sensing channel.
 
-## Independent development / future Submodule use
+## Independent development and Submodule use
 
-This checkout imports, tests and runs independently of its parent directory and sibling repositories. It has its own dependencies, CI, Git history and branches. There is no `.gitmodules`, cross-repository scheduler, package registry or manual compatibility-commit table here. A future Meta Repository owns cross-repository research plans and compatible Submodule pins; [AGENTS.md](AGENTS.md) owns only local hardware/data/maintenance rules. See [architecture](docs/architecture.md), [local experimental roadmap](docs/roadmap.md) and [hardware validation](docs/hardware_smoke.md).
+This checkout imports, tests and runs independently of its parent directory and sibling repositories. It has its own dependencies, CI, Git history and branches. There is no `.gitmodules`, cross-repository scheduler, package registry or manual compatibility-commit table here. The [UDC Meta Repository](https://github.com/Mr-enthalpy/Using-the-diffraction-defects-of-under-display-cameras) owns cross-repository research plans and compatible Submodule pins; [AGENTS.md](AGENTS.md) owns only local hardware/data/maintenance rules. A Meta pin restores an exact accepted commit, while this repository remains independently usable. See [architecture](docs/architecture.md), [local experimental roadmap](docs/roadmap.md) and [hardware validation](docs/hardware_smoke.md).

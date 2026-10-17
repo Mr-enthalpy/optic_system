@@ -33,7 +33,9 @@ Do not implement training, forward surrogates, classifiers, reconstruction model
 
 Repository code must not hardcode usernames/drives, parent directory names, sibling source trees/virtual environments or Meta Repository locations. Driver/data/private config paths come from explicit configuration/environment. Keep experiments, environments, private settings and DLLs out of Git.
 
-Maintain this repository's branches, commits, PRs and CI independently. A future Meta Repository AGENTS.md owns the research ontology, cross-repository planning and integration acceptance; this file owns local maintenance and data/hardware rules. Do not duplicate a total cross-repository roadmap here. Compatible commit combinations belong to future Git Submodule pins, not a hand-maintained table in optic_system. Do not create Meta Repository or `.gitmodules` here unless requested.
+Maintain this repository's branches, commits, PRs and CI independently. The maintained default/development line is `udc-main`; retain historical branches without rewriting them. When used in the UDC Meta Repository, its root AGENTS.md owns research ontology, cross-repository planning and integration acceptance; this file owns local maintenance and data/hardware rules. Do not duplicate a total cross-repository roadmap here. Compatible commit combinations belong to Meta Repository Git Submodule pins, not a hand-maintained table in optic_system. Do not create Meta Repository or `.gitmodules` here unless requested.
+
+Record experimental acceptance in dated reports under `docs/reports/`, with the actual acquisition commit, measured conditions, completeness checks and scientific limits. Keep raw data, generated outputs and machine-specific plans/launch helpers outside Git. Distinguish an experiment's deployed commit from a later software integration commit; do not claim the later code was hardware-tested merely because it contains those fixes. A historical report remains dated evidence, not a current deployment recipe or device default.
 
 ## Tests
 

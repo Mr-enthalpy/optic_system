@@ -1,6 +1,6 @@
 # Acquisition host and offline analysis host
 
-This workflow uses independent `optic_system` checkouts and complete files. It adds no remote device service. Phase A can be validated on a development PC with synthetic observations; real deployment, networking and optical acceptance remain Phase B.
+This workflow uses independent `optic_system` checkouts and complete files. It adds no remote device service. Synthetic portability validation, real independent acquisition-host deployment and the first real fixed-display data delivery have completed; see the [2026-10-17 acceptance report](reports/2026-10-17-fixed-display-psf.md). Those results apply to the recorded apparatus and source version, not every future host or optical configuration.
 
 ## Host boundaries and dependencies
 
@@ -115,9 +115,9 @@ otf = np.fft.fft2(np.fft.ifftshift(psf))  # raw-amplitude OTF; DC equals PSF sum
 
 Compare wavelengths at the same display state and ROI. Any exposure/gain/source-power correction or normalization must be explicit on analysis copies. `relative_response` already supports explicit exposure scaling; this does not calibrate gain, source drift or RGB/Bayer sensitivity. No spectral decoding model or task evaluation implementation is added in this change.
 
-## Acquisition PC preparation: Phase B only
+## Acquisition PC deployment
 
-1. Independently clone `optic_system` and check out the agreed published commit/development branch (not the old default branch). Create its own `.venv`, install acquisition dependencies and vendor packages following their instructions. Phase A feature commits must be published separately before deployment; the Meta pin is not advanced by this task.
+1. Independently clone `optic_system` from `udc-main`, then check out the agreed published commit. Record the exact SHA; do not automatically pull a moving branch into an installed acquisition environment. Create its own `.venv`, install acquisition dependencies and vendor packages following their instructions. The Meta pin records accepted integration; deploying a newer version still requires explicit verification.
 
 ```powershell
 git clone --branch udc-main git@github.com:Mr-enthalpy/optic_system.git optic_system
@@ -152,7 +152,7 @@ Use [profile task chain](profile_task_chain.md) for stage-plan fields and [hardw
 & $py scripts/monitor_run_status.py --status-dir "$run/status" --no-gui --once
 ```
 
-Remote monitoring reads copied/read-only status files; do not forward live camera shared memory. Long captures should be launched in a validated persistent local interactive session, not a session terminated when SSH/RDP disconnects. Actual disconnect behavior remains a Phase B test.
+Remote monitoring reads copied/read-only status files; do not forward live camera shared memory. Long captures should be launched in a validated persistent local interactive session, not a session terminated when SSH/RDP disconnects. The first experiment used an authorized demand-only desktop task and continued locally through observed network outages. This does not prove durability after a desktop logout, process kill or power failure. On reconnect, inspect local task/status/files before issuing another start.
 
 Stop locally with Ctrl+C where possible. The existing cleanup path closes device services; abrupt process/power loss may leave an incomplete HDF5 or stale sidecar. Preserve raw/logs/status, inspect read-only, restore the local device state through existing controls, then retry as a new run. Do not claim graceful stop is guaranteed after a hard kill or bypass profile dependencies. Transfer only closed successful data to the formal receiving directory, retaining failed runs separately.
 

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, udc-main]
+    branches: [udc-main]
   pull_request:
-    branches: [master, udc-main]
+    branches: [udc-main]
 
 jobs:
   test:
@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -33,5 +33,7 @@ jobs:
       - name: Run no-hardware tests
         env:
           OPTIC_SYSTEM_HARDWARE_TEST: "0"
+          OPTIC_SYSTEM_RUN_PHASE2_HARDWARE_TESTS: "0"
+          OPTIC_SYSTEM_RUN_TLS_HARDWARE_TESTS: "0"
           TLS_C1_RUN_HARDWARE_TESTS: "0"
         run: python -m pytest -q
