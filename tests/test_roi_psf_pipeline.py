@@ -5,59 +5,12 @@ import h5py
 import numpy as np
 import pytest
 
-from tasks.capture_plan import CapturePlan
 from tasks.capture_dataset import CaptureFrames, run_capture_dataset
 from tasks.testing import FakeDeviceBundle, FakeLCD
-from tasks.profiles import CameraProfile, PupilProfile
 from tasks.psf import ROI, build_full_frame_psf_survey, extract_roi_psf, relative_response, roi_from_center
 from tasks.psf.sensor_energy_center import derive_sensor_energy_center_profile, estimate_frame_energy_center
 from tasks.psf.sensor_energy_center import SensorEnergyCenterProfile
 from tasks.raw_capture_h5 import RawCaptureWriter
-
-
-@pytest.fixture
-def measured(tmp_path):
-    shape = (9, 11)
-    pupil = PupilProfile.from_dict({
-        "pupil_profile_id": "pupil", "lcd_coordinate_convention": "physical_mono_xy",
-        "lcd_display_index": 0, "subpixel_axis": 1, "lcd_physical_center": [4, 2],
-        "lcd_physical_radius": 2, "extra": {"physical_shape": [6, 9]},
-    })
-    camera = CameraProfile.from_dict({
-        "camera_profile_id": "bands", "profile_family": "per_band_pupil_open",
-        "depends_on": {"pupil_profile_id": "pupil"},
-        "illumination": {"mode": "monochromatic", "wavelengths_nm": [450, 650]},
-        "lcd_state": {"mode": "selected_pupil_open", "pupil_profile_id": "pupil"},
-        "camera": {"per_wavelength": {
-            "450": {"exposure_us": 100, "gain_db": 0},
-            "650": {"exposure_us": 200, "gain_db": 0},
-        }}, "valid_for": ["psf_survey_capture"],
-    })
-    pupil.to_json(tmp_path / "pupil.json")
-    camera.to_json(tmp_path / "camera.json")
-    plan = CapturePlan.from_dict({
-        "plan_id": "fixed_display_response", "requires": {"pupil_profile_id": "pupil", "camera_profile_id": "bands"},
-        "wavelengths": [{"illumination": {"mode": "monochromatic", "effective_wavelength_nm": w}} for w in (450, 650)],
-        "masks": [{"mask_id": "fixed"}, {"mask_id": "other"}],
-        "camera": {"frames_per_capture": 1}, "lcd_settle_ms": 0,
-        "extra": {"capture_role": "survey_capture"},
-    })
-    raw = tmp_path / "raw.h5"
-    base = np.zeros(shape, dtype=np.float32)
-    base[3:6, 4:7] = np.arange(1, 10).reshape(3, 3)
-    extent = {"mode": "full_sensor", "origin_xy": [0, 0], "shape_hw": list(shape), "sensor_shape_hw": list(shape)}
-    with RawCaptureWriter(raw, plan) as writer:
-        writer.write_lcd_metadata({"display_index": 0, "physical_shape": [6, 9], "subpixel_axis": 1})
-        writer.write_physical_masks([np.ones((6, 9), np.uint8)] * 2)
-        for i in range(4):
-            writer.append_capture(i, i // 2, i % 2, None, base * (i + 1),
-                {"frame_extent": extent, "exposure_us": 100 + 100 * (i // 2), "gain_db": 0},
-                requested_exposure_us=100 + 100 * (i // 2), requested_gain_db=0)
-    survey = tmp_path / "survey.h5"
-    kwargs = dict(source_raw_capture_h5=raw, output_h5=survey,
-        pupil_profile_manifest=tmp_path / "pupil.json", camera_profile_manifest=tmp_path / "camera.json")
-    build_full_frame_psf_survey(**kwargs)
-    return raw, survey, base, kwargs, plan, camera, pupil
 
 
 def test_raw_survey_roi_preserves_amplitude_and_metadata(measured):

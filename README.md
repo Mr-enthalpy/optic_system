@@ -18,6 +18,8 @@ python -m venv .venv
 
 Normal imports and default tests need no camera, LCD, TLS or vendor DLL. For hardware, install `flycapture2_c` and `tls_c1` into this environment using their package instructions. Configure SDK directories with `FLYCAPTURE2_SDK_DIR` / `FLYCAPTURE2_DLL_DIR`; optionally select a sidecar interpreter with `OPTIC_SYSTEM_SIDECAR_PYTHON`. No driver source checkout or sibling repository is assumed. Keep private configuration under ignored `local_config/` and measurements under ignored `data/` or an explicitly selected external path.
 
+For separate hosts, install `requirements-acquisition.txt` on the acquisition PC or `requirements-analysis.txt` on the offline analysis PC. The full `requirements.txt` remains the development/test environment. See [dual-environment workflow](docs/dual_environment_workflow.md) for independent deployment, closed-file SHA-256 transfer, and Survey/center/ROI CLI commands. The acquisition PC needs no research Agent or Meta Repository; the analysis PC needs no vendor SDK or hardware connection.
+
 ## Hardware boundaries
 
 The manual/debug GUI is `app/main_gui.py`. GUI intent travels through control commands, `SessionController`, and device services. The camera runs in a sidecar, using ZMQ control and shared-memory frames. Startup is headless: `PreConfigGUI` is rejected; open camera disables trigger by default, then stream startup is explicit. Capture tasks use narrow blocking adapters and a private frame stream because movement/wait and burst capture are synchronous.
@@ -46,7 +48,7 @@ Minimal capture explicitly selects hardware or synthetic execution:
 
 For measured PSF acquisition, pass `--hardware --enable-tls --camera-profile local_config/bands.json --pupil-profile local_config/pupil.json` and explicit LCD flags. A capture plan must record verified `camera.frame_extent` when full-sensor geometry cannot be obtained from camera metadata. Declare mode `full_sensor`, origin `[0,0]`, `shape_hw` and `sensor_shape_hw`; survey conversion rejects unknown/cropped/mismatched extents. Do not label a hardware crop as full sensor.
 
-Survey conversion is a hardware-free Python function:
+Survey conversion is available through `scripts/build_psf_survey.py` and the hardware-free Python function below. `scripts/estimate_sensor_center.py` exposes the existing center estimator; `scripts/extract_roi_psf.py` accepts explicit coordinates or a center profile and experiment-selected shape. All accept explicit input/output paths and reject existing outputs.
 
 ```python
 from tasks.psf import build_full_frame_psf_survey, ROI, extract_roi_psf, relative_response
