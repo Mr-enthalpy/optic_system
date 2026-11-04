@@ -128,3 +128,5 @@ Primary references: [ImageFormat layouts](https://developer.android.com/referenc
 ## Latest device validation
 
 The [2026-11-04 real-device report](../../docs/reports/2026-11-04-axon20-live-raw-validation.md) records 32 validated front-camera RAW frames (22 RAW_SENSOR, 10 RAW10), 22 DNGs and timestamp-matched RAW+JPEG/YUV tests. Dark/flat/point conditions remain unverified; optical and radiometric acceptance is pending. The earlier software-only report remains historical evidence.
+
+The subsequent [external-occlusion report](../../docs/reports/2026-11-04-axon20-dark-capture.md) adds 30 RAW_SENSOR frames with operator-confirmed dark labels at ISO100 and 1/4/10 ms. Flat-field linearity and point-source PSF acceptance remain pending.
