@@ -79,7 +79,7 @@ def serialization_issues(value: Any, path: str = "") -> list[str]:
     issues = []
     if isinstance(value, dict):
         if value.get("serialization_status") == "opaque_value_not_lossless":
-            issues.append(path + ": opaque vendor value")
+            issues.append(path + ": opaque value (type retained)")
         for key, child in value.items():
             if key == "errors" and child:
                 issues.append(path + ": metadata key read/serialization errors " + str(list(child)))

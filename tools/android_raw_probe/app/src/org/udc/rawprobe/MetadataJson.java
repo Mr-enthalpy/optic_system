@@ -50,6 +50,13 @@ final class MetadataJson {
         if (x instanceof MeteringRectangle) { MeteringRectangle r=(MeteringRectangle)x; return new JSONObject().put("rect",encode(r.getRect())).put("weight",r.getMeteringWeight()); }
         if (x instanceof Face) { Face f=(Face)x;return new JSONObject().put("id",f.getId()).put("score",f.getScore()).put("bounds",encode(f.getBounds())).put("left_eye",encode(f.getLeftEyePosition())).put("right_eye",encode(f.getRightEyePosition())).put("mouth",encode(f.getMouthPosition())); }
         if (x instanceof OisSample) { OisSample o=(OisSample)x;return new JSONObject().put("timestamp_ns",o.getTimestamp()).put("x_shift",o.getXshift()).put("y_shift",o.getYshift()); }
+        if (android.os.Build.VERSION.SDK_INT >= 29 && x instanceof MandatoryStreamCombination) {
+            MandatoryStreamCombination c=(MandatoryStreamCombination)x;
+            JSONArray streams=new JSONArray();
+            for(MandatoryStreamCombination.MandatoryStreamInformation stream:c.getStreamsInformation())
+                streams.put(new JSONObject().put("format",stream.getFormat()).put("is_input",stream.isInput()).put("available_sizes",encode(stream.getAvailableSizes())));
+            return new JSONObject().put("description",String.valueOf(c.getDescription())).put("is_reprocessable",c.isReprocessable()).put("streams",streams);
+        }
         if (x instanceof StreamConfigurationMap) {
             StreamConfigurationMap m=(StreamConfigurationMap)x; JSONObject j=new JSONObject();JSONArray outs=new JSONArray(),ins=new JSONArray();
             for(int f:m.getOutputFormats()) {

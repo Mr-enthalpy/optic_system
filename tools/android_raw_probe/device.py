@@ -27,7 +27,10 @@ class Device:
         self.selected_serial = connected[0]
 
     def call(self, args: list[str], timeout: int = 30, check: bool = True) -> subprocess.CompletedProcess:
-        result = subprocess.run(self.prefix + args, capture_output=True, timeout=timeout)
+        try:
+            result = subprocess.run(self.prefix + args, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise TimeoutError(f"ADB {args[0]} timed out after {timeout}s; device identifier withheld. Check phone confirmation and installed package state before retrying.") from None
         if check and result.returncode:
             raise RuntimeError((result.stderr.decode("utf-8", "replace") + result.stdout.decode("utf-8", "replace")).replace(self.selected_serial, "<device>"))
         return result
@@ -46,7 +49,10 @@ def export(device: Device, output: Path) -> None:
     archive = output / "original_export.tar"
     # Preserve binary stdout directly; never route image bytes through a PowerShell text pipeline.
     with archive.open("xb") as stream:
-        result = subprocess.run(device.prefix + ["exec-out", "run-as", PACKAGE, "tar", "-cf", "-", "-C", "files", "captures", "inventories"], stdout=stream, stderr=subprocess.PIPE, timeout=240)
+        try:
+            result = subprocess.run(device.prefix + ["exec-out", "run-as", PACKAGE, "tar", "-cf", "-", "-C", "files", "captures", "inventories"], stdout=stream, stderr=subprocess.PIPE, timeout=240)
+        except subprocess.TimeoutExpired:
+            raise TimeoutError("ADB export timed out; device identifier withheld, partial archive retained") from None
     if result.returncode:
         raise RuntimeError("Export failed; partial archive retained: " + result.stderr.decode("utf-8", "replace"))
     destination = output / "device_files"

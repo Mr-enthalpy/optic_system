@@ -158,3 +158,25 @@ def test_temporal_stability_uses_fixed_pixel_values(tmp_path):
     result=r.decode_run(p,tmp_path/"decoded")
     assert result["temporal_stability"]["median_fixed_pixel_std_dn"]==pytest.approx(10)
     np.testing.assert_array_equal(np.load(tmp_path/"decoded/temporal_mean_dn.npy"),np.full((2,4),110))
+
+
+def test_adb_timeout_does_not_expose_device_identifier(monkeypatch):
+    device_spec=importlib.util.spec_from_file_location("raw_probe_device",Path(__file__).resolve().parents[1]/"tools/android_raw_probe/device.py")
+    module=importlib.util.module_from_spec(device_spec);device_spec.loader.exec_module(module)
+    device=module.Device.__new__(module.Device);device.prefix=["adb","-s","PRIVATE_TEST_ID"];device.selected_serial="PRIVATE_TEST_ID"
+    def timeout(command,**kwargs):raise module.subprocess.TimeoutExpired(command,120)
+    monkeypatch.setattr(module.subprocess,"run",timeout)
+    with pytest.raises(TimeoutError) as caught:device.call(["install","test.apk"],timeout=120)
+    assert "PRIVATE_TEST_ID" not in str(caught.value)
+    assert "timed out" in str(caught.value)
+
+
+def test_export_timeout_preserves_partial_archive_and_redacts_identifier(tmp_path,monkeypatch):
+    device_spec=importlib.util.spec_from_file_location("raw_probe_export",Path(__file__).resolve().parents[1]/"tools/android_raw_probe/device.py")
+    module=importlib.util.module_from_spec(device_spec);device_spec.loader.exec_module(module)
+    device=module.Device.__new__(module.Device);device.prefix=["adb","-s","PRIVATE_TEST_ID"]
+    def timeout(command,**kwargs):raise module.subprocess.TimeoutExpired(command,240)
+    monkeypatch.setattr(module.subprocess,"run",timeout)
+    with pytest.raises(TimeoutError) as caught:module.export(device,tmp_path/"export")
+    assert "PRIVATE_TEST_ID" not in str(caught.value)
+    assert (tmp_path/"export/original_export.tar").exists()
