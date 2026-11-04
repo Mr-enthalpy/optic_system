@@ -124,3 +124,7 @@ Run no-hardware tests in the member environment:
 Tests use explicitly synthetic bytes and metadata. They establish decoding/traceability logic, not phone compatibility. See the [dated status report](../../docs/reports/2026-11-04-axon20-raw-probe.md) for actual execution and remaining physical acceptance.
 
 Primary references: [ImageFormat layouts](https://developer.android.com/reference/android/graphics/ImageFormat), [Image.Plane buffers](https://developer.android.com/reference/android/media/Image.Plane), [Camera2 characteristics](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics), [CaptureResult](https://developer.android.com/reference/android/hardware/camera2/CaptureResult), [DngCreator](https://developer.android.com/reference/android/hardware/camera2/DngCreator), [capture sessions](https://developer.android.com/reference/android/hardware/camera2/CameraCaptureSession).
+
+## Latest device validation
+
+The [2026-11-04 real-device report](../../docs/reports/2026-11-04-axon20-live-raw-validation.md) records 32 validated front-camera RAW frames (22 RAW_SENSOR, 10 RAW10), 22 DNGs and timestamp-matched RAW+JPEG/YUV tests. Dark/flat/point conditions remain unverified; optical and radiometric acceptance is pending. The earlier software-only report remains historical evidence.
