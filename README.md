@@ -1,8 +1,8 @@
 # optic_system
 
-`optic_system` is the hardware-facing acquisition and calibration platform for investigating display-induced diffractive spectral sensing in an under-display-camera-like optical configuration.
+`optic_system` is the acquisition and calibration platform for an LCD-camera laboratory prototype and a separately authorized real under-display-camera (UDC) experiment using Android Camera2 RAW.
 
-The scientific question is whether display-induced diffraction contains reproducible wavelength-dependent information that can extend ordinary RGB camera spectral/material sensing. This is a UDC-like laboratory optical prototype, not a commercial phone UDC. Hardware smoke tests do not establish this mechanism.
+The scientific question is whether display-induced diffraction contains reproducible wavelength-dependent information. The LCD prototype and real phone have different optical paths, sampling, processing and calibration needs; evidence is not transferred between them. Hardware smoke tests do not establish a sensing mechanism or spectral/material benefit.
 
 This repository owns hardware control, calibration, raw observations, measured PSFs and basic optical diagnostics. It does not implement mask optimization, forward surrogate training, classification or reconstruction training. Complete spectral recovery is not a required output here. First experiments measure wavelength-dependent response at a fixed display state; dynamic display coding is a separate subsequent experimental variable.
 
@@ -17,6 +17,8 @@ After an intervening optical-angle displacement was corrected, the laboratory re
 The current source integrates the separately tested dual-host workflow and the acquisition fixes used during these experiments. It is not the exact historical acquisition commit; source versions and regression results are distinguished in the reports. Raw data, Profiles, private desktop launch helpers and generated analysis outputs remain outside Git.
 
 ## Local setup
+
+Choose the task branch first. The [pipeline and reuse map](docs/task_pipeline.md) separates LCD pupil/profile/mask tasks from real-UDC Camera2 tasks. For phone-only host development use a local `.venv`, `pip install -r requirements-udc.txt`, and pytest for tests; it needs no laboratory SDK or HDF5. The full development setup below also covers the laboratory branch.
 
 Use Python 3.12 or 3.13 and a repository-local virtual environment. From this checkout in PowerShell:
 
@@ -39,6 +41,8 @@ Select the physical LCD display index and subpixel axis explicitly (CLI flags or
 TLS target-setting and physical movement remain distinct. Broadband zero-order uses `set_pass_through()`, never `set_wavelength_nm(0)`. Capture plans encode illumination explicitly; a wavelength label without TLS does not imply broadband pass-through.
 
 ## Measured data workflow
+
+The chain below is the **LCD laboratory** workflow. The **real-UDC** entry is `scripts/capture_udc.py`: one confirmed physical condition -> ordered Camera2 batches -> selected native-run export -> verified original-DN decode -> acquired-frame ROI/diagnostics. Preview a plan without hardware with `python scripts/capture_udc.py --plan plans/udc/dark_example.json --validate-only`. See [task pipeline](docs/task_pipeline.md) for hardware invocation and completion semantics; a phone does not require an external LCD pupil scan.
 
 ```text
 Broadband Camera Calibration -> Broadband LCD Pupil Scan -> PupilProfile

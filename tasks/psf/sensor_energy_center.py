@@ -17,8 +17,10 @@ from tasks.measurement.errors import ArtifactIOError
 from tasks.measurement.frame_source import open_full_frame_survey_source
 
 
-class SensorEnergyCenterError(ValueError):
-    pass
+from tasks.measurement.energy_center import (
+    EnergyCenterError as SensorEnergyCenterError, EnergyCenterEstimate,
+    estimate_frame_energy_center, valid_mask as _valid_mask,
+)
 
 
 @dataclass
@@ -159,55 +161,6 @@ class SensorEnergyCenterProfile:
                 f"expected sensor_energy_center_profile, got {artifact_type!r}"
             )
         return cls.from_dict(data)
-
-
-@dataclass(frozen=True)
-class EnergyCenterEstimate:
-    center_xy: tuple[float, float]
-    background_value: float
-    total_corr_energy: float
-    fallback_used: bool
-    peak_xy: tuple[int, int]
-    peak_value: float
-
-
-def estimate_frame_energy_center(
-    frame: np.ndarray,
-    *,
-    valid_pixel_mask: np.ndarray | None = None,
-    bg_percentile: float = 5.0,
-) -> EnergyCenterEstimate:
-    arr = np.asarray(frame, dtype=np.float64)
-    if arr.ndim != 2:
-        raise SensorEnergyCenterError(f"frame must be 2D, got {arr.shape}")
-    mask = _valid_mask(arr.shape, valid_pixel_mask)
-    if not (0.0 <= float(bg_percentile) <= 100.0):
-        raise SensorEnergyCenterError("bg_percentile must be in [0, 100]")
-    if not np.all(np.isfinite(arr[mask])):
-        raise SensorEnergyCenterError("valid pixels must have finite intensity")
-    bg = float(np.percentile(arr[mask], float(bg_percentile)))
-    corr = np.maximum(arr - bg, 0.0)
-    corr_valid = np.where(mask, corr, 0.0)
-    peak_eval = np.where(mask, corr, -np.inf)
-    peak_y, peak_x = np.unravel_index(int(np.argmax(peak_eval)), arr.shape)
-    total = float(np.sum(corr_valid))
-    fallback_used = bool(total <= 0.0)
-    if total <= 0.0:
-        center = (float(peak_x), float(peak_y))
-    else:
-        yy, xx = np.mgrid[: arr.shape[0], : arr.shape[1]]
-        center = (
-            float(np.sum(xx * corr_valid) / total),
-            float(np.sum(yy * corr_valid) / total),
-        )
-    return EnergyCenterEstimate(
-        center_xy=center,
-        background_value=bg,
-        total_corr_energy=total,
-        fallback_used=fallback_used,
-        peak_xy=(int(peak_x), int(peak_y)),
-        peak_value=float(arr[peak_y, peak_x]),
-    )
 
 
 def derive_sensor_energy_center_profile(
@@ -362,21 +315,6 @@ def validate_center_profile_for_frame_source(
         raise SensorEnergyCenterError(
             f"center profile {str(exc)}"
         ) from exc
-
-
-def _valid_mask(shape: tuple[int, int], valid_pixel_mask: np.ndarray | None) -> np.ndarray:
-    if valid_pixel_mask is None:
-        return np.ones(shape, dtype=bool)
-    mask = np.asarray(valid_pixel_mask)
-    if mask.dtype != np.bool_:
-        raise SensorEnergyCenterError("valid_pixel_mask must be boolean")
-    if mask.shape != tuple(shape):
-        raise SensorEnergyCenterError(
-            f"valid_pixel_mask shape {mask.shape} does not match {shape}"
-        )
-    if not np.any(mask):
-        raise SensorEnergyCenterError("valid_pixel_mask leaves zero valid pixels")
-    return mask
 
 
 def _valid_mask_from_domain(

@@ -1,6 +1,6 @@
 # Architecture
 
-`optic_system` is independently runnable acquisition/calibration software for a UDC-like laboratory display-camera prototype. The hardware boundary remains:
+`optic_system` has an LCD laboratory acquisition branch and a separately authorized real-UDC Camera2 branch. The [task-pipeline split](task_pipeline.md) defines concrete ownership, reuse and completion semantics. The following hardware boundary describes the LCD laboratory branch:
 
 ```text
 GUI -> control commands -> SessionController -> devices/capture -> hardware
@@ -8,6 +8,8 @@ CameraServiceClient -> sidecar RPC -> shared memory -> private FrameStreamClient
 ```
 
 Manual/debug GUI hardware lifecycle belongs to SessionController. Device wrappers isolate LCD and optional TLS SDKs. Capture/calibration tasks deliberately use narrow synchronous adapters because movement/wait and burst capture are blocking; they share device services, not a parallel SDK integration. The read-only monitor only reads RunStatusPublisher files.
+
+The real-UDC entry is `scripts/capture_udc.py` -> `tasks/udc/` -> existing Camera2 app/ADB. It preserves native plane/request/result records, exports the selected run and decodes original DN. It shares only array-level ROI/energy-center operations and the file-only status publisher with the laboratory branch. Acquired-frame coordinates are explicit; no PupilProfile, display mask, laboratory RawCapture or full-sensor Survey is fabricated for the phone.
 
 Camera stream protocol v3 binds each notification to the exact producer frame bytes with `frame_sha256`. The client drains queued notifications before copying a frame, verifies its copy and discards overwritten or torn snapshots within its receive timeout. `stale_notifications_discarded` is a consumer count, distinct from sidecar capture errors. Client and sidecar must use the same protocol; v2 notifications are rejected. This is a local transport integrity check, not a change to RawCapture v3 or a calibration validity claim. At low frame rates, the experiment must still allow sufficient LCD/exposure settling before acquisition.
 

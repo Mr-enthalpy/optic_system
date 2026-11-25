@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "plan_id": "udc_dark_example",
+  "condition": "dark",
+  "source_description": "Example: operator-confirmed external opaque front-camera occlusion; residual light unverified",
+  "display_state": "Probe app fixed black viewport; OS bars and vendor UDC patch unverified; record actual brightness",
+  "iso": 100,
+  "raw_format": "RAW_SENSOR",
+  "pair": "none",
+  "batches": [
+    {"exposure_us": 10000, "frames": 10},
+    {"exposure_us": 40000, "frames": 10},
+    {"exposure_us": 100000, "frames": 10}
+  ]
+}

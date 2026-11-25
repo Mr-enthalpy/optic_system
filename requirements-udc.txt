@@ -1,0 +1,3 @@
+# Camera2 host tools and array-only diagnostics; no laboratory devices or HDF5.
+numpy
+matplotlib

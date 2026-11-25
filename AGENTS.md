@@ -1,12 +1,12 @@
 # optic_system local development rules
 
-This repository is the independent hardware-facing acquisition and calibration platform for display-induced diffractive spectral sensing in a UDC-like laboratory prototype. Do not describe the prototype as a commercial phone UDC or claim a sensing mechanism from software tests.
+This repository owns independent acquisition and calibration for the LCD-camera laboratory prototype and the separately authorized real-UDC Camera2 experiment. Keep their hardware, native records, coordinates and physical evidence distinct. Do not describe the LCD prototype as optically equivalent to a phone or claim a sensing mechanism from software tests.
 
 ## Ownership
 
 Own hardware control, calibration, raw observations, full-frame survey measurements, sensor-center estimation, dense measured ROI PSFs and basic optical diagnostics. First measure wavelength dependence under a fixed display state. Dynamic display coding requires a separate experimental request.
 
-Do not implement training, forward surrogates, classifiers, reconstruction models, mask optimization, phone adapters or complete spectral-cube reconstruction here. Do not introduce peak identity/cluster/support-promotion PSF architectures, generic artifact registries/catalogs/bundles/provenance graphs/digest frameworks, speculative cross-repository APIs, plugins or general experiment schedulers without a concrete requested consumer. Prefer thin functions and explicit dataclasses; remove unused code and references instead of retaining deprecated/future placeholders.
+Do not implement training, forward surrogates, classifiers, reconstruction models, mask optimization or complete spectral-cube reconstruction here. The user authorized the real-UDC task branch on 2026-11-25: `tasks/udc/` uses the existing Camera2 probe, while `tasks/measurement/` owns actually shared array operations. Do not invent LCD masks/pupil profiles, full-sensor geometry or gain-dB equivalents for phone data. Do not introduce peak identity/cluster/support-promotion PSF architectures, generic artifact registries/catalogs/bundles/provenance graphs/digest frameworks, speculative cross-repository APIs, plugins or general experiment schedulers without a concrete requested consumer. Prefer thin functions and explicit dataclasses; remove unused code and references instead of retaining deprecated/future placeholders.
 
 ## Hardware boundaries
 
@@ -15,6 +15,7 @@ Do not implement training, forward surrogates, classifiers, reconstruction model
 - LCD is a physical mono subpixel device. User/config selects display index and axis. Axis 0 is `[3H,W]`, axis 1 `[H,3W]`. Check physical shape, preserve metadata, pack RGB only at the device boundary. Never infer device identity from resolution or silently choose a desktop display.
 - TLS uses optional `tls_c1` via `devices/tls_service.py`. No vendor GUI automation, low-level SDK calls in tasks, committed DLLs or mandatory SDK import. Set target and move are separate commands. Broadband zero-order uses `set_pass_through()`, never wavelength zero.
 - Use typed `IlluminationSpec`. Hardware task runtime defaults to hardware; fake/missing-device/test-settle behavior must be explicit. CLI capture requires an explicit mode.
+- The LCD laboratory pipeline retains its existing device bundle and RawCapture/Survey formats. UDC uses one externally arranged physical condition per `UDCCapturePlan`, fresh operator confirmation, native Camera2 records and selected-run export. Phone Camera2/RAW buffers stay in the Android app; do not route them through FlyCapture2 or manufacture a laboratory RawCapture. The UDC task currently records external monochromatic illumination; it does not command TLS or render display masks.
 - Changes to startup/trigger/LCD/TLS semantics require matching documentation and meaningful no-hardware tests in the same change.
 
 ## Data contract
@@ -23,9 +24,10 @@ Do not implement training, forward surrogates, classifiers, reconstruction model
 - RawCapture records physical masks/display identity, explicit illumination, requested/readback exposure and gain, frame extent, timestamps/settles, profile IDs and completion/failure facts. A row is completed only after corresponding frames and metadata are written. Capture completeness and run success are separate facts.
 - Scientific calibration/alignment validity must not be inferred from software or smoke tests. Do not add training-readiness fields to physical acquisition records.
 - The data path is RawCapture -> FullFramePSFSurvey -> sensor energy center or explicit ROI -> dense measured ROI PSF -> response analysis. Keep raw and full-frame measurements intact.
-- PSF-producing capture requires PupilProfile and a per-band pupil-open CameraProfile tied to that pupil. Broadband CameraProfile serves only broadband pupil scan. Check physical pupil/display identity and profile dependencies before capture.
+- LCD PSF-producing capture requires PupilProfile and a per-band pupil-open CameraProfile tied to that pupil. Broadband CameraProfile serves only broadband pupil scan. Check physical pupil/display identity and profile dependencies before LCD capture. These dependencies do not apply to a phone's integral display/camera assembly.
 - Sensor center is a measured coordinate origin, not a crop-size policy. Record background, corrected energy, fallback and valid-pixel exclusions. ROI sizes come from experiment configuration; use explicit half-open sensor `(x,y,width,height)` and array `[H,W]` conventions. Reject mismatched frame extent, invalid shape and wavelength/display indices.
 - Preserve relative intensity. Normalization, exposure scaling and bad-pixel correction must be explicit analysis operations on copies; do not overwrite observed intensity.
+- Share array-level ROI/energy-center algorithms, not calibration validity or source-specific profiles. UDC coordinates remain `acquired_frame` until physical crop/CFA origin is independently established; cropping records parity offsets. A frame diagnostic is not a full-sensor center profile or a measured PSF by itself.
 - Use small hardware-free `tasks/measurement/` helpers where actually needed. Local file versions are explicit; reject incompatible layouts. Only implement targeted historical conversion for real requested data.
 - The run-status monitor is file-only and hardware-free. Missing optional diagnostics do not indicate monitor failure.
 

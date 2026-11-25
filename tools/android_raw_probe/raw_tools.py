@@ -112,6 +112,8 @@ def frame_records(run_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]
             raise ValueError("Incomplete or duplicate frame entry")
         seen.add(index)
         raw, meta = read_image(local_file(run_path, frame["raw"]["metadata_file"]))
+        if raw.shape != (run["raw_size"]["height"], run["raw_size"]["width"]):
+            raise ValueError("RAW image dimensions disagree with the run")
         result_path = run_path / f"frame_{index:04d}_result.json"
         result_document = load_json(result_path)
         request_document = load_json(run_path / f"frame_{index:04d}_request.json")

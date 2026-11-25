@@ -44,17 +44,27 @@ class Device:
         return {line.strip() for line in result.splitlines() if re.fullmatch(r"run_\d+_[a-f0-9]{8}", line.strip())}
 
 
-def export(device: Device, output: Path) -> None:
+def export(device: Device, output: Path, *, run_ids: list[str] | None = None) -> dict:
+    targets = ["captures", "inventories"]
+    if run_ids is not None:
+        if not run_ids or len(set(run_ids)) != len(run_ids) or any(not re.fullmatch(r"run_\d+_[a-f0-9]{8}", r) for r in run_ids):
+            raise ValueError("Select nonempty unique valid run IDs")
+        if not set(run_ids).issubset(device.runs()):
+            raise ValueError("Selected run is not present on the phone")
+        targets = ["captures/" + r for r in run_ids]
     output.mkdir(parents=True, exist_ok=False)
     archive = output / "original_export.tar"
     # Preserve binary stdout directly; never route image bytes through a PowerShell text pipeline.
     with archive.open("xb") as stream:
         try:
-            result = subprocess.run(device.prefix + ["exec-out", "run-as", PACKAGE, "tar", "-cf", "-", "-C", "files", "captures", "inventories"], stdout=stream, stderr=subprocess.PIPE, timeout=240)
+            result = subprocess.run(device.prefix + ["exec-out", "run-as", PACKAGE, "tar", "-cf", "-", "-C", "files"] + targets, stdout=stream, stderr=subprocess.PIPE, timeout=240)
         except subprocess.TimeoutExpired:
             raise TimeoutError("ADB export timed out; device identifier withheld, partial archive retained") from None
     if result.returncode:
-        raise RuntimeError("Export failed; partial archive retained: " + result.stderr.decode("utf-8", "replace"))
+        detail = result.stderr.decode("utf-8", "replace")
+        if getattr(device, "selected_serial", None):
+            detail = detail.replace(device.selected_serial, "<device>")
+        raise RuntimeError("Export failed; partial archive retained: " + detail)
     destination = output / "device_files"
     destination.mkdir()
     seen = set()
@@ -75,10 +85,59 @@ def export(device: Device, output: Path) -> None:
                         sink.write(data)
     with archive.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
-    (output / "export.json").write_text(json.dumps({"schema_version": 1, "archive": archive.name, "sha256": digest, "export_unix_seconds": time.time(), "transport": "adb exec-out run-as (debug app), no root", "device_identifiers_recorded": False}, indent=2), encoding="utf-8")
+    (output / "export.json").write_text(json.dumps({"schema_version": 1, "archive": archive.name, "sha256": digest, "selected_run_ids": run_ids, "export_unix_seconds": time.time(), "transport": "adb exec-out run-as (debug app), no root", "device_identifiers_recorded": False}, indent=2), encoding="utf-8")
     logs = device.shell(["logcat", "-d", "-v", "threadtime", "UdcRawProbe:I", "*:S"], check=False)
     (output / "app_logcat.txt").write_text(logs, encoding="utf-8")
-    print(json.dumps({"export": str(output.resolve()), "archive_sha256": digest}))
+    return {"export": str(output.resolve()), "archive_sha256": digest}
+
+
+class CaptureFailure(RuntimeError):
+    def __init__(self, state: dict):
+        self.state = state
+        super().__init__(f"Phone capture failed or did not match the requested counts/controls: {state.get('run_id')}, {state.get('status')}")
+
+
+def capture_run(device: Device, *, exposure_us: int, iso: int, count: int = 10,
+                raw_format: str = "RAW_SENSOR", pair: str = "none", scene: str = "unspecified",
+                condition_verified: bool = False, note: str = "", camera_id: str | None = None,
+                wait_seconds: float = 180) -> dict:
+    if (any(isinstance(v, bool) or not isinstance(v, int) or v <= 0 for v in (exposure_us, iso, count))
+            or count > 100 or raw_format not in ("RAW_SENSOR", "RAW10") or pair not in ("none", "JPEG", "YUV")
+            or scene not in ("unspecified", "dark", "flat", "point") or not 0 < wait_seconds < float('inf')):
+        raise ValueError("Invalid phone capture settings")
+    before = device.runs()
+    command = ["am", "start", "-W", "-n", PACKAGE + "/.MainActivity", "--ez", "auto", "true", "--es", "raw_format", raw_format, "--es", "pair", pair,
+               "--el", "exposure_us", str(exposure_us), "--ei", "iso", str(iso), "--ei", "count", str(count), "--es", "scene", scene,
+               "--es", "note", note, "--ez", "condition_verified", str(bool(condition_verified)).lower()]
+    if camera_id is not None:
+        command += ["--es", "camera_id", camera_id]
+    device.shell(command)
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        new = device.runs() - before
+        if len(new) > 1:
+            raise RuntimeError("Multiple new runs; cannot safely choose one")
+        if new:
+            chosen = next(iter(new))
+            value = device.shell(["run-as", PACKAGE, "cat", "files/captures/" + chosen + "/run.json"], check=False)
+            try:
+                state = json.loads(value)
+            except json.JSONDecodeError:
+                state = {}
+            if state.get("status") and state["status"] != "running":
+                if state.get("run_id") != chosen:
+                    raise ValueError("Phone run identity mismatch")
+                if (state.get("status") != "completed" or not state.get("capture_complete") or not state.get("run_succeeded")
+                        or state.get("completed_frames") != count or len(state.get("frames", [])) != count
+                        or state.get("requested_frames") != count or state.get("requested_iso") != iso
+                        or state.get("requested_exposure_ns") != exposure_us * 1000
+                        or state.get("raw_format") != {"RAW_SENSOR":32,"RAW10":37}[raw_format]
+                        or state.get("condition") != scene or state.get("condition_verified_by_operator") != bool(condition_verified)
+                        or (camera_id is not None and state.get("camera_id") != camera_id)):
+                    raise CaptureFailure(state)
+                return state
+        time.sleep(1)
+    raise TimeoutError("No terminal run state observed; retain phone logs and partial files. A timeout is not a successful capture.")
 
 
 def main() -> None:
@@ -100,7 +159,7 @@ def main() -> None:
     capture.add_argument("--condition-verified", action="store_true", help="Operator explicitly confirms the physical scene; never infer from filename")
     capture.add_argument("--note", default="")
     capture.add_argument("--wait-seconds", type=int, default=180)
-    exp = commands.add_parser("export"); exp.add_argument("output", type=Path)
+    exp = commands.add_parser("export"); exp.add_argument("output", type=Path); exp.add_argument("--run-id", action="append", help="Export only selected run(s); default exports all app captures")
     args = p.parse_args()
     device = Device(args.adb, args.serial)
     if args.command == "status":
@@ -111,30 +170,18 @@ def main() -> None:
     elif args.command == "enumerate":
         print(device.shell(["am", "start", "-W", "-n", PACKAGE + "/.MainActivity"]))
     elif args.command == "export":
-        export(device, args.output)
+        print(json.dumps(export(device, args.output, run_ids=args.run_id)))
     elif args.command == "capture":
-        if not 1 <= args.count <= 100 or args.exposure_us <= 0 or args.iso <= 0:
-            raise ValueError("Invalid count, exposure or ISO")
-        before = device.runs()
-        command = ["am", "start", "-W", "-n", PACKAGE + "/.MainActivity", "--ez", "auto", "true", "--es", "raw_format", args.format, "--es", "pair", args.pair, "--el", "exposure_us", str(args.exposure_us), "--ei", "iso", str(args.iso), "--ei", "count", str(args.count), "--es", "scene", args.scene, "--es", "note", args.note, "--ez", "condition_verified", str(args.condition_verified).lower()]
-        if args.camera_id is not None: command += ["--es", "camera_id", args.camera_id]
-        print(device.shell(command))
-        deadline = time.monotonic() + args.wait_seconds
-        chosen = None
-        while time.monotonic() < deadline:
-            new = device.runs() - before
-            if len(new) > 1: raise RuntimeError("Multiple new runs; cannot safely choose one")
-            if new: chosen = next(iter(new))
-            if chosen:
-                value = device.shell(["run-as", PACKAGE, "cat", "files/captures/" + chosen + "/run.json"], check=False)
-                try: state = json.loads(value)
-                except json.JSONDecodeError: state = {}
-                if state.get("status") and state["status"] != "running":
-                    print(json.dumps({k: state.get(k) for k in ("run_id", "status", "capture_complete", "run_succeeded", "completed_frames", "failure_type", "failure_message")}, indent=2))
-                    if not state.get("run_succeeded"): raise SystemExit(2)
-                    return
-            time.sleep(1)
-        raise TimeoutError("No terminal run state observed; export retained logs and partial files. A timeout is not a successful capture.")
+        try:
+            state = capture_run(device, exposure_us=args.exposure_us, iso=args.iso, count=args.count,
+                                raw_format=args.format, pair=args.pair, scene=args.scene,
+                                condition_verified=args.condition_verified, note=args.note,
+                                camera_id=args.camera_id, wait_seconds=args.wait_seconds)
+        except CaptureFailure as error:
+            print(json.dumps({k:error.state.get(k) for k in ("run_id","status","capture_complete","run_succeeded","completed_frames","failure_type","failure_message")}, indent=2))
+            raise SystemExit(2) from None
+        print(json.dumps({k:state.get(k) for k in ("run_id", "status", "capture_complete", "run_succeeded", "completed_frames", "failure_type", "failure_message")}, indent=2))
+
 
 
 if __name__ == "__main__":

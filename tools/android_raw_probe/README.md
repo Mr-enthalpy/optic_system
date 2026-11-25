@@ -1,6 +1,6 @@
 # Android Camera2 RAW Probe
 
-This is the separately authorized Axon 20 real-device experiment. It is a standalone Android app and local inspection tool, not an adapter for the laboratory camera controller or its RawCapture/PSF pipeline. It does not alter that pipeline, the LCD prototype's conclusions, or reconstruction evaluation.
+This is the separately authorized Axon 20 real-device experiment. The Android app and native inspection tools are reused by the real-UDC task entry `scripts/capture_udc.py`; see the [task pipeline](../../docs/task_pipeline.md). They are not an adapter for the laboratory camera controller or its RawCapture/PSF formats. The laboratory acquisition chain, LCD prototype's conclusions and reconstruction evaluation remain separate.
 
 No root, bootloader commands, reboot, EDL, HAL changes, network permission or system-partition writes. Only CAMERA permission and the debug application's own files are used. Install/update and `run-as` export require an authorized ADB connection. Do not uninstall or clear app data while measurements remain on the phone.
 
@@ -80,6 +80,8 @@ Python >=3.11, NumPy and Matplotlib are needed. Use this repository's documented
 
 ```powershell
 & $python .\tools\android_raw_probe\device.py --adb $adb export .\outputs\phone-export-001
+# Export only a known run (repeat --run-id to select several); existing all-run export remains the default.
+& $python .\tools\android_raw_probe\device.py --adb $adb export .\outputs\phone-export-selected --run-id $run_id
 # Set $run to one exported device_files/captures/run_... directory.
 & $python .\tools\android_raw_probe\raw_tools.py decode $run .\outputs\phone-decode-001
 ```
