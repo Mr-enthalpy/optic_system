@@ -39,14 +39,21 @@ def run_udc_capture_plan(plan: UDCCapturePlan, *, adb: Path, output: Path,
             batch_dir = output/f"batch_{index:03d}"
             batch_dir.mkdir()
             current = {"batch_index":index,"exposure_us":batch.exposure_us,"frames":batch.frames,
+                       "shading":batch.shading,"tonemap":batch.tonemap,"display":batch.display,
+                       "companion_size":plan.companion_size,
                        "capture_complete":False,"phone_run_succeeded":False,"export_complete":False,"decode_complete":False}
             report["batches"].append(current)
             stage = "capture"
             publish("running", stage)
             note = json.dumps({"udc_plan_id":plan.plan_id,"batch_index":index,
+                               "batch_request":{"exposure_us":batch.exposure_us,"shading":batch.shading,
+                                                "tonemap":batch.tonemap,"display":batch.display,
+                                                "companion_size":plan.companion_size},
                                "external_setup":{k:v for k,v in plan.to_dict().items() if k not in ("batches","schema_version")}}, allow_nan=False)
             state = phone.capture_run(device, exposure_us=batch.exposure_us, iso=plan.iso, count=batch.frames,
                                       raw_format=plan.raw_format, pair=plan.pair, scene=plan.condition,
+                                      shading=batch.shading, tonemap=batch.tonemap, display=batch.display,
+                                      companion_size=plan.companion_size,
                                       condition_verified=condition_verified, note=note, camera_id=camera_id, wait_seconds=wait_seconds)
             current.update(phone_run_id=state["run_id"],capture_complete=state["capture_complete"],phone_run_succeeded=state["run_succeeded"])
             stage = "export"
@@ -57,7 +64,7 @@ def run_udc_capture_plan(plan: UDCCapturePlan, *, adb: Path, output: Path,
             publish("running", stage)
             source = batch_dir/"export/device_files/captures"/state["run_id"]
             exported = raw_tools.load_json(source/"run.json")
-            for key in ("run_id","camera_id","raw_format","requested_iso","requested_exposure_ns","requested_frames","condition","condition_verified_by_operator"):
+            for key in ("run_id","camera_id","raw_format","requested_iso","requested_exposure_ns","requested_frames","condition","condition_verified_by_operator","requested_shading_mode","requested_tonemap_mode","requested_display_panel","requested_companion_size"):
                 if exported.get(key) != state.get(key):
                     raise ValueError(f"Exported run disagrees with capture: {key}")
             if plan.raw_format == "RAW_SENSOR":

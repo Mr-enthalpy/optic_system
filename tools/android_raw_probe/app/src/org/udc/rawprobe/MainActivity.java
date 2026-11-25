@@ -23,11 +23,14 @@ import java.security.MessageDigest;
 import java.util.*;
 
 public final class MainActivity extends Activity {
+    private static final long DISPLAY_SETTLE_MS=1500L;
+    private static final int GRAY_ARGB=0xFF808080;
     private HandlerThread thread;
     private Handler worker;
     private CameraManager manager;
     private TextView status;
     private Spinner cameras,format,pair,scene;
+    private Spinner shading,tonemap,display,companionSize;
     private EditText exposure,iso,count,note;
     private CheckBox verified;
     private ScrollView controls;
@@ -36,6 +39,7 @@ public final class MainActivity extends Activity {
     private JSONObject inventory;
     private volatile Run active;
     private boolean autoPending;
+    private float restoreBrightness=Float.NaN;
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -46,6 +50,10 @@ public final class MainActivity extends Activity {
         cameras=spinner(box,"Front camera",new String[]{"Waiting for CAMERA permission"});
         format=spinner(box,"RAW format",new String[]{"RAW_SENSOR","RAW10"});
         pair=spinner(box,"Same-request companion",new String[]{"none","JPEG","YUV"});
+        companionSize=spinner(box,"Companion size (preview 640x480 unless full)",new String[]{"preview","full"});
+        shading=spinner(box,"Shading mode (RAW stays as declared by the device)",new String[]{"off","on"});
+        tonemap=spinner(box,"Tonemap mode (no linear mode exists; RAW bypasses it)",new String[]{"high_quality","fast"});
+        display=spinner(box,"Display pattern during capture",new String[]{"app_viewport","black","gray","white"});
         exposure=field(box,"Exposure (microseconds)","10000");iso=field(box,"ISO (sensitivity, not calibrated analog gain)","100");count=field(box,"Frames","10");
         scene=spinner(box,"Illumination label",new String[]{"unspecified","dark","flat","point"});
         note=field(box,"Source / wavelength / geometry / display state / notes","");
@@ -97,6 +105,14 @@ public final class MainActivity extends Activity {
             int f=fmt.equals("RAW_SENSOR")?ImageFormat.RAW_SENSOR:fmt.equals("RAW10")?ImageFormat.RAW10:-1;if(f<0)throw new IllegalArgumentException("Unknown RAW format");
             String paired=fromIntent?i.getStringExtra("pair"):pair.getSelectedItem().toString();if(paired==null)paired="none";
             if(!Arrays.asList("none","JPEG","YUV").contains(paired))throw new IllegalArgumentException("Invalid companion");
+            String shade=fromIntent?i.getStringExtra("shading"):shading.getSelectedItem().toString();if(shade==null)shade="off";
+            if(!Arrays.asList("off","on").contains(shade))throw new IllegalArgumentException("Invalid shading mode");
+            String tone=fromIntent?i.getStringExtra("tonemap"):tonemap.getSelectedItem().toString();if(tone==null)tone="high_quality";
+            if(!Arrays.asList("high_quality","fast").contains(tone))throw new IllegalArgumentException("Invalid tonemap mode");
+            String panel=fromIntent?i.getStringExtra("display"):display.getSelectedItem().toString();if(panel==null)panel="app_viewport";
+            if(!Arrays.asList("app_viewport","black","gray","white").contains(panel))throw new IllegalArgumentException("Invalid display pattern");
+            String csize=fromIntent?i.getStringExtra("companion_size"):companionSize.getSelectedItem().toString();if(csize==null)csize="preview";
+            if(!Arrays.asList("preview","full").contains(csize))throw new IllegalArgumentException("Invalid companion size");
             long us=fromIntent?i.getLongExtra("exposure_us",10000):Long.parseLong(exposure.getText().toString());
             int sensitivity=fromIntent?i.getIntExtra("iso",100):Integer.parseInt(iso.getText().toString());
             int n=fromIntent?i.getIntExtra("count",10):Integer.parseInt(count.getText().toString());
@@ -105,8 +121,40 @@ public final class MainActivity extends Activity {
             String notes=fromIntent?i.getStringExtra("note"):note.getText().toString();
             boolean confirm=fromIntent?i.getBooleanExtra("condition_verified",false):verified.isChecked();
             if(n<1||n>100||us<=0||us>Long.MAX_VALUE/1000)throw new IllegalArgumentException("Invalid exposure/frame count (1..100)");
-            Run r=new Run(id,f,paired,us*1000,sensitivity,n,condition,confirm,notes==null?"":notes);active=r;showCapture(true);worker.postDelayed(r::open,500);
+            applyDisplay(panel);
+            Run r;
+            try{r=new Run(id,f,paired,us*1000,sensitivity,n,condition,confirm,notes==null?"":notes,shade,tone,panel,csize);}
+            catch(Exception e){restoreDisplay();throw e;}
+            active=r;showCapture(true);
+            worker.postDelayed(r::open,panel.equals("app_viewport")?500L:DISPLAY_SETTLE_MS);
         }catch(Exception e){say("Capture rejected: "+e);}
+    }
+    private static int panelArgb(String panel){return panel.equals("white")?0xFFFFFFFF:panel.equals("gray")?GRAY_ARGB:android.graphics.Color.BLACK;}
+    private void applyDisplay(String panel){
+        int bg=panelArgb(panel);
+        boolean uniform=!panel.equals("app_viewport");
+        captureOverlay.setBackgroundColor(bg);
+        captureOverlay.setTextColor(uniform?(bg==android.graphics.Color.BLACK?0xFF202020:android.graphics.Color.BLACK):android.graphics.Color.DKGRAY);
+        captureOverlay.setText(uniform?"":"RAW capture active — keep illumination fixed");
+        if(!uniform)return;
+        WindowManager.LayoutParams lp=getWindow().getAttributes();
+        if(Float.isNaN(restoreBrightness))restoreBrightness=lp.screenBrightness;
+        lp.screenBrightness=1.0f;getWindow().setAttributes(lp);
+        getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            |android.view.View.SYSTEM_UI_FLAG_FULLSCREEN|android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            |android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            |android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+    private void restoreDisplay(){
+        runOnUiThread(()->{
+            captureOverlay.setText("RAW capture active — keep illumination fixed");
+            captureOverlay.setBackgroundColor(android.graphics.Color.BLACK);
+            captureOverlay.setTextColor(android.graphics.Color.DKGRAY);
+            getWindow().getDecorView().setSystemUiVisibility(0);
+            if(!Float.isNaN(restoreBrightness)){
+                WindowManager.LayoutParams lp=getWindow().getAttributes();lp.screenBrightness=restoreBrightness;getWindow().setAttributes(lp);restoreBrightness=Float.NaN;
+            }
+        });
     }
     private void showCapture(boolean enabled){runOnUiThread(()->{controls.setVisibility(enabled?android.view.View.GONE:android.view.View.VISIBLE);captureOverlay.setVisibility(enabled?android.view.View.VISIBLE:android.view.View.GONE);});}
     static void writeJson(File file,JSONObject j)throws Exception{
@@ -117,29 +165,35 @@ public final class MainActivity extends Activity {
     }
     static String hex(byte[] a){StringBuilder b=new StringBuilder();for(byte v:a)b.append(String.format(Locale.US,"%02x",v&255));return b.toString();}
     private static boolean has(int[] a,int value){if(a!=null)for(int x:a)if(x==value)return true;return false;}
-    private static Size choose(StreamConfigurationMap m,int f,boolean raw){
+    private static Size choose(StreamConfigurationMap m,int f,boolean raw){return choose(m,f,raw,false);}
+    private static Size choose(StreamConfigurationMap m,int f,boolean raw,boolean preferLargest){
         ArrayList<Size> sizes=new ArrayList<>();Size[] a=m.getOutputSizes(f);if(a!=null)sizes.addAll(Arrays.asList(a));
         Size[] high=m.getHighResolutionOutputSizes(f);if(high!=null)sizes.addAll(Arrays.asList(high));
         if(sizes.isEmpty())throw new IllegalArgumentException("Format not advertised: "+f);
-        for(Size s:sizes)if(s.getWidth()==(raw?3264:640)&&s.getHeight()==(raw?2448:480))return s;
-        sizes.sort((x,y)->Long.compare((long)x.getWidth()*x.getHeight(),(long)y.getWidth()*y.getHeight()));return raw?sizes.get(sizes.size()-1):sizes.get(0);
+        if(!preferLargest)for(Size s:sizes)if(s.getWidth()==(raw?3264:640)&&s.getHeight()==(raw?2448:480))return s;
+        sizes.sort((x,y)->Long.compare((long)x.getWidth()*x.getHeight(),(long)y.getWidth()*y.getHeight()));
+        return raw||preferLargest?sizes.get(sizes.size()-1):sizes.get(0);
     }
     private final class Run {
-        final String id,companion,condition,notes;final int rawFormat,sensitivity,total;final long exposureNs;final boolean confirmed;
+        final String id,companion,condition,notes,shade,tone,panel,csize;final int rawFormat,sensitivity,total;final long exposureNs;final boolean confirmed;
         final File dir;final JSONObject state=new JSONObject();final JSONArray frames=new JSONArray(),events=new JSONArray();
         CameraCharacteristics characteristics;CameraDevice device;CameraCaptureSession session;ImageReader rawReader,companionReader;
         TotalCaptureResult result;final Map<String,Image> images=new HashMap<>();final ArrayList<Image> waiting=new ArrayList<>();
         CaptureRequest request;int index;boolean done;boolean artifactError;Runnable deadline;
-        Run(String id,int f,String pair,long ns,int iso,int n,String scene,boolean confirmed,String notes)throws Exception{
+        Run(String id,int f,String pair,long ns,int iso,int n,String scene,boolean confirmed,String notes,String shade,String tone,String panel,String csize)throws Exception{
             this.id=id;rawFormat=f;companion=pair;exposureNs=ns;sensitivity=iso;total=n;condition=scene;this.confirmed=confirmed;this.notes=notes;
+            this.shade=shade;this.tone=tone;this.panel=panel;this.csize=csize;
             File parent=new File(getFilesDir(),"captures");parent.mkdirs();dir=new File(parent,"run_"+System.currentTimeMillis()+"_"+UUID.randomUUID().toString().substring(0,8));if(!dir.mkdir())throw new IOException("Cannot create unique run directory");
             state.put("schema_version",1).put("run_id",dir.getName()).put("status","running").put("capture_complete",false).put("run_succeeded",false)
                 .put("camera_id",id).put("lens_facing","FRONT").put("raw_format",f).put("companion",pair).put("requested_exposure_ns",ns).put("requested_iso",iso).put("requested_frames",n)
                 .put("condition",scene).put("condition_verified_by_operator",confirmed).put("condition_notes",notes).put("created_unix_ms",System.currentTimeMillis())
+                .put("requested_shading_mode",shade).put("requested_tonemap_mode",tone).put("requested_companion_size",csize)
+                .put("requested_display_panel",panel).put("requested_display_argb",panelArgb(panel))
                 .put("firmware_fingerprint",Build.FINGERPRINT).put("device_model",Build.MODEL).put("source_commit",BuildInfo.COMMIT).put("source_dirty",BuildInfo.DIRTY).put("app_source_sha256",BuildInfo.SOURCE_SHA256)
                 .put("byte_order",ByteOrder.nativeOrder().toString()).put("frames",frames).put("events",events)
-                .put("display_state","Static black app viewport with dim text at bottom; OS bars and vendor UDC display patch are not controlled or verified")
-                .put("display_settle_delay_ms",500).put("window_screen_brightness",getWindow().getAttributes().screenBrightness)
+                .put("display_state",panel.equals("app_viewport")?"Static black app viewport with dim text at bottom; OS bars and vendor UDC display patch are not controlled or verified":("Full-screen uniform "+panel+" overlay (ARGB "+Integer.toHexString(panelArgb(panel))+") at fixed window brightness; OS bars hidden; vendor UDC display patch is not controlled or verified"))
+                .put("display_settle_delay_ms",panel.equals("app_viewport")?500L:DISPLAY_SETTLE_MS)
+                .put("window_screen_brightness",getWindow().getAttributes().screenBrightness)
                 .put("screen_brightness_setting",android.provider.Settings.System.getInt(getContentResolver(),android.provider.Settings.System.SCREEN_BRIGHTNESS,-1))
                 .put("screen_brightness_mode",android.provider.Settings.System.getInt(getContentResolver(),android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,-1));
             writeJson(new File(dir,"run.json"),state);writeJson(new File(dir,"inventory.json"),inventory);
@@ -154,7 +208,7 @@ public final class MainActivity extends Activity {
             StreamConfigurationMap map=characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);if(map==null)throw new IllegalArgumentException("No stream configuration map");
             Size raw=choose(map,rawFormat,true);state.put("raw_size",MetadataJson.encode(raw));state.put("target_raw_size_available",raw.getWidth()==3264&&raw.getHeight()==2448);
             rawReader=ImageReader.newInstance(raw.getWidth(),raw.getHeight(),rawFormat,3);rawReader.setOnImageAvailableListener(this::arrived,worker);
-            if(!companion.equals("none")){int fmt=companion.equals("JPEG")?ImageFormat.JPEG:ImageFormat.YUV_420_888;Size size=choose(map,fmt,false);state.put("companion_size",MetadataJson.encode(size));companionReader=ImageReader.newInstance(size.getWidth(),size.getHeight(),fmt,3);companionReader.setOnImageAvailableListener(this::arrived,worker);}
+            if(!companion.equals("none")){int fmt=companion.equals("JPEG")?ImageFormat.JPEG:ImageFormat.YUV_420_888;Size size=choose(map,fmt,false,csize.equals("full"));state.put("companion_size",MetadataJson.encode(size));companionReader=ImageReader.newInstance(size.getWidth(),size.getHeight(),fmt,3);companionReader.setOnImageAvailableListener(this::arrived,worker);}
             event("opening","FRONT id="+id+" RAW="+raw+" format="+rawFormat+" companion="+companion);
             armTimeout("camera_open_timeout");
             manager.openCamera(id,new CameraDevice.StateCallback(){
@@ -189,7 +243,10 @@ public final class MainActivity extends Activity {
             if(has(characteristics.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES),CaptureRequest.NOISE_REDUCTION_MODE_OFF))optional(b,CaptureRequest.NOISE_REDUCTION_MODE,CaptureRequest.NOISE_REDUCTION_MODE_OFF);
             if(has(characteristics.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES),CaptureRequest.EDGE_MODE_OFF))optional(b,CaptureRequest.EDGE_MODE,CaptureRequest.EDGE_MODE_OFF);
             if(has(characteristics.get(CameraCharacteristics.HOT_PIXEL_AVAILABLE_HOT_PIXEL_MODES),CaptureRequest.HOT_PIXEL_MODE_OFF))optional(b,CaptureRequest.HOT_PIXEL_MODE,CaptureRequest.HOT_PIXEL_MODE_OFF);
-            if(has(characteristics.get(CameraCharacteristics.SHADING_AVAILABLE_MODES),CaptureRequest.SHADING_MODE_OFF))optional(b,CaptureRequest.SHADING_MODE,CaptureRequest.SHADING_MODE_OFF);
+            int wantShading=shade.equals("on")?CaptureRequest.SHADING_MODE_HIGH_QUALITY:CaptureRequest.SHADING_MODE_OFF;
+            if(has(characteristics.get(CameraCharacteristics.SHADING_AVAILABLE_MODES),wantShading))optional(b,CaptureRequest.SHADING_MODE,wantShading);else event("request_key_unavailable","SHADING_MODE "+shade);
+            int wantTone=tone.equals("fast")?CaptureRequest.TONEMAP_MODE_FAST:CaptureRequest.TONEMAP_MODE_HIGH_QUALITY;
+            if(has(characteristics.get(CameraCharacteristics.TONEMAP_AVAILABLE_TONE_MAP_MODES),wantTone))optional(b,CaptureRequest.TONEMAP_MODE,wantTone);else event("request_key_unavailable","TONEMAP_MODE "+tone);
             if(has(characteristics.get(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_LENS_SHADING_MAP_MODES),CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE_ON))optional(b,CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE,CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE_ON);
             request=b.build();writeJson(new File(dir,String.format(Locale.US,"frame_%04d_request.json",index)),MetadataJson.request(request));
             armTimeout("frame_timeout");session.capture(request,new CameraCaptureSession.CaptureCallback(){
@@ -231,6 +288,7 @@ public final class MainActivity extends Activity {
             frame.put("raw",saveImage(images.get("raw"),"raw"));if(companionReader!=null)frame.put("companion",saveImage(images.get("companion"),"companion"));
             Long readExposure=result.get(CaptureResult.SENSOR_EXPOSURE_TIME);Integer readIso=result.get(CaptureResult.SENSOR_SENSITIVITY);Integer ae=result.get(CaptureResult.CONTROL_AE_MODE);
             frame.put("actual_exposure_ns",MetadataJson.encode(readExposure)).put("actual_iso",MetadataJson.encode(readIso)).put("actual_ae_mode",MetadataJson.encode(ae));
+            frame.put("actual_shading_mode",MetadataJson.encode(result.get(CaptureResult.SHADING_MODE))).put("actual_tonemap_mode",MetadataJson.encode(result.get(CaptureResult.TONEMAP_MODE)));
             boolean close=readExposure!=null&&readIso!=null&&ae!=null&&ae==CaptureRequest.CONTROL_AE_MODE_OFF&&Math.abs((double)readExposure-exposureNs)/exposureNs<=0.02&&Math.abs(readIso-sensitivity)<=Math.max(1,sensitivity*0.01);
             frame.put("manual_readback_within_tolerance",close).put("manual_readback_tolerance","exposure relative <= 2%; ISO <= max(1,1%); AE OFF; not an analog/digital gain calibration");
             if(rawFormat==ImageFormat.RAW_SENSOR){
@@ -243,8 +301,8 @@ public final class MainActivity extends Activity {
             if(index>=total)finish();else worker.post(this::next);
         }
         void armTimeout(String message){if(deadline!=null)worker.removeCallbacks(deadline);deadline=()->fail(message,"No complete callback set within 30 seconds",null);worker.postDelayed(deadline,30000);}
-        void finish(){if(done)return;done=true;cleanup();try{state.put("status",artifactError?"completed_with_artifact_errors":"completed").put("capture_complete",index==total).put("run_succeeded",index==total&&!artifactError).put("completed_frames",index).put("finished_unix_ms",System.currentTimeMillis());writeJson(new File(dir,"run.json"),state);say("Batch finished: "+dir.getName()+" capture_complete="+(index==total)+" run_succeeded="+(!artifactError));}catch(Exception e){say("FINAL MANIFEST WRITE FAILED: "+e);}active=null;showCapture(false);}
-        void fail(String type,String message,Exception exception){if(done)return;done=true;cleanup();try{state.put("status","failed").put("capture_complete",false).put("run_succeeded",false).put("completed_frames",index).put("failure_type",type).put("failure_message",message).put("finished_unix_ms",System.currentTimeMillis());if(exception!=null){StringWriter w=new StringWriter();exception.printStackTrace(new PrintWriter(w));state.put("stacktrace",w.toString());}events.put(new JSONObject().put("unix_ms",System.currentTimeMillis()).put("type",type).put("message",message));writeJson(new File(dir,"run.json"),state);}catch(Exception e){say("FAILURE MANIFEST WRITE FAILED: "+e);}say("FAILED "+type+": "+message+"; partial files retained in "+dir.getName());active=null;showCapture(false);}
+        void finish(){if(done)return;done=true;cleanup();try{state.put("status",artifactError?"completed_with_artifact_errors":"completed").put("capture_complete",index==total).put("run_succeeded",index==total&&!artifactError).put("completed_frames",index).put("finished_unix_ms",System.currentTimeMillis());writeJson(new File(dir,"run.json"),state);say("Batch finished: "+dir.getName()+" capture_complete="+(index==total)+" run_succeeded="+(!artifactError));}catch(Exception e){say("FINAL MANIFEST WRITE FAILED: "+e);}active=null;restoreDisplay();showCapture(false);}
+        void fail(String type,String message,Exception exception){if(done)return;done=true;cleanup();try{state.put("status","failed").put("capture_complete",false).put("run_succeeded",false).put("completed_frames",index).put("failure_type",type).put("failure_message",message).put("finished_unix_ms",System.currentTimeMillis());if(exception!=null){StringWriter w=new StringWriter();exception.printStackTrace(new PrintWriter(w));state.put("stacktrace",w.toString());}events.put(new JSONObject().put("unix_ms",System.currentTimeMillis()).put("type",type).put("message",message));writeJson(new File(dir,"run.json"),state);}catch(Exception e){say("FAILURE MANIFEST WRITE FAILED: "+e);}say("FAILED "+type+": "+message+"; partial files retained in "+dir.getName());active=null;restoreDisplay();showCapture(false);}
         void closeQuiet(AutoCloseable resource){if(resource!=null)try{resource.close();}catch(Exception e){say("Cleanup warning: "+e);}}
         void cleanup(){if(deadline!=null)worker.removeCallbacks(deadline);for(Image im:waiting)closeQuiet(im);waiting.clear();for(Image im:images.values())closeQuiet(im);images.clear();closeQuiet(session);closeQuiet(device);closeQuiet(rawReader);closeQuiet(companionReader);}
     }

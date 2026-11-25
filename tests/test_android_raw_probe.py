@@ -67,7 +67,8 @@ def test_path_escape(tmp_path):
 def write(path,obj):path.write_text(json.dumps(obj),encoding="utf-8")
 
 
-def fake_run(tmp_path,name="synthetic",count=10,scene="point",verified=False,exposure=1000000,actual=None,dn=100):
+def fake_run(tmp_path,name="synthetic",count=10,scene="point",verified=False,exposure=1000000,actual=None,dn=100,
+             shading="off",tonemap="high_quality",display="app_viewport",companion_size="preview"):
     p=tmp_path/name;p.mkdir();frames=[]
     write(p/"characteristics.json",{"values":{"android.lens.facing":0,"android.sensor.info.colorFilterArrangement":3,"android.sensor.info.whiteLevel":1023,"android.sensor.blackLevelPattern":[64]*4,"android.sensor.info.lensShadingApplied":True},"errors":{}})
     write(p/"inventory.json",{"cameras":[{"camera_id":"front-test","lens_facing":0}]})
@@ -77,7 +78,7 @@ def fake_run(tmp_path,name="synthetic",count=10,scene="point",verified=False,exp
         write(p/f"frame_{i:04d}_result.json",{"values":{"android.sensor.timestamp":100+i,"android.sensor.exposureTime":exposure if actual is None else actual,"android.sensor.sensitivity":100,"android.control.aeMode":0}})
         write(p/f"frame_{i:04d}_request.json",{"values":{"android.sensor.exposureTime":exposure,"android.sensor.sensitivity":100}})
         frames.append({"index":i,"complete":True,"sensor_timestamp_ns":100+i,"manual_readback_within_tolerance":True,"raw":{"metadata_file":f"f{i}.json","timestamp_ns":100+i}})
-    write(p/"run.json",{"schema_version":1,"run_id":name,"camera_id":"front-test","lens_facing":"FRONT","raw_format":32,"raw_size":{"width":4,"height":2},"firmware_fingerprint":"SYNTHETIC_NOT_DEVICE_DATA","requested_iso":100,"requested_exposure_ns":exposure,"requested_frames":count,"capture_complete":True,"run_succeeded":True,"condition":scene,"condition_verified_by_operator":verified,"condition_notes":"synthetic software fixture only","frames":frames})
+    write(p/"run.json",{"schema_version":1,"run_id":name,"camera_id":"front-test","lens_facing":"FRONT","raw_format":32,"raw_size":{"width":4,"height":2},"firmware_fingerprint":"SYNTHETIC_NOT_DEVICE_DATA","requested_iso":100,"requested_exposure_ns":exposure,"requested_frames":count,"requested_shading_mode":shading,"requested_tonemap_mode":tonemap,"requested_display_panel":display,"requested_companion_size":companion_size,"capture_complete":True,"run_succeeded":True,"condition":scene,"condition_verified_by_operator":verified,"condition_notes":"synthetic software fixture only","frames":frames})
     return p
 
 

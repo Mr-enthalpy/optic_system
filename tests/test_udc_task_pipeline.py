@@ -37,9 +37,33 @@ def test_plan_has_no_lcd_pupil_and_preserves_reference_order():
         plan(condition="point")
 
 
-@pytest.mark.parametrize("change",[{"frames":True},{"frames":101},{"exposure_us":0},{"exposure_us":1.5}])
+@pytest.mark.parametrize("change",[{"frames":True},{"frames":101},{"exposure_us":0},{"exposure_us":1.5},
+                                   {"shading":"auto"},{"tonemap":"linear"},{"display":"full_screen"}])
 def test_invalid_batch_rejected(change):
     with pytest.raises(ValueError): UDCBatch(**{"exposure_us":1000,**change})
+
+
+def test_full_companion_requires_a_pair_and_round_trips():
+    with pytest.raises(ValueError,match="companion"):
+        plan(companion_size="full")
+    p=plan(pair="JPEG",companion_size="full")
+    assert UDCCapturePlan.from_dict(p.to_dict()).companion_size=="full"
+
+
+def test_batch_display_and_correction_controls_reach_each_capture(tmp_path,monkeypatch):
+    install_synthetic_backend(tmp_path,monkeypatch)
+    seen=[];installed=phone.capture_run
+    def record(device,**kwargs):seen.append(kwargs);return installed(device,**kwargs)
+    monkeypatch.setattr(phone,"capture_run",record)
+    batches=(UDCBatch(1000,3,shading="off",display="black"),UDCBatch(1000,3,shading="on",display="white"))
+    p=plan(batches=batches)
+    assert UDCCapturePlan.from_dict(p.to_dict()).batches==batches
+    out=tmp_path/"pipeline"
+    result=run_udc_capture_plan(p,adb=Path("unused"),output=out,condition_verified=True)
+    assert [(k["shading"],k["tonemap"],k["display"],k["companion_size"]) for k in seen]==[
+        ("off","high_quality","black","preview"),("on","high_quality","white","preview")]
+    assert [(b["shading"],b["display"]) for b in result["batches"]]==[("off","black"),("on","white")]
+    assert json.loads((out/"plan.json").read_text())["batches"][1]["display"]=="white"
 
 
 def test_no_stale_operator_confirmation_or_output_overwrite(tmp_path,monkeypatch):
@@ -62,11 +86,14 @@ def test_external_point_illumination_is_not_a_tls_or_lcd_command():
 
 def install_synthetic_backend(tmp_path,monkeypatch,*,export_failure=False,failed_capture=False):
     source_root=tmp_path/"synthetic_phone";source_root.mkdir()
-    state={}
+    state={};counter=[0]
     monkeypatch.setattr(phone,"Device",lambda *a:object())
     def capture(device,**kwargs):
-        rid="run_1_00000001"
-        source=fake_run(source_root,name=rid,count=kwargs["count"],scene=kwargs["scene"],verified=kwargs["condition_verified"],exposure=kwargs["exposure_us"]*1000)
+        counter[0]+=1
+        rid=f"run_1_{counter[0]:08d}"
+        source=fake_run(source_root,name=rid,count=kwargs["count"],scene=kwargs["scene"],verified=kwargs["condition_verified"],exposure=kwargs["exposure_us"]*1000,
+                        shading=kwargs.get("shading","off"),tonemap=kwargs.get("tonemap","high_quality"),
+                        display=kwargs.get("display","app_viewport"),companion_size=kwargs.get("companion_size","preview"))
         value=json.loads((source/"run.json").read_text())
         value.update(status="completed",completed_frames=kwargs["count"])
         for i,f in enumerate(value["frames"]):
@@ -155,7 +182,9 @@ def test_capture_rejects_false_success_and_preserves_terminal_state():
 def test_native_capture_return_must_match_the_requested_plan(wrong):
     state=dict(run_id="run_1_00000001",status="completed",run_succeeded=True,capture_complete=True,
                completed_frames=3,frames=[{}, {}, {}],requested_frames=3,requested_iso=100,
-               requested_exposure_ns=1000000,raw_format=32,condition="dark",condition_verified_by_operator=True)
+               requested_exposure_ns=1000000,raw_format=32,condition="dark",condition_verified_by_operator=True,
+               requested_shading_mode="off",requested_tonemap_mode="high_quality",
+               requested_display_panel="app_viewport",requested_companion_size="preview")
     if wrong is not None:state[wrong]="wrong"
     class Device:
         started=False

@@ -100,14 +100,19 @@ class CaptureFailure(RuntimeError):
 def capture_run(device: Device, *, exposure_us: int, iso: int, count: int = 10,
                 raw_format: str = "RAW_SENSOR", pair: str = "none", scene: str = "unspecified",
                 condition_verified: bool = False, note: str = "", camera_id: str | None = None,
-                wait_seconds: float = 180) -> dict:
+                shading: str = "off", tonemap: str = "high_quality", display: str = "app_viewport",
+                companion_size: str = "preview", wait_seconds: float = 180) -> dict:
     if (any(isinstance(v, bool) or not isinstance(v, int) or v <= 0 for v in (exposure_us, iso, count))
             or count > 100 or raw_format not in ("RAW_SENSOR", "RAW10") or pair not in ("none", "JPEG", "YUV")
-            or scene not in ("unspecified", "dark", "flat", "point") or not 0 < wait_seconds < float('inf')):
+            or scene not in ("unspecified", "dark", "flat", "point")
+            or shading not in ("off", "on") or tonemap not in ("high_quality", "fast")
+            or display not in ("app_viewport", "black", "gray", "white")
+            or companion_size not in ("preview", "full") or not 0 < wait_seconds < float('inf')):
         raise ValueError("Invalid phone capture settings")
     before = device.runs()
     command = ["am", "start", "-W", "-n", PACKAGE + "/.MainActivity", "--ez", "auto", "true", "--es", "raw_format", raw_format, "--es", "pair", pair,
                "--el", "exposure_us", str(exposure_us), "--ei", "iso", str(iso), "--ei", "count", str(count), "--es", "scene", scene,
+               "--es", "shading", shading, "--es", "tonemap", tonemap, "--es", "display", display, "--es", "companion_size", companion_size,
                "--es", "note", note, "--ez", "condition_verified", str(bool(condition_verified)).lower()]
     if camera_id is not None:
         command += ["--es", "camera_id", camera_id]
@@ -133,6 +138,8 @@ def capture_run(device: Device, *, exposure_us: int, iso: int, count: int = 10,
                         or state.get("requested_exposure_ns") != exposure_us * 1000
                         or state.get("raw_format") != {"RAW_SENSOR":32,"RAW10":37}[raw_format]
                         or state.get("condition") != scene or state.get("condition_verified_by_operator") != bool(condition_verified)
+                        or state.get("requested_shading_mode") != shading or state.get("requested_tonemap_mode") != tonemap
+                        or state.get("requested_display_panel") != display or state.get("requested_companion_size") != companion_size
                         or (camera_id is not None and state.get("camera_id") != camera_id)):
                     raise CaptureFailure(state)
                 return state
@@ -152,6 +159,10 @@ def main() -> None:
     capture.add_argument("--camera-id")
     capture.add_argument("--format", choices=["RAW_SENSOR", "RAW10"], default="RAW_SENSOR")
     capture.add_argument("--pair", choices=["none", "JPEG", "YUV"], default="none")
+    capture.add_argument("--companion-size", choices=["preview", "full"], default="preview")
+    capture.add_argument("--shading", choices=["off", "on"], default="off")
+    capture.add_argument("--tonemap", choices=["high_quality", "fast"], default="high_quality")
+    capture.add_argument("--display", choices=["app_viewport", "black", "gray", "white"], default="app_viewport")
     capture.add_argument("--exposure-us", type=int, required=True)
     capture.add_argument("--iso", type=int, required=True)
     capture.add_argument("--count", type=int, default=10)
@@ -176,7 +187,9 @@ def main() -> None:
             state = capture_run(device, exposure_us=args.exposure_us, iso=args.iso, count=args.count,
                                 raw_format=args.format, pair=args.pair, scene=args.scene,
                                 condition_verified=args.condition_verified, note=args.note,
-                                camera_id=args.camera_id, wait_seconds=args.wait_seconds)
+                                camera_id=args.camera_id, shading=args.shading, tonemap=args.tonemap,
+                                display=args.display, companion_size=args.companion_size,
+                                wait_seconds=args.wait_seconds)
         except CaptureFailure as error:
             print(json.dumps({k:error.state.get(k) for k in ("run_id","status","capture_complete","run_succeeded","completed_frames","failure_type","failure_message")}, indent=2))
             raise SystemExit(2) from None

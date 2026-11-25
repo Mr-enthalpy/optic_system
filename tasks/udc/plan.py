@@ -25,12 +25,21 @@ def positive_int(value, name):
 class UDCBatch:
     exposure_us: int
     frames: int = 10
+    shading: str = "off"
+    tonemap: str = "high_quality"
+    display: str = "app_viewport"
 
     def __post_init__(self):
         positive_int(self.exposure_us, "exposure_us")
         positive_int(self.frames, "frames")
         if self.frames > 100:
             raise ValueError("frames must be <=100 per phone batch")
+        if self.shading not in ("off", "on"):
+            raise ValueError("batch shading must be off or on")
+        if self.tonemap not in ("high_quality", "fast"):
+            raise ValueError("batch tonemap must be high_quality or fast")
+        if self.display not in ("app_viewport", "black", "gray", "white"):
+            raise ValueError("batch display must be app_viewport, black, gray or white")
 
 
 @dataclass(frozen=True)
@@ -43,6 +52,7 @@ class UDCCapturePlan:
     iso: int = 100
     raw_format: str = "RAW_SENSOR"
     pair: str = "none"
+    companion_size: str = "preview"
     illumination: IlluminationSpec | None = None
     source_distance_mm: float | None = None
     aperture_diameter_um: float | None = None
@@ -59,6 +69,10 @@ class UDCCapturePlan:
         positive_int(self.iso, "iso")
         if self.raw_format not in ("RAW_SENSOR", "RAW10") or self.pair not in ("none", "JPEG", "YUV"):
             raise ValueError("Unsupported Camera2 format or companion")
+        if self.companion_size not in ("preview", "full"):
+            raise ValueError("companion_size must be preview or full")
+        if self.companion_size == "full" and self.pair == "none":
+            raise ValueError("A full-size companion requires a JPEG or YUV pair")
         for name in ("source_distance_mm", "aperture_diameter_um", "bandwidth_nm"):
             if getattr(self, name) is not None:
                 positive_number(getattr(self, name), name)
@@ -87,8 +101,8 @@ class UDCCapturePlan:
         batches = values.get("batches")
         if not isinstance(batches, list):
             raise ValueError("batches must be a nonempty ordered list")
-        if any(not isinstance(b, dict) or set(b)-{"exposure_us", "frames"} for b in batches):
-            raise ValueError("Each UDC batch contains only exposure_us and frames")
+        if any(not isinstance(b, dict) or set(b)-{"exposure_us", "frames", "shading", "tonemap", "display"} for b in batches):
+            raise ValueError("Each UDC batch contains only exposure_us, frames, shading, tonemap and display")
         try:
             values["batches"] = tuple(UDCBatch(**b) for b in batches)
             if values.get("illumination") is not None:
