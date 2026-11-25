@@ -15,6 +15,7 @@ from .sensor_energy_center import SensorEnergyCenterProfile, validate_center_pro
 
 
 from tasks.measurement.roi import ROI, roi_from_center
+from tasks.measurement.intensity import relative_response as array_relative_response
 
 
 @dataclass
@@ -99,14 +100,4 @@ def extract_roi_psf(
 
 def relative_response(measurement: MeasuredROIPSF, *, exposure_us: float | None = None, normalize_sum: bool = False) -> np.ndarray:
     """Explicit analysis copy; exposure scaling does not correct gain/source power."""
-    values = np.asarray(measurement.psf, dtype=np.float64).copy()
-    if exposure_us is not None:
-        if not np.isfinite(exposure_us) or exposure_us <= 0:
-            raise ValueError("exposure_us must be finite and positive")
-        values /= exposure_us
-    if normalize_sum:
-        total = float(values.sum())
-        if not np.isfinite(total) or total <= 0:
-            raise ValueError("normalization requires positive finite total intensity")
-        values /= total
-    return values
+    return array_relative_response(measurement.psf, exposure_us=exposure_us, normalize_sum=normalize_sum)
