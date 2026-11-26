@@ -468,6 +468,17 @@ def main(argv=None) -> int:
     parser.add_argument("--min-host-free-gb", type=float, default=80.0)
     parser.add_argument("--psf-window", type=int, default=psf.DEFAULT_WINDOW_PX,
                         help="square analysis window around the PSF core, in binned pixels")
+    parser.add_argument("--one-bracket", default=None,
+                        help="B2 rotation session: capture one bracket at --one-band and "
+                             "--one-start-us, write <label>.json and exit")
+    parser.add_argument("--one-band", type=int, default=None,
+                        help="nominal wavelength of the single bracket")
+    parser.add_argument("--one-start-us", type=int, default=None,
+                        help="shortest exposure of the single bracket")
+    parser.add_argument("--one-dark", default=None,
+                        help="B2 rotation session: capture one dark set under this label and exit")
+    parser.add_argument("--assume-ceiling-dn", type=float, default=None,
+                        help="seed the session ceiling, e.g. 1023 from the B1 plateau")
     args = parser.parse_args(argv)
     output = args.output.resolve()
 
@@ -494,6 +505,10 @@ def main(argv=None) -> int:
     bands = parse_bands(args.bands)
     if args.limit_bands:
         bands = bands[: args.limit_bands]
+    if args.one_bracket and args.one_band is not None:
+        # A rotation session runs one band at a time; a protocol that claimed
+        # the default 26-band sweep would misstate what this session is.
+        bands = [int(args.one_band)]
     reach = parse_int_set(args.reach_bands, bands)
     distance_mm, aperture_um = 750.0, 50.0
     base_text = ("External monochromatic source through a 50 um pinhole at 750 mm; "
@@ -1023,6 +1038,86 @@ def main(argv=None) -> int:
     def colour_at(found, limit=20):
         return found["analysis"]["ratios"][str(limit)]
 
+    # ---- optional B2 single-bracket / single-dark capture -----------------
+    # The rotation session interleaves three mount states with three bands.
+    # Reusing one proven bracket here, rather than a second capture stack,
+    # keeps the B2 record directly comparable with B1.
+    if args.one_bracket or args.one_dark:
+        if args.assume_ceiling_dn is not None:
+            protocol["session_ceiling_dn"] = float(args.assume_ceiling_dn)
+            protocol["session_ceiling_source"] = (
+                "assumed for the rotation session from the B1 plateau; B2 did not "
+                "re-run the saturation probe")
+            save()
+
+        if args.one_dark:
+            dark_tiers = (gate_tiers[0], gate_tiers[2], MAX_US)
+            target, run_ids = invoke(args.one_dark, dark_plan(dark_tiers, args.one_dark))
+            batches = []
+            for index, run_id in enumerate(run_ids):
+                summary = load_json(target / f"batch_{index:03d}/decoded/summary.json")
+                batches.append({
+                    "exposure_us": dark_tiers[index], "phone_run_id": run_id,
+                    "capture_complete": bool(summary.get("capture_complete")),
+                    "run_succeeded": bool(summary.get("run_succeeded")),
+                    "validated_raw_frames": summary.get("validated_raw_frames"),
+                    "manual_readback_ok": bool(summary.get(
+                        "all_manual_readbacks_within_tolerance")),
+                    "observed_max_dn": [f.get("observed_max_dn")
+                                        for f in summary.get("frames") or []],
+                    "declared_black_level_pattern": summary.get(
+                        "declared_black_level_pattern"),
+                })
+            verified = all(b["capture_complete"] and b["run_succeeded"]
+                           and b["manual_readback_ok"]
+                           and b["validated_raw_frames"] == args.frame_count
+                           for b in batches)
+            one_shot(output / f"{target.name}_verified.json",
+                     {"stage": target.name, "exposures_us": dark_tiers,
+                      "frame_count": args.frame_count, "run_ids": run_ids,
+                      "verified": verified, "batches": batches,
+                      "recorded_utc": utc_now()})
+            print(json.dumps({"one_dark": target.name, "verified": verified,
+                              "run_ids": run_ids}), flush=True)
+            if not verified:
+                raise RuntimeError("Single dark set failed verification")
+            return 0
+
+        if args.one_bracket:
+            if args.one_band is None or args.one_start_us is None:
+                raise ValueError("--one-bracket needs --one-band and --one-start-us")
+            tiers = ladder_from_base(int(args.one_start_us), args.ladder_tiers, True)
+            schedule = bracket_schedule(tiers)
+            source_status = move_source(int(args.one_band))
+            label = args.one_bracket
+            target, run_ids = invoke(
+                label, source_plan(int(args.one_band), int(args.one_band),
+                                   schedule["order"], label))
+            found = measure(target, tiers, schedule)
+            record = {
+                "stage": "b2_bracket", "label": target.name,
+                "band_nm": int(args.one_band), "start_us": int(args.one_start_us),
+                "tiers_us": list(tiers), "capture_order_us": list(schedule["order"]),
+                "reference_batches": list(schedule["references"]),
+                "run_ids": run_ids, "peak_xy": found["peak_xy"],
+                "source_status": source_status,
+                "window_xywh": found["window_xywh"],
+                "analysis": found["analysis"], "verdict": found["verdict"],
+                "drift": found["drift"], "recorded_utc": utc_now(),
+                "note": ("One B2 bracket. The mount state and the tilt readings are "
+                         "recorded by drive_b2.py; this record is the PSF measurement."),
+            }
+            one_shot(output / f"{target.name}.json", record)
+            core = found["analysis"]["core"]
+            verdict = found["verdict"]
+            print(json.dumps({
+                "one_bracket": target.name, "band_nm": int(args.one_band),
+                "peak_dn": round(verdict["peak_dn_shortest_tier"], 1),
+                "peak_fraction": round(verdict["peak_fraction"], 3),
+                "core_dn": round(core["core_dn_shortest_tier"], 1),
+                "run_ids": run_ids,
+            }), flush=True)
+            return 0
 
     # ---- stage: saturation plateau probe ----------------------------------
     # One short, cheap capture that answers the question the whole analysis
