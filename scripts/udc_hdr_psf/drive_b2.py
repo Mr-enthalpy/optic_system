@@ -138,7 +138,15 @@ class TiltLogger:
     analysis independently checks the per-batch centre trajectory.
     """
 
-    def __init__(self, adb, serial, log_path, context, poll_s=5.0):
+    def __init__(self, adb, serial, log_path, context, poll_s=20.0):
+        """``poll_s`` is deliberately coarse.
+
+        Each reading is one ``adb shell dumpsys`` and the bracket is itself
+        driven over adb; a 5 s cadence would keep a shell call in flight for
+        most of the capture.  A bracket lasts two to three minutes, so 20 s
+        still gives six to nine samples of the creep while leaving the capture
+        path alone.  The finer check is the per-batch centre trajectory.
+        """
         self.adb = adb
         self.serial = serial
         self.log_path = log_path
@@ -391,7 +399,7 @@ def main(argv=None) -> int:
     ap.add_argument("--settle-gap-s", type=float, default=1.0)
     ap.add_argument("--stable-spread-deg", type=float, default=0.05)
     ap.add_argument("--stable-change-deg", type=float, default=0.10)
-    ap.add_argument("--tilt-poll-s", type=float, default=5.0)
+    ap.add_argument("--tilt-poll-s", type=float, default=20.0)
     ap.add_argument("--min-host-free-gb", type=float, default=20.0)
     ap.add_argument("--expected-app-version", default="0.3")
     ap.add_argument("--no-dark", action="store_true",
