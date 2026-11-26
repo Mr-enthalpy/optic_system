@@ -201,7 +201,7 @@ def pair_rows(session, planes=PLANES, radii=RADII_PX, azimuths=AZIMUTHS,
             profiles[(item["band_nm"], item["state"], plane)] = measured
 
     rows = []
-    for band in BANDS:
+    for band in sorted({item["band_nm"] for item in plan}):
         for state_a, state_b in ((STATES[0], STATES[1]),
                                  (STATES[1], STATES[2]),
                                  (STATES[0], STATES[2])):
@@ -255,7 +255,7 @@ def summarise(rows, planes=PLANES):
     if nulls:
         null_shift = float(np.median([row["angular_shift_deg"] for row in nulls]))
     by_band = {}
-    for band in BANDS:
+    for band in sorted({row["band_nm"] for row in rows}):
         subset = [row for row in rows if row["band_nm"] == band and row["ok"]]
         fit = ra.fit_rotation(subset) if subset else {"ok": False, "slope": None}
         if fit.get("ok"):

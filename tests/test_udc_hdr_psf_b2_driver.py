@@ -214,3 +214,66 @@ def test_recorded_state_roll_reads_the_last_state_row(tmp_path):
     ]) + "\n")
     assert b2.recorded_state_roll(log, "P1") == -6.4
     assert b2.recorded_state_roll(log, "P4") is None
+
+
+def test_a_single_band_dry_run_plans_only_that_band(tmp_path, capsys):
+    output = tmp_path / "session"
+    code = b2.main([
+        "--repo", str(tmp_path), "--adb", str(tmp_path / "adb.exe"),
+        "--output", str(output), "--dry-run", "--bands", "450",
+    ])
+    assert code == 0
+    text = capsys.readouterr().out
+    assert "P1_450nm" in text
+    assert "P3_450nm" in text
+    assert "550nm" not in text
+    assert "650nm" not in text
+
+
+def test_a_plan_is_extended_with_the_remaining_bands(tmp_path):
+    plan_path = tmp_path / "B2_PLAN.json"
+    starts = {450: 3224, 550: 784, 650: 2151}
+    first = b2.reconcile_plan(plan_path, {"session": "b2_rotation",
+                                          "bands_nm": [450],
+                                          "starts_us": {"450": 3224}},
+                              [450], starts)
+    assert first["created"] is True
+    second = b2.reconcile_plan(plan_path, {"session": "b2_rotation",
+                                           "bands_nm": [450, 550, 650],
+                                           "starts_us": {str(k): v for k, v in starts.items()}},
+                               [450, 550, 650], starts)
+    assert second["created"] is False
+    assert second["added"] == [550, 650]
+    written = json_module.loads(plan_path.read_text(encoding="utf-8"))
+    assert written["bands_nm"] == [450, 550, 650]
+    assert written["history"][0]["bands_before"] == [450]
+    assert written["history"][0]["bands_added"] == [550, 650]
+
+
+def test_completion_is_recorded_per_band(tmp_path):
+    output = tmp_path / "session"
+    output.mkdir()
+    first = b2.mark_done(output, [450], tmp_path / "tilt.jsonl",
+                         tmp_path / "brackets.jsonl")
+    assert first["bands_nm"] == [450]
+    second = b2.mark_done(output, [550, 650], tmp_path / "tilt.jsonl",
+                          tmp_path / "brackets.jsonl")
+    assert second["bands_nm"] == [450, 550, 650]
+    written = json_module.loads((output / "B2_DONE.json").read_text(encoding="utf-8"))
+    assert written["bands_nm"] == [450, 550, 650]
+    assert len(written["runs"]) == 2
+    assert written["runs"][0]["bands_nm"] == [450]
+    assert written["tilt_log"] == "tilt.jsonl"
+
+
+def test_a_plan_with_a_different_start_exposure_is_refused(tmp_path):
+    plan_path = tmp_path / "B2_PLAN.json"
+    b2.reconcile_plan(plan_path, {"bands_nm": [450], "starts_us": {"450": 3224}},
+                      [450], {450: 3224, 550: 784, 650: 2151})
+    try:
+        b2.reconcile_plan(plan_path, {"bands_nm": [450], "starts_us": {"450": 1600}},
+                          [450], {450: 1600, 550: 784, 650: 2151})
+    except SystemExit as exc:
+        assert "use a new session directory" in str(exc)
+    else:
+        raise AssertionError("a changed start exposure must not be accepted")

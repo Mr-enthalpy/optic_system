@@ -382,6 +382,66 @@ def recorded_state_roll(bracket_path, state):
     return None
 
 
+def mark_done(output, bands, tilt_path, bracket_path):
+    """Record which bands are complete in this session.
+
+    A session can be captured in more than one sitting -- one band as a trial,
+    the rest once the mount behaves -- so completion is per band, not per file.
+    The closing dark and the tilt log are shared; the per-run times are kept.
+    """
+    path = Path(output) / "B2_DONE.json"
+    bands = sorted(int(band) for band in bands)
+    existing = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError:
+            existing = {}
+    run = {"finished_utc": utc_now(), "bands_nm": bands}
+    done = sorted(set(int(band) for band in existing.get("bands_nm") or []) | set(bands))
+    path.write_text(json.dumps({
+        "bands_nm": done, "last_run": run,
+        "runs": (existing.get("runs") or []) + [run],
+        "tilt_log": str(tilt_path.name),
+        "bracket_log": str(bracket_path.name),
+    }, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"bands_nm": done}
+
+
+def reconcile_plan(plan_path, plan, bands, starts):
+    """Create the session plan, or extend an existing one with more bands.
+
+    B2 is often started as a single-band trial: the mount placement, the settle
+    detection and the tilt log are checked on 450 nm before the other two bands
+    are captured.  Extending the same session is allowed because the mount and
+    the darks stay valid; the band list that was captured first is kept in
+    ``history``, so the plan still records it.
+    """
+    bands = sorted(int(band) for band in bands)
+    plan_path = Path(plan_path)
+    if not plan_path.exists():
+        write_once(plan_path, plan)
+        return {"created": True, "recorded": bands, "added": []}
+    existing = json.loads(plan_path.read_text(encoding="utf-8-sig"))
+    recorded = sorted(int(band) for band in existing.get("bands_nm") or [])
+    recorded_starts = existing.get("starts_us") or {}
+    for band in recorded:
+        if str(band) not in recorded_starts:
+            raise SystemExit(f"{plan_path} has no start exposure for {band} nm")
+        if int(recorded_starts[str(band)]) != int(starts[band]):
+            raise SystemExit(f"{plan_path} records {recorded_starts[str(band)]} us for "
+                             f"{band} nm but {starts[band]} us was requested; "
+                             "use a new session directory")
+    added = [band for band in bands if band not in recorded]
+    if added:
+        plan = dict(plan, history=(existing.get("history") or []) + [{
+            "amended_utc": utc_now(), "bands_before": recorded,
+            "bands_added": added}])
+        plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False),
+                             encoding="utf-8")
+    return {"created": False, "recorded": recorded, "added": added}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -393,6 +453,8 @@ def main(argv=None) -> int:
     ap.add_argument("--serial", default=None)
     ap.add_argument("--camera-id", default=None)
     ap.add_argument("--starts", default="450:3224,550:784,650:2151")
+    ap.add_argument("--bands", default=",".join(str(band) for band in BANDS),
+                    help="comma-separated bands to capture; a single band is a trial run")
     ap.add_argument("--assume-ceiling-dn", type=float, default=1023.0)
     ap.add_argument("--psf-window", type=int, default=176)
     ap.add_argument("--settle-timeout-s", type=float, default=180.0)
@@ -413,9 +475,14 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     starts = parse_starts(args.starts)
-    for band in BANDS:
+    bands = [int(item) for item in args.bands.split(",") if item.strip()]
+    if not bands:
+        raise SystemExit("--bands is empty")
+    for band in bands:
         if band not in starts:
             raise SystemExit(f"missing start exposure for {band} nm in --starts")
+        if band not in LADDER_TIERS:
+            raise SystemExit(f"no ladder is defined for {band} nm")
     args.output = args.output.resolve()
     args.repo = args.repo.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -427,29 +494,29 @@ def main(argv=None) -> int:
         "schema_version": 1,
         "session": "b2_rotation",
         "created_utc": utc_now(),
-        "bands_nm": list(BANDS),
-        "starts_us": {str(k): starts[k] for k in BANDS},
-        "ladder_tiers": {str(k): LADDER_TIERS[k] for k in BANDS},
+        "bands_nm": list(bands),
+        "starts_us": {str(k): starts[k] for k in bands},
+        "ladder_tiers": {str(k): LADDER_TIERS[k] for k in bands},
         "states": list(STATES),
         "assume_ceiling_dn": args.assume_ceiling_dn,
         "note": ("P1 and P3 should be close but the actual difference is measured; "
                  "the analysis uses delta_roll, not a target angle."),
     }
     if not args.dry_run:
-        if plan_path.exists():
-            existing = json.loads(plan_path.read_text(encoding="utf-8-sig"))
-            if (existing.get("bands_nm") != list(BANDS)
-                    or existing.get("starts_us") != {str(k): starts[k] for k in BANDS}):
-                raise SystemExit(f"{plan_path} belongs to a different plan; "
-                                 "use a new session directory")
-            print(f"resuming session: {args.output}", flush=True)
-        else:
-            write_once(plan_path, plan)
+        outcome = reconcile_plan(plan_path, plan, bands, starts)
+        if outcome["created"]:
             print(f"session: {args.output}", flush=True)
+        else:
+            if outcome["added"]:
+                print(json.dumps({"plan_extended": outcome["added"]}), flush=True)
+            if set(outcome["recorded"]) - set(bands):
+                print(json.dumps({"session_note": "capturing a subset of the recorded "
+                                                 f"bands {outcome['recorded']}"}), flush=True)
+            print(f"resuming session: {args.output}", flush=True)
 
     commands = []
     for state in STATES:
-        for band in BANDS:
+        for band in bands:
             commands.append(driver_command(args, f"{state}_{band}nm", band, starts[band]))
     if args.dry_run:
         print(json.dumps({"plan": plan, "commands": commands}, indent=1))
@@ -469,13 +536,13 @@ def main(argv=None) -> int:
 
     settled_rolls = {}
     for state in STATES:
-        pending = [band for band in BANDS
+        pending = [band for band in bands
                    if latest_bracket_record(args.output, f"{state}_{band}nm") is None]
         if not pending:
             roll = recorded_state_roll(bracket_path, state)
             if roll is not None:
                 settled_rolls.setdefault(state, roll)
-            print(json.dumps({"state": state, "skipped": "all three brackets already "
+            print(json.dumps({"state": state, "skipped": "every requested bracket already "
                                                       "recorded"}), flush=True)
             continue
         if state == "P1":
@@ -520,7 +587,7 @@ def main(argv=None) -> int:
                           "pending_bands_nm": pending}), flush=True)
 
         records = {}
-        for band in BANDS:
+        for band in bands:
             label = f"{state}_{band}nm"
             found = latest_bracket_record(args.output, label)
             if found is None:
@@ -555,10 +622,14 @@ def main(argv=None) -> int:
                 print(json.dumps(record), flush=True)
             records[band] = found
 
-        sanity = spectral_sanity(records)
+        # The colour check compares 450 with 650 nm, so it only exists once both
+        # were captured.  A single-band trial run therefore reports it as not
+        # applicable instead of failing a comparison it never made.
+        sanity = (spectral_sanity(records) if {450, 650} <= set(bands)
+                  else {"ok": None, "reason": "single-band run: no 450/650 pair to compare"})
         already = any(row.get("kind") == "spectral_sanity" and row.get("state") == state
                       for row in read_jsonl(bracket_path))
-        if state == STATES[0] and not already:
+        if state == STATES[0] and not already and sanity["ok"] is not None:
             sanity["state"] = state
             append_jsonl(bracket_path, {"kind": "spectral_sanity", **sanity})
             print(json.dumps({"spectral_sanity": sanity}), flush=True)
@@ -574,10 +645,8 @@ def main(argv=None) -> int:
                      args.gate_timeout_s, args.interactive)
         subprocess.run(driver_command(args, "dark_end", dark=True), check=True)
 
-    write_once(args.output / "B2_DONE.json", {"finished_utc": utc_now(),
-                                              "tilt_log": str(tilt_path.name),
-                                              "bracket_log": str(bracket_path.name)})
-    print("B2 capture finished", flush=True)
+    done = mark_done(args.output, bands, tilt_path, bracket_path)
+    print(json.dumps({"B2 capture finished": done["bands_nm"]}), flush=True)
     return 0
 
 
