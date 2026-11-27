@@ -135,5 +135,6 @@ rotation, driver and B2 analysis tests. No hardware was touched by the tests.
 * **Four-fold aliasing** limits the usable range to `|delta| < 45 deg`.
 * **One geometry, one holder.** Nothing here generalises to a hand-held phone or
   to a different pinhole distance.
-* **B2 has not run.** Until it does, the display-versus-mount question is open
-  for this prototype.
+* **B2 has now run once.** The capture, the one criterion that was changed after
+  the fact, and the resulting `unresolved` verdict are in
+  `2026-11-27-b2-rotation-result.md`.
