@@ -488,7 +488,21 @@ def main(argv=None) -> int:
         waiting = gates / f"{args.confirm_gate}.waiting.json"
         if not waiting.exists():
             raise SystemExit(f"no open gate named {args.confirm_gate!r} in {gates}")
-        write_json(gates / f"{args.confirm_gate}.confirmed.json",
+        confirmed = gates / f"{args.confirm_gate}.confirmed.json"
+        if confirmed.exists():
+            # A resumed session re-enters a state after the mount has moved, so
+            # the earlier confirmation has to be re-issued.  Keep the old one as
+            # history instead of silently overwriting it, and never let a stale
+            # file pass for the current mount position.
+            history = gates / "history"
+            history.mkdir(parents=True, exist_ok=True)
+            try:
+                stamp = re.sub(r"[^0-9TZ]", "",
+                               str(load_json(confirmed).get("confirmed_utc") or "")) or "earlier"
+            except Exception:                                   # noqa: BLE001
+                stamp = "earlier"
+            confirmed.replace(history / f"{args.confirm_gate}.confirmed.{stamp}.json")
+        write_json(confirmed,
                    {"operator_confirmed": True, "operator": args.operator,
                     "confirmed_utc": utc_now(),
                     "instruction_seen": load_json(waiting).get("instruction")})

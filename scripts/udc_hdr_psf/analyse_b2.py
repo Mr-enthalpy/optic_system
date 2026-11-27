@@ -42,6 +42,61 @@ PATCH_HALF = 28            # must exceed the largest radius plus interpolation s
 MIN_PEAK_CORR = 0.2
 NULL_TOLERANCE_DEG = 5.0
 
+# The centre is accepted when the full-disc centroid iteration converges.  It is
+# *not* accepted or refused on ``refine_center``'s distance to its quadratic
+# anchor: on this PSF the brightest lobe hops between near-equal maxima, so two
+# repeats of one unchanged mount state differ by 0.5 px of that distance while
+# their centroids agree to 0.06 px (measured on P3_550nm_r3).  Repeatability of
+# the analysed centroid is what bounds the estimate, so it is measured here and
+# reported next to every bracket instead of being turned into a pass/fail line.
+_REPEAT_CACHE = {}
+
+
+def centre_repeatability(session, label, record, capture):
+    """How well this bracket's own reference repeats agree on the centre.
+
+    Every bracket captures its shortest exposure several times with nothing
+    changed in between, so re-centring each repeat is a direct measurement of
+    the estimator's reproducibility at that mount state.  It says nothing about
+    the angle, which is why it can be reported without contaminating the test.
+    """
+    key = f"{Path(session).resolve()}|{label}"
+    if key in _REPEAT_CACHE:
+        return _REPEAT_CACHE[key]
+    references = record.get("reference_batches") or [SHORTEST_BATCH]
+    black = float(record["analysis"]["ceiling"]["black_dn"])
+    centres = []
+    for index in references:
+        path = capture / f"batch_{int(index):03d}" / "decoded" / "temporal_mean_dn.npy"
+        if not path.exists():
+            continue
+        first = np.load(path, mmap_mode="r")
+        iy, ix = np.unravel_index(int(np.argmax(first)), first.shape)
+        y0 = max(0, int(iy) - PATCH_HALF) & ~1
+        x0 = max(0, int(ix) - PATCH_HALF) & ~1
+        patch = np.asarray(first[y0:y0 + 2 * PATCH_HALF + 1,
+                                 x0:x0 + 2 * PATCH_HALF + 1], dtype=np.float64)
+        if min(patch.shape) < 2 * PATCH_HALF:
+            continue
+        refined = ra.refine_center(patch, peak_xy=(int(ix) - x0, int(iy) - y0),
+                                   black=black)
+        if not refined["converged"]:
+            continue
+        centres.append([float(refined["center_xy"][0] + x0),
+                        float(refined["center_xy"][1] + y0)])
+    if len(centres) < 2:
+        repeat = {"n": len(centres), "spread_px": None, "sd_px": None,
+                  "centres_xy": centres}
+    else:
+        array = np.asarray(centres, dtype=float)
+        repeat = {"n": int(array.shape[0]),
+                  "spread_px": [float(value) for value in
+                                (array.max(axis=0) - array.min(axis=0))],
+                  "sd_px": [float(value) for value in array.std(axis=0)],
+                  "centres_xy": centres}
+    _REPEAT_CACHE[key] = repeat
+    return repeat
+
 
 def read_jsonl(path):
     rows = []
@@ -111,10 +166,16 @@ def measure_bracket(session, label, plane="Gr", radii=RADII_PX, azimuths=AZIMUTH
     are averaged: the B1 record shows their centres agree to ~0.03 px, so
     averaging is free signal-to-noise for the faint rings at r = 5-6 px.
 
-    A clipped core is refused rather than measured.  On a saturated patch the
-    global maximum is the first code at the ceiling, which can sit tens of
-    pixels from the spot; the B1 probe found exactly that on the long tiers
-    (a 20 px "centre" at 64x exposure).
+    What is refused is a **clipped analysed sample**, not a clipped core.  The
+    PSF is a point: at 450 nm two pixels at the centre of the blue plane sit on
+    the 1023 DN ceiling while every ring from r = 1.5 px outward stays below
+    877 DN, because the azimuthal analysis normalises each ring by its own mean
+    and never reads the centre.  Refusing on the peak alone would throw away a
+    measurement whose rings are demonstrably clean, so the ceiling is compared
+    against each ring's largest sample and the core saturation is reported as a
+    fact instead.  A ring that does reach the ceiling, or a global maximum that
+    is not a peak at all (the long tiers find the first ceiling code tens of
+    pixels away), still refuses.
     """
     found = find_bracket_record(session, label)
     if found is None:
@@ -149,28 +210,44 @@ def measure_bracket(session, label, plane="Gr", radii=RADII_PX, azimuths=AZIMUTH
         patch += np.asarray(mean[y0:y1, x0:x1], dtype=np.float64)
     patch /= float(len(mean_paths))
     peak_dn = float(patch.max())
-    if ceiling is not None and peak_dn >= float(ceiling) - 0.5:
-        return {"ok": False,
-                "reason": (f"clipped core for {label}: peak {peak_dn:.1f} DN sits at the "
-                           f"{float(ceiling):.0f} DN ceiling, so the maximum is not a peak"),
-                "capture": path.stem, "peak_dn": peak_dn}
+    core_at_ceiling = (None if ceiling is None
+                       else int((patch >= float(ceiling) - 0.5).sum()))
+    core_clipped = (None if ceiling is None
+                    else bool(peak_dn >= float(ceiling) - 0.5))
 
     refined = ra.refine_center(patch, peak_xy=(int(ix) - x0, int(iy) - y0),
                                black=black)
     center_local = refined["center_xy"]
-    if not refined["usable"]:
+    if not refined["converged"]:
         return {"ok": False,
-                "reason": (f"centre estimate did not settle for {label}: "
-                           f"converged={refined['converged']}, "
-                           f"drift={refined['drift_from_anchor_px']:.2f} px"),
+                "reason": (f"centre estimate did not converge for {label}: the "
+                           f"full-disc centroid never reached a fixed point "
+                           f"({len(refined['trajectory'])} steps)"),
                 "capture": path.stem, "quadratic": refined["quadratic"]}
+    repeat = centre_repeatability(session, label, record, capture)
     center_global = (center_local[0] + x0, center_local[1] + y0)
 
     polar = ra.polar_modulation(patch, center_local, plane, radii, azimuths,
                                black=black)
+    hot_rings = []
+    if ceiling is not None:
+        limit = float(ceiling) - black - 0.5
+        hot_rings = [float(radius) for radius, ring_max, ring_valid
+                     in zip(polar["radii_px"], polar["ring_max_dn"], polar["valid"])
+                     if ring_valid and np.isfinite(ring_max) and ring_max >= limit]
+    if hot_rings:
+        return {"ok": False,
+                "reason": (f"analysed ring clipped for {label}: the ring at "
+                           f"r = {hot_rings[0]:.1f} px reaches the "
+                           f"{float(ceiling):.0f} DN ceiling, so its azimuthal "
+                           "profile is truncated"),
+                "capture": path.stem, "peak_dn": peak_dn,
+                "clipped_rings_px": hot_rings}
+
     return {
         "ok": True, "capture": path.stem, "record_path": path.name,
         "black_dn": black, "peak_dn": peak_dn,
+        "core_clipped": core_clipped, "core_pixels_at_ceiling": core_at_ceiling,
         "batches": [int(index) for index in references],
         "peak_xy_int": [int(ix), int(iy)],
         "center_xy": [float(center_global[0]), float(center_global[1])],
@@ -179,9 +256,11 @@ def measure_bracket(session, label, plane="Gr", radii=RADII_PX, azimuths=AZIMUTH
         "refine": {key: refined[key] for key in
                    ("anchor_xy", "anchor_source", "drift_from_anchor_px",
                     "converged", "usable", "centroid_radius_px")},
+        "centre_repeat": repeat,
         "plane": plane,
         "modulation": polar["modulation"],
         "ring_mean_dn": polar["ring_mean_dn"].tolist(),
+        "ring_max_dn": polar["ring_max_dn"].tolist(),
         "valid_rings": polar["valid"].tolist(),
         "radii_px": polar["radii_px"].tolist(),
         "azimuths_rad": polar["azimuths_rad"].tolist(),
@@ -308,6 +387,18 @@ def main(argv=None) -> int:
     summary = summarise(rows, planes=planes)
     centres = {key: profile.get("center_xy")
                for key, profile in profiles.items() if profile.get("ok")}
+    repeats = {}
+    for (band, state, plane), profile in profiles.items():
+        if plane != PLANES[0] or not profile.get("ok"):
+            continue
+        repeats[f"{band}_{state}"] = {
+            "label": profile.get("capture"),
+            "n": (profile.get("centre_repeat") or {}).get("n"),
+            "spread_px": (profile.get("centre_repeat") or {}).get("spread_px"),
+            "sd_px": (profile.get("centre_repeat") or {}).get("sd_px"),
+            "drift_from_anchor_px": (profile.get("refine") or {}).get(
+                "drift_from_anchor_px"),
+        }
     result = {
         "session": str(args.session),
         "radii_px": RADII_PX.tolist(),
@@ -317,6 +408,7 @@ def main(argv=None) -> int:
         "verdict": verdict(summary),
         "centres_xy": {f"{band}_{state}_{plane}": value
                        for (band, state, plane), value in centres.items()},
+        "centre_repeat": repeats,
         "note": ("delta_roll is measured by the phone accelerometer; the shift is what "
                  "has to be applied to the second profile to match the first. "
                  "Display-fixed structure predicts slope 0, pinhole/mount-fixed -1."),

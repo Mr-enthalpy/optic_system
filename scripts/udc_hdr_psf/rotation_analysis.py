@@ -208,17 +208,20 @@ def polar_modulation_plane(plane, center_plane_xy, radii, azimuths, black=0.0,
     values = _bilinear(plane, yy, xx) - float(black)
 
     ring_mean = np.full(len(radii), np.nan, dtype=float)
+    ring_max = np.full(len(radii), np.nan, dtype=float)
     valid = np.zeros(len(radii), dtype=bool)
     for index in range(len(radii)):
         ring = values[index]
         if np.all(np.isfinite(ring)):
             ring_mean[index] = float(ring.mean())
+            ring_max[index] = float(ring.max())
             valid[index] = ring_mean[index] > float(min_ring_dn)
     modulation = np.full_like(values, np.nan)
     for index in np.flatnonzero(valid):
         modulation[index] = (values[index] - ring_mean[index]) / ring_mean[index]
     return {"modulation": modulation, "ring_mean_dn": ring_mean,
-            "valid": valid, "radii_px": radii, "azimuths_rad": azimuths}
+            "ring_max_dn": ring_max, "valid": valid, "radii_px": radii,
+            "azimuths_rad": azimuths}
 
 
 def polar_modulation(image, center_xy, plane, radii, azimuths, black=0.0,

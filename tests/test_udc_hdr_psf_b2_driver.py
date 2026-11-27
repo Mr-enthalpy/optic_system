@@ -152,6 +152,62 @@ def test_latest_bracket_record_prefers_the_newest_capture(tmp_path):
     assert b2.latest_bracket_record(output, "P2_450nm") is None
 
 
+def test_a_bracket_captured_outside_the_loop_still_gets_a_row(tmp_path):
+    """A single-bracket retry writes a measurement but no log row.
+
+    The analysis enumerates brackets from the rows, so a band that only exists
+    as ``P2_550nm_r1.json`` would vanish from the session without this.  The
+    row is written once: a second pass over the same state must not duplicate
+    it, and a band that already has a row must not be touched.
+    """
+    output = tmp_path / "session"
+    output.mkdir()
+    record = (output / "P2_550nm_r1.json")
+    record.write_text(json_module.dumps({
+        "stage": "b2_bracket", "label": "P2_550nm_r1",
+        "peak_xy": [1490, 1143], "window_xywh": [1402, 1054, 176, 176],
+        "run_ids": ["run_a"], "recorded_utc": "2026-11-27T01:30:00+00:00",
+        "source_status": {"current_wavelength_nm": 550.0009},
+    }))
+    log = output / "brackets.jsonl"
+    found = b2.latest_bracket_record(output, "P2_550nm")
+    row = b2.recover_bracket_row(log, "P2", 550, found)
+    assert row is not None and row["recovered"] is True
+    assert row["label"] == "P2_550nm_r1", "the row names the record that exists"
+    assert row["peak_xy"] == [1490, 1143]
+    assert "roll_before_deg" not in row, "the mount roll belongs to the state row"
+    rows = [json_module.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert b2.recover_bracket_row(log, "P2", 550, found) is None
+    assert len(log.read_text().splitlines()) == 1
+
+
+def test_a_skipped_state_still_recovers_its_missing_rows(tmp_path):
+    """Resuming a state must not skip the bookkeeping.
+
+    P2 was captured partly through single-bracket retries after the source
+    controller dropped, so the measurements exist without rows.  A resume that
+    only checks "is the bracket recorded" stops at the state and leaves the
+    analysis with no P2 rows at all.
+    """
+    output = tmp_path / "session"
+    output.mkdir()
+    for label in ("P2_550nm_r1", "P2_650nm_r1"):
+        (output / f"{label}.json").write_text(json_module.dumps({
+            "stage": "b2_bracket", "label": label, "peak_xy": [1, 2],
+            "run_ids": [label], "source_status": {"current_wavelength_nm": 550.0},
+        }))
+    log = output / "brackets.jsonl"
+    log.write_text(json_module.dumps({"kind": "bracket", "state": "P1", "band_nm": 450,
+                                      "label": "P1_450nm"}) + "\n")
+    written = b2.recover_state_rows(log, output, "P2", [450, 550, 650])
+    assert written == ["P2_550nm_r1", "P2_650nm_r1"], written
+    rows = [json_module.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    assert [(row["state"], row["band_nm"]) for row in rows] == [
+        ("P1", 450), ("P2", 550), ("P2", 650)]
+    assert b2.recover_state_rows(log, output, "P2", [450, 550, 650]) == []
+
+
 def test_dark_already_done_needs_verified_true(tmp_path):
     output = tmp_path / "session"
     output.mkdir()
@@ -164,24 +220,57 @@ def test_dark_already_done_needs_verified_true(tmp_path):
     assert b2.dark_already_done(output, "dark_start")
 
 
-def test_confirm_gate_uses_the_b1_gate_files(tmp_path):
+def test_confirm_gate_uses_the_b1_gate_files(tmp_path, monkeypatch):
     output = tmp_path / "session"
     gates = output / "gates"
     gates.mkdir(parents=True)
-    (gates / "mount_P1.confirmed.json").write_text(json_module.dumps(
-        {"operator_confirmed": True, "operator": "tester",
-         "confirmed_utc": "2026-11-27T00:00:00+00:00"}))
+
+    # The operator answers after the gate opens, exactly as
+    # `drive_b1.py --confirm-gate` does at the bench.
+    def answer_during_the_wait(_seconds):
+        (gates / "mount_P1.confirmed.json").write_text(json_module.dumps(
+            {"operator_confirmed": True, "operator": "tester",
+             "confirmed_utc": "2026-11-27T00:00:00+00:00"}))
+
+    monkeypatch.setattr(b2.time, "sleep", answer_during_the_wait)
     record = b2.confirm_gate(output, "mount_P1", "place the mount", 1.0, False)
     assert record["operator"] == "tester"
     assert not (gates / "mount_P1.waiting.json").exists()
 
 
-def test_confirm_gate_rejects_a_file_that_is_not_a_confirmation(tmp_path):
+def test_a_confirmation_from_an_earlier_visit_does_not_open_the_gate(tmp_path, capsys):
+    """A resumed session re-enters P1/P2 with extra bands.
+
+    The mount has moved since the first visit, so the old confirmation must not
+    wave the capture through at whatever angle the rig is in now.
+    """
     output = tmp_path / "session"
     gates = output / "gates"
     gates.mkdir(parents=True)
-    (gates / "mount_P1.confirmed.json").write_text(
-        json_module.dumps({"operator_confirmed": False}))
+    old = gates / "mount_P1.confirmed.json"
+    old.write_text(json_module.dumps({"operator_confirmed": True, "operator": "tester"}))
+    stamp = old.stat().st_mtime_ns - 10_000_000_000
+    os.utime(old, ns=(stamp, stamp))
+
+    try:
+        b2.confirm_gate(output, "mount_P1", "place the mount", 0.0, False)
+    except SystemExit as exc:
+        assert "timed out" in str(exc)
+    else:
+        raise AssertionError("a stale confirmation must not pass the gate")
+    assert "ignoring" in capsys.readouterr().out
+
+
+def test_confirm_gate_rejects_a_file_that_is_not_a_confirmation(tmp_path, monkeypatch):
+    output = tmp_path / "session"
+    gates = output / "gates"
+    gates.mkdir(parents=True)
+
+    def write_a_refusal(_seconds):
+        (gates / "mount_P1.confirmed.json").write_text(
+            json_module.dumps({"operator_confirmed": False}))
+
+    monkeypatch.setattr(b2.time, "sleep", write_a_refusal)
     try:
         b2.confirm_gate(output, "mount_P1", "place the mount", 1.0, False)
     except SystemExit as exc:

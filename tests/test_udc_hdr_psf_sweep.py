@@ -409,5 +409,36 @@ def test_suite():
     assert main() == 0
 
 
+def test_a_repeated_gate_confirmation_keeps_the_earlier_one_as_history():
+    """A resumed session re-enters a state after the mount has moved.
+
+    The bench command has to work twice for the same gate name, and the first
+    confirmation must end up as history rather than stay where the next wait
+    would accept it.
+    """
+    root = Path(tempfile.mkdtemp())
+    try:
+        gates = root / "gates"
+        gates.mkdir(parents=True)
+        (gates / "mount_P1.waiting.json").write_text(
+            json.dumps({"gate": "mount_P1", "instruction": "place the mount"}),
+            encoding="utf-8")
+        argv = ["--output", str(root), "--confirm-gate", "mount_P1", "--operator", "tester"]
+        assert drv.main(argv) == 0
+        first = json.loads((gates / "mount_P1.confirmed.json").read_text(encoding="utf-8-sig"))
+        assert first["operator_confirmed"] is True
+        assert first["instruction_seen"] == "place the mount"
+        # The mount moves and the gate is opened again; the same command runs.
+        assert drv.main(argv) == 0
+        second = json.loads((gates / "mount_P1.confirmed.json").read_text(encoding="utf-8-sig"))
+        assert second["operator_confirmed"] is True
+        history = sorted((gates / "history").glob("mount_P1.confirmed.*.json"))
+        assert len(history) == 1
+        kept = json.loads(history[0].read_text(encoding="utf-8-sig"))
+        assert kept["operator_confirmed"] is True
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

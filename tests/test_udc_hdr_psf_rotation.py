@@ -48,6 +48,18 @@ def test_rotation_shift_has_the_expected_sign():
     assert abs(found["shift_deg"] + 20.0) < 1.5
 
 
+def test_ring_maximum_tracks_the_samples_the_profile_uses():
+    # A spot with one bright pixel at the centre and a smooth ring: the ring
+    # maximum must follow the ring, not the core, because the ceiling check in
+    # the session analysis compares it with the ADC ceiling.
+    image = _image(0.0, modulation=0.0, sigma=6.0)
+    image[60, 60] = 900.0
+    polar = ra.polar_modulation_plane(image, (60.3, 59.6), RADII, AZ)
+    assert polar["ring_max_dn"][0] < 200.0
+    assert polar["ring_max_dn"][0] > polar["ring_max_dn"][-1]
+    assert polar["ring_mean_dn"][0] < polar["ring_max_dn"][0]
+
+
 def test_translation_does_not_change_the_angular_shift():
     a = _image(0.0)
     b = _image(20.0, center_xy=(61.7, 58.9))

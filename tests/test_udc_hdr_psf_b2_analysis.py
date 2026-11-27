@@ -27,7 +27,7 @@ def _image(theta0_deg, centre=CENTRE, modulation=0.25, sigma=3.0):
     return BLACK + core * (1.0 + modulation * np.cos(4.0 * (theta - theta0)))
 
 
-def _session(tmp_path, thetas, rolls, band=450, centre=CENTRE):
+def _session(tmp_path, thetas, rolls, band=450, centre=CENTRE, sigma=3.0):
     """Write a minimal session tree: log, per-bracket records, temporal means."""
     session = tmp_path / "session"
     session.mkdir()
@@ -38,7 +38,7 @@ def _session(tmp_path, thetas, rolls, band=450, centre=CENTRE):
         label = f"{state}_{band}nm"
         capture = session / "captures" / label / "batch_000" / "decoded"
         capture.mkdir(parents=True)
-        image = _image(thetas[state], centre=centre)
+        image = _image(thetas[state], centre=centre, sigma=sigma)
         np.save(capture / "temporal_mean_dn.npy", image)
         (session / f"{label}.json").write_text(json.dumps({
             "stage": "b2_bracket", "label": label, "band_nm": band,
@@ -136,16 +136,38 @@ def test_a_large_same_angle_bias_is_called_unresolved(tmp_path):
     assert "estimator bias" in result["reason"]
 
 
-def test_a_clipped_core_is_refused(tmp_path):
+def test_a_clipped_core_is_reported_but_still_measured(tmp_path):
+    # A sharp spot with a ceiling just above its peak: the centre pixel sits on
+    # the ceiling while every analysed ring stays well below it.  The azimuthal
+    # profile never reads the centre, so the bracket is usable and the core
+    # clipping is carried through as a reported fact.
     session = _session(tmp_path, {"P1": 0.0, "P2": -20.0, "P3": -1.0},
-                       [0.0, 20.0, 1.0])
+                       [0.0, 20.0, 1.0], sigma=1.2)
     record_path = session / "P1_450nm.json"
     record = json.loads(record_path.read_text())
-    record["analysis"]["ceiling"]["ceiling_dn"] = 700
+    record["analysis"]["ceiling"]["ceiling_dn"] = 600
+    record_path.write_text(json.dumps(record))
+    measured = ab.measure_bracket(session, "P1_450nm", plane="Gr")
+    assert measured["ok"], measured.get("reason")
+    assert measured["core_clipped"] is True
+    assert measured["core_pixels_at_ceiling"] >= 1
+    assert max(measured["ring_max_dn"]) < 600 - BLACK - 0.5
+    assert abs(measured["center_xy"][0] - CENTRE[0]) < 0.4
+
+
+def test_a_ring_that_reaches_the_ceiling_is_refused(tmp_path):
+    # Lower the ceiling below the first ring: now the samples the angular fit
+    # actually uses are truncated, and no verdict may be claimed from them.
+    session = _session(tmp_path, {"P1": 0.0, "P2": -20.0, "P3": -1.0},
+                       [0.0, 20.0, 1.0], sigma=1.2)
+    record_path = session / "P1_450nm.json"
+    record = json.loads(record_path.read_text())
+    record["analysis"]["ceiling"]["ceiling_dn"] = 400
     record_path.write_text(json.dumps(record))
     measured = ab.measure_bracket(session, "P1_450nm", plane="Gr")
     assert not measured["ok"]
-    assert "clipped core" in measured["reason"]
+    assert "analysed ring clipped" in measured["reason"]
+    assert measured["clipped_rings_px"][0] == 1.5
 
 
 def test_reference_batches_are_averaged(tmp_path):
@@ -183,3 +205,76 @@ def test_a_bracket_without_a_temporal_mean_is_not_usable(tmp_path):
     assert touching_p2 and all(not row["ok"] for row in touching_p2)
     # Only the same-angle pair is left, so no slope can be fitted at all.
     assert ab.verdict(ab.summarise(rows, planes=("Gr",)))["class"] == "unresolved"
+
+
+# --- the centre: convergence, not distance to the brightest lobe --------------
+
+def _repeat_session(tmp_path, images, label="P3_550nm", band=550):
+    """One bracket whose shortest exposure was captured once per image."""
+    session = tmp_path / "session"
+    (session / "captures").mkdir(parents=True)
+    for index, image in enumerate(images):
+        target = session / "captures" / label / f"batch_{2 * index:03d}" / "decoded"
+        target.mkdir(parents=True)
+        np.save(target / "temporal_mean_dn.npy", image)
+    (session / f"{label}.json").write_text(json.dumps({
+        "stage": "b2_bracket", "label": label, "band_nm": band,
+        "peak_xy": [int(np.argmax(images[0]) % SHAPE[1]),
+                    int(np.argmax(images[0]) // SHAPE[1])],
+        "reference_batches": [2 * index for index in range(len(images))],
+        "run_ids": [f"run_{index}" for index in range(len(images))],
+        "analysis": {"ceiling": {"black_dn": BLACK, "ceiling_dn": 1023}},
+    }))
+    (session / "brackets.jsonl").write_text(
+        json.dumps({"kind": "state", "state": "P3",
+                    "settled": {"roll_deg": 0.8}}) + "\n"
+        + json.dumps({"kind": "bracket", "state": "P3", "band_nm": band,
+                      "label": label}) + "\n")
+    return session
+
+
+def _twin_lobes(gap=2.4, sigma=1.4, peak=620.0):
+    """Two equally bright lobes: the brightest pixel is not the flux centre."""
+    yy, xx = np.mgrid[0:SHAPE[0], 0:SHAPE[1]]
+    left = np.exp(-((xx - (CENTRE[0] - gap)) ** 2
+                    + (yy - CENTRE[1]) ** 2) / (2 * sigma ** 2))
+    right = np.exp(-((xx - (CENTRE[0] + gap)) ** 2
+                     + (yy - CENTRE[1]) ** 2) / (2 * sigma ** 2))
+    return BLACK + peak * (left + right)
+
+
+def test_a_centre_far_from_the_brightest_lobe_is_still_measured(tmp_path):
+    # The old rule refused any bracket whose converged centroid sat more than
+    # 2 px from its quadratic anchor.  On a two-lobe PSF that is the normal
+    # case, and the centroid is stable, so the anchor distance is reported and
+    # the bracket is kept.
+    image = _twin_lobes()
+    session = _repeat_session(tmp_path, [image, image, image])
+    measured = ab.measure_bracket(session, "P3_550nm", plane="Gr")
+    assert measured["ok"] is True
+    assert measured["refine"]["converged"] is True
+    assert measured["refine"]["drift_from_anchor_px"] > 2.0
+    assert measured["refine"]["usable"] is False
+    assert abs(measured["center_xy"][0] - CENTRE[0]) < 0.3
+
+
+def test_the_repeatability_of_the_centre_is_measured_and_reported(tmp_path):
+    image = _twin_lobes()
+    session = _repeat_session(tmp_path, [image, image, image])
+    measured = ab.measure_bracket(session, "P3_550nm", plane="Gr")
+    repeat = measured["centre_repeat"]
+    assert repeat["n"] == 3
+    # Identical repeats: the centroid must not wander.
+    assert max(repeat["spread_px"]) < 1e-6
+
+    moved = _repeat_session(tmp_path / "moved",
+                            [np.roll(image, 1, axis=1), image, image])
+    repeat_moved = ab.measure_bracket(moved, "P3_550nm", plane="Gr")["centre_repeat"]
+    assert repeat_moved["spread_px"][0] > 0.5
+
+
+def test_the_reported_repeatability_reaches_the_result_file(tmp_path):
+    image = _twin_lobes()
+    session = _repeat_session(tmp_path, [image, image, image])
+    summary = ab.summarise(ab.pair_rows(session, planes=("Gr",))[0], planes=("Gr",))
+    assert summary["by_plane"]["pooled"]["ok"] is False   # no P1/P2 pair to fit

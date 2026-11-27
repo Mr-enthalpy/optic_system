@@ -234,8 +234,22 @@ def confirm_gate(output, name, instruction, timeout_s, interactive):
     }, indent=2), encoding="utf-8")
     print(f"\nGATE {name}: {instruction}", flush=True)
     print(f"  confirm with: --confirm-gate {name}", flush=True)
+    # A confirmation left over from an earlier visit to the same state must not
+    # approve a mount that has been moved since.  A resumed session re-enters
+    # P1/P2 with extra bands, so without this check the stale file from the
+    # first visit would wave the capture through at whatever angle the mount
+    # happens to be.
+    issued = waiting.stat().st_mtime_ns
     deadline = time.time() + timeout_s
-    while not confirmed.exists():
+    stale_reported = False
+    while True:
+        if confirmed.exists() and confirmed.stat().st_mtime_ns > issued:
+            break
+        if confirmed.exists() and not stale_reported:
+            print(json.dumps({"gate": name, "ignoring": "confirmation left over from an "
+                              "earlier visit; the mount has moved since, confirm again"}),
+                  flush=True)
+            stale_reported = True
         if (output / "PAUSE_REQUESTED.txt").exists():
             raise SystemExit("operator requested a pause")
         if time.time() > deadline:
@@ -380,6 +394,50 @@ def recorded_state_roll(bracket_path, state):
             if settled.get("roll_deg") is not None:
                 return float(settled["roll_deg"])
     return None
+
+
+def recover_bracket_row(bracket_path, state, band, found):
+    """Record a bracket that exists on disk but has no row in the log.
+
+    One band is retried on its own when a transient instrument error kills a
+    single-bracket run; that run writes the measurement but never reaches the
+    loop that appends the row.  The analysis enumerates brackets from the rows,
+    so without this the band silently drops out of an otherwise complete
+    session.  The mount roll belongs to the state row and is not restated.
+    """
+    for row in read_jsonl(bracket_path):
+        if (row.get("kind") == "bracket" and row.get("state") == state
+                and int(row.get("band_nm") or 0) == int(band)):
+            return None
+    row = {
+        "kind": "bracket", "state": state, "band_nm": band,
+        "label": found.get("label") or f"{state}_{band}nm",
+        "recovered": True,
+        "note": ("captured outside the band loop, so there is no before/after "
+                 "tilt read for it; the settled roll of this state's row applies"),
+        "peak_xy": found.get("peak_xy"),
+        "window_xywh": found.get("window_xywh"),
+        "run_ids": found.get("run_ids"),
+        "source_wavelength_nm": (found.get("source_status") or {}).get(
+            "current_wavelength_nm"),
+        "captured_utc": found.get("recorded_utc"),
+        "recorded_utc": utc_now(),
+    }
+    append_jsonl(bracket_path, row)
+    return row
+
+
+def recover_state_rows(bracket_path, output, state, bands):
+    """Write the missing rows for brackets of ``state`` that are already on disk."""
+    written = []
+    for band in bands:
+        found = latest_bracket_record(output, f"{state}_{band}nm")
+        if found is None:
+            continue
+        row = recover_bracket_row(bracket_path, state, band, found)
+        if row is not None:
+            written.append(row["label"])
+    return written
 
 
 def mark_done(output, bands, tilt_path, bracket_path):
@@ -542,18 +600,26 @@ def main(argv=None) -> int:
             roll = recorded_state_roll(bracket_path, state)
             if roll is not None:
                 settled_rolls.setdefault(state, roll)
+            # A state reached by an earlier run may have measurements but no
+            # rows (a single-bracket retry after a transient instrument error).
+            # Skipping the state must not skip its bookkeeping, or the bands
+            # drop out of the analysis.
+            recovered = recover_state_rows(bracket_path, args.output, state, bands)
+            if recovered:
+                print(json.dumps({"recovered_rows": recovered, "state": state}),
+                      flush=True)
             print(json.dumps({"state": state, "skipped": "every requested bracket already "
                                                       "recorded"}), flush=True)
             continue
         if state == "P1":
-            prompt = ("Set the mount to the first orientation (P1).  Tighten the "
-                      "temporary limit and re-centre the pinhole if needed.")
+            prompt = ("Set the mount to the first orientation (P1).  The spot only has to "
+                      "be inside the working box, so do not spend time centring it.")
         elif state == "P2":
-            prompt = ("Rotate the mount by about 20 degrees in one direction, "
-                      "re-centre the pinhole, and tighten the limit.")
+            prompt = ("Rotate the mount by about 20 degrees in one direction.  The spot "
+                      "only has to stay inside the working box.")
         else:
-            prompt = ("Rotate back toward the P1 orientation (within a few degrees), "
-                      "re-centre the pinhole, and tighten the limit.")
+            prompt = ("Rotate back toward the P1 orientation (within a few degrees).  The "
+                      "spot only has to stay inside the working box.")
         confirm_gate(args.output, f"mount_{state}", prompt,
                      args.gate_timeout_s, args.interactive)
         settled = wait_for_settle(args.adb, args.serial, tilt_path, f"settle_{state}",
@@ -620,6 +686,15 @@ def main(argv=None) -> int:
                 }
                 append_jsonl(bracket_path, record)
                 print(json.dumps(record), flush=True)
+            else:
+                # A bracket can be captured outside this loop -- one band is
+                # retried on its own when a transient instrument error kills a
+                # single-bracket run.  Record it from the measurement itself
+                # rather than capturing the same band twice at one mount angle.
+                recovered = recover_bracket_row(bracket_path, state, band, found)
+                if recovered is not None:
+                    print(json.dumps({"recovered_bracket": recovered["label"],
+                                      "state": state, "band_nm": band}), flush=True)
             records[band] = found
 
         # The colour check compares 450 with 650 nm, so it only exists once both
