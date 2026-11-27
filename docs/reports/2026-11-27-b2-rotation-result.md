@@ -144,14 +144,27 @@ Two independent reasons, either of which is sufficient:
    while Gb, B and R fit neither hypothesis. Quad-CFA planes see the same PSF
    through different sub-lattices, so a split this large is not a plane-level
    curiosity to be averaged away.
-2. **The P2 state is not a clean rotation of P1.** Peak signal per microsecond
-   fell by roughly 5x (550 nm) and 7x (650 nm) at P2, and the four-fold content
-   of the azimuthal pattern collapsed there: the fraction of ring variance in the
-   cos/sin(4 theta) harmonic is 0.19-0.30 at P1 and P3 in 550 and 650 nm, but
-   0.002-0.18 at P2. Its centre also repeats worst (0.23 px at 550 nm, 1.00 px at
-   450 nm). Cross-correlating P1 against P2 is therefore not guaranteed to be
-   comparing one PSF at two angles; it may be comparing two different PSFs.
-   Both rotation pairs involve P2, so this affects every slope in the table.
+
+2. **The P2 state's azimuthal pattern is not the P1 pattern rotated.** Three
+   things were measured at P2 and none of them is a rotation alone:
+
+   * Peak signal per microsecond fell by roughly 5x (550 nm) and 7x (650 nm).
+   * The four-fold content of the azimuthal profile dropped by a factor of 2-4
+     at every plane and band: the fraction of ring variance in the
+     `cos/sin(4 theta)` harmonic is 0.19-0.30 at P1 and P3 in 550 and 650 nm but
+     0.04-0.18 at P2, and 0.09-0.22 at 450 nm on all three states.
+   * The radial profile barely moved. Normalised to its own r = 1.5 px ring, the
+     P2 profile differs from the P1/P3 mean by at most 0.13, and the P1-to-P3
+     difference at the same nominal angle reaches 0.14 - i.e. the shape change at
+     P2 is no larger than the change between two captures of one angle.
+
+   The centre is not the explanation either: `P2_650nm_r1` repeats its centre to
+   0.03 px, better than any other bracket, yet its on-band four-fold content is
+   the lowest measured. So the change at P2 is in the angular structure itself,
+   not in focus, centring or brightness alone. Whatever causes it - the sampling
+   lattice at 17 degrees to the pattern, a stop that is not rotationally
+   symmetric, or something else - is not established here, and both rotation
+   pairs pass through P2, so every slope in the table mixes rotation with it.
 
 Point 2 is why the 550 nm pair ratios differ by a factor of two and are not
 averaged into a single number. It is a measurement limitation, not a verdict.
@@ -173,6 +186,10 @@ Not established:
 * Whether the 450/550-650 split is optical (a wavelength-dependent balance
   between a display-fixed grid and a mount-fixed aperture) or an artefact of the
   P2 state. No measurement here separates those.
+* That 450 nm has no four-fold diffraction component at all. Its pattern is
+  weakly four-fold on all three states (harmonic fraction 0.09-0.22 against
+  0.19-0.30 at 550 and 650 nm), so the statement is about the azimuthal structure
+  this estimator measured, not about the whole PSF.
 * Any universality. One holder, one pinhole geometry, one display state.
 * That the pattern is "the PSF" in isolation. It is the azimuthal structure of
   the measured spot, whatever mixture of pinhole, LCD grid and lens produced it.
