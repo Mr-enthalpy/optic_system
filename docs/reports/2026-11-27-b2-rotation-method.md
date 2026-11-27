@@ -1,9 +1,12 @@
 # 2026-11-27 B2 rotation session: method and pre-capture validation
 
-Status: **method implemented, offline checks passed, no B2 hardware capture has
-been performed yet.** Everything below is derived either from synthetic images
-or from the archived B1 five-band capture of 2026-11-27. Nothing here is a
-measurement of how the real Axon 20 UDC PSF behaves under rotation.
+Status: **pre-capture design record, kept in its original form.** It was written
+before any B2 frame existed, from synthetic images and the archived B1 five-band
+capture; the session has since run and its result is in
+`2026-11-27-b2-rotation-result.md`. Two things below did not survive contact with
+the data: the four-fold premise (the measured spectra are k=2 dominated) and the
+45 deg justification that followed from it. Both are annotated where they occur
+and the post-hoc estimator is described in its own section.
 
 ## Question
 
@@ -18,8 +21,11 @@ laboratory frame, and asks:
   everything on the object side of the pinhole)?
 
 The two hypotheses predict different slopes of measured angular shift against
-measured phone roll: 0 and a magnitude of 1. A four-fold PSF means the sign of
-the slope alone does not identify the hypothesis; the magnitude does.
+measured phone roll: 0 and a magnitude of 1. The design assumed a four-fold PSF,
+in which case the sign of the slope alone does not identify the hypothesis and the
+magnitude does. The measurement later showed the spot is not four-fold, so the
+magnitude statement survives and the sign statement does not; see the result
+report.
 
 ## Design
 
@@ -74,7 +80,9 @@ quad-CFA quadrants differ; a rotation must move all four by the same angle.
 
 * a fractional centre is recovered to better than 0.25 px;
 * a known 20 degree rotation is recovered with the right sign (within 1.5 deg);
-* 70 degrees is resolved as -20 degrees through the four-fold wrap;
+* 70 degrees is resolved as -20 degrees through the four-fold wrap - true of the
+  synthetic four-fold profile this test uses, and the measured spot does not have
+  that symmetry, so it is a bound on the cross-correlation, not on the data;
 * pure translation of 2 px with unchanged azimuth does not produce a rotation
   (slope 0.00 against a 0.10 threshold);
 * a display-fixed model gives slope 0.00 and a mount-fixed model slope 1.00
@@ -107,7 +115,9 @@ The four-fold structure is strong and reproducible in B1: the harmonic-4
 amplitude of the azimuthal profile rises from 0.05 at r = 1.5 px to 0.2-0.5 by
 r = 6 px, and its phase reproduces within about 1-3 degrees between repeats of
 the same band. Gr and Gb carry different phases, which is the quad-CFA quadrant
-difference and the reason the planes are treated separately.
+difference and the reason the planes are treated separately. "Strong" means
+present and reproducible, not largest: on the B2 brackets order 2 is the largest
+order and order 4 is comparable to it, which is what broke the four-fold premise.
 
 ### One finding that changed the analysis
 
@@ -117,10 +127,43 @@ first code at the ceiling rather than the brightest part of the spot, and the
 and averages the bracket's unsaturated reference repeats instead, which is also
 free signal-to-noise for the faint rings.
 
+### Rotation from the phases of the azimuthal orders
+
+Added after the session had been analysed, when the spectra showed the four-fold
+premise was wrong. It is a second estimator on the same profiles, kept beside the
+cross-correlation rather than replacing it.
+
+A rigid rotation by `D` multiplies the phase of order `k` by `k*D`, so `D` can be
+fitted jointly over orders 2-10, weighting each order by its own amplitude and
+adding the four CFA planes' complex coefficients. This assumes nothing about how
+many spike directions the pattern has, which is the property the cross-correlation
+lacks: it takes the global maximum of the circular correlation inside a window,
+and a pattern with `N` periodic directions has peaks every `360/N` degrees.
+
+Offline validation (`tests/test_udc_hdr_psf_rotation.py`):
+
+* a pattern carrying orders 2-6 rotated by 17.3 deg returns `-17.3` deg with
+  0.5 deg phase scatter;
+* a display-fixed pattern returns ~0;
+* orders that each move by their own angle produce a phase rms above 2 deg, so the
+  fit reports non-rigid change instead of averaging it into a rotation;
+* a pure eight-fold comb is only defined modulo 45 deg, and the test asserts that
+  the fit lands on an equivalent multiple rather than pretending to resolve it.
+
+That last point is the estimator's real limit and it is not silently removed: if
+the pattern were a single pure order `N`, no phase method could tell `D` from
+`D + 360/N`. It is usable here only because the measured spectrum has k=2, 3 and
+4 at comparable amplitude, and because the answer is checked against a rotation of
+known sign and size.
+
+`analyse_b2_phase.py` writes `harmonic_rotation.json` next to
+`angular_analysis.json`; the numbers and their reading are in the result report.
+
 ## Tests
 
-`478 passed, 3 skipped` in the local environment (`pytest -q`), including new
-rotation, driver and B2 analysis tests. No hardware was touched by the tests.
+`523 passed, 3 skipped` in the local environment (`pytest -q`), including new
+rotation, harmonic-phase, driver and B2 analysis tests. No hardware was touched by
+the tests.
 
 ## Limits that remain
 
@@ -132,7 +175,12 @@ rotation, driver and B2 analysis tests. No hardware was touched by the tests.
   per-batch centre trajectory are the only detection, not a correction.
 * **The roll reading is the accelerometer's**, with its own bias and mounting
   alignment error. Only differences between states are used.
-* **Four-fold aliasing** limits the usable range to `|delta| < 45 deg`.
+* **The four-fold premise was wrong, and the response is not a pure rotation.**
+  The cross-correlation's 45 deg window was justified by a four-fold pattern; the
+  measured spectra are k=2 dominated. The harmonic-phase estimator needs no such
+  premise, but it too reports 8-26 deg of order scatter, so "rotation" here means
+  the dominant change of the azimuthal structure, not a rigid turn of the whole
+  PSF. A single pure order would still be ambiguous to `360/N`.
 * **One geometry, one holder.** Nothing here generalises to a hand-held phone or
   to a different pinhole distance.
 * **B2 has now run once.** The capture, the one criterion that was changed after

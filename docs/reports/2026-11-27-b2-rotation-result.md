@@ -98,6 +98,8 @@ Shift is the rotation applied to the second profile to match the first. A
 structure fixed to the display predicts 0; a structure fixed to the rotating
 mount predicts minus `delta_roll`.
 
+### As pre-registered: cross-correlation of the whole profile
+
 | band | pair | `delta_roll` | Gr | Gb | B | R |
 | --- | --- | --- | --- | --- | --- | --- |
 | 450 | P1-P2 | +18.17 | -0.43 | -0.97 | -2.59 | -7.99 |
@@ -169,6 +171,74 @@ Two independent reasons, either of which is sufficient:
 Point 2 is why the 550 nm pair ratios differ by a factor of two and are not
 averaged into a single number. It is a measurement limitation, not a verdict.
 
+## After the fact: rotation from the phases of the azimuthal orders
+
+This section was written after the registered analysis above, and it does not
+replace it. It exists because one premise of the registered estimator turned out
+to be false.
+
+`angular_shift` takes the largest circular cross-correlation inside a +/-45 deg
+window, and that window was justified by the spot being four-fold. The measured
+azimuthal spectra do not support it: over r = 3-10 px the second order is the
+largest in 31 of 35 usable bracket-plane combinations, with the third and fourth
+orders close behind (0.3-1.1 of k=2), and a peak count on the r = 4-20 px profile
+gives 4 to 13 directions depending on band and plane. A pattern with N periodic
+spike directions has a correlation peak every 360/N degrees, so the global
+maximum can land on a neighbouring spike, and the 45 deg window is not the
+bound that was claimed.
+
+The substitute estimator assumes nothing about N. A rigid rotation by D
+multiplies the phase of order k by kD, so D is fitted jointly over orders 2-10,
+each weighted by its own amplitude, with the four CFA planes' coefficients added
+in the complex plane (`rotation_analysis.harmonic_coefficients`,
+`fit_shift_from_harmonics`; driver `analyse_b2_phase.py`). A single order could
+still be ambiguous, but the orders are incommensurate enough that the joint fit
+is defined over the searched +/-90 deg. `phase rms` is the scatter of the orders
+about the fitted rotation: it is the estimator's own statement about whether the
+change was a rotation at all.
+
+| band | pair | `delta_roll` | shift | phase rms | per-plane shift (Gr Gb B R) |
+| --- | --- | --- | --- | --- | --- |
+| 450 | P1-P2 | +18.17 | -1.82 | 23.95 deg | -2.2 +0.0 -2.9 -8.7 |
+| 450 | P2-P3 | -16.44 | +0.24 | 25.83 deg | -2.8 -3.7 +2.4 +12.0 |
+| 450 | P1-P3 | +1.72 | -2.54 | 7.78 deg | -4.9 -3.6 -1.4 +0.1 |
+| 550 | P1-P2 | +17.95 | -16.78 | 16.68 deg | -13.1 -17.9 -22.4 -20.0 |
+| 550 | P2-P3 | -16.46 | +14.04 | 22.67 deg | +10.1 +16.3 +13.8 +13.2 |
+| 550 | P1-P3 | +1.50 | -1.74 | 14.24 deg | +0.2 -5.0 +2.2 -4.9 |
+| 650 | P1-P2 | +17.95 | -18.86 | 15.96 deg | -27.0 -20.0 -17.8 - |
+| 650 | P2-P3 | -16.46 | +15.72 | 12.87 deg | +26.6 +7.5 +15.7 +7.8 |
+| 650 | P1-P3 | +1.50 | -2.28 | 10.00 deg | -3.3 -1.2 -2.1 - |
+
+| band | slope | intercept | rms | n | class |
+| --- | --- | --- | --- | --- | --- |
+| 450 | -0.061 | -1.30 deg | 0.80 deg | 3 | `display_consistent` |
+| 550 | -0.895 | -0.60 deg | 0.14 deg | 3 | `mount_consistent` |
+| 650 | -1.005 | -0.80 deg | 0.02 deg | 3 | `mount_consistent` |
+
+Read as `shift = a + b * (-delta_roll)`, the three bands share a small offset
+`a` of -0.6 to -1.3 deg and differ only in `b`: 0.06 at 450 nm, 0.90 at 550 nm,
+1.00 at 650 nm.
+
+What this changes:
+
+* **The 450 nm null is not an artefact of the four-fold assumption.** It was the
+  main alternative explanation for a band that does not move while the others do,
+  and an estimator that makes no such assumption returns 0.06 of mount following.
+* **The two mount-following bands were underestimated.** 550 nm goes from 0.72
+  and 0.93 to 0.90, 650 nm from 0.72 and 0.79 to 1.00 and 0.96. That is the
+  signature of a global maximum sitting on a neighbouring spike, which is what
+  the wrong N predicts.
+* **The plane spread is in the data, not only in the estimator.** Per-plane
+  shifts still span 6-9 deg at every band in both directions.
+
+What this does not change:
+
+* The registered verdict. This estimator was chosen after the spectra were seen,
+  so it is a robustness check on a stated premise, not a second chance at the
+  criterion. The session's formal outcome stays `unresolved`.
+* The non-rigidity. `phase rms` is 8-26 deg at every band, so no pair is a pure
+  rotation: the pattern rotates and changes shape at the same time.
+
 ## What this does and does not establish
 
 Established:
@@ -180,6 +250,9 @@ Established:
   the same estimator, in either direction.
 * The pre-registered pooled test is unresolved; that is the session's formal
   outcome.
+* That the 450 nm null does not depend on the four-fold premise: an estimator
+  that fits the phases of orders 2-10 with no assumption about N returns 0.06 of
+  mount following at 450 nm, 0.90 at 550 nm and 1.00 at 650 nm.
 
 Not established:
 
@@ -193,6 +266,9 @@ Not established:
 * Any universality. One holder, one pinhole geometry, one display state.
 * That the pattern is "the PSF" in isolation. It is the azimuthal structure of
   the measured spot, whatever mixture of pinhole, LCD grid and lens produced it.
+* That a single N describes the spot. k=2 dominates the spectrum, k=3 and k=4 are
+  comparable, and the joint phase fit is only as rigid as those orders agree -
+  which they do not, at 8-26 deg rms.
 
 ## Incident: the phone ran out of storage
 
@@ -223,7 +299,10 @@ the first 650 nm P3 re-shoot with 50 GB free; the retry succeeded.
 
 * Session: `D:\datasets\axon20\udc_rotation_20261127_trial450\`
   (`brackets.jsonl`, per-bracket `*.json`, `captures/`, `angular_analysis.json`,
-  run logs).
+  `harmonic_rotation.json`, run logs).
 * Deletion manifest: `D:\datasets\axon20\phone_view_runs_deleted_20261127.json`.
-* Code: `scripts/udc_hdr_psf/analyse_b2.py`, `rotation_analysis.py`,
-  `drive_b2.py`, `drive_b1.py`, `align_live.py`.
+* Code: `scripts/udc_hdr_psf/analyse_b2.py`, `analyse_b2_phase.py`,
+  `rotation_analysis.py`, `drive_b2.py`, `drive_b1.py`, `align_live.py`.
+* Figures in the session's `figures/`: `azimuthal_structure.png` and `spikes.png`.
+  The first is the registered polar unroll at every ring; the second flat-fields,
+  smooths and counts the peak directions, and is what showed that N is not 4.
