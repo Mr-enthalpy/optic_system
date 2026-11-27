@@ -11,6 +11,7 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts" / "udc_hdr_psf"
 sys.path.insert(0, str(SCRIPTS))
 import analyse_b2 as ab  # noqa: E402
+import analyse_b2_phase as ap  # noqa: E402
 
 SHAPE = (121, 121)
 BLACK = 64.0
@@ -278,3 +279,69 @@ def test_the_reported_repeatability_reaches_the_result_file(tmp_path):
     session = _repeat_session(tmp_path, [image, image, image])
     summary = ab.summarise(ab.pair_rows(session, planes=("Gr",))[0], planes=("Gr",))
     assert summary["by_plane"]["pooled"]["ok"] is False   # no P1/P2 pair to fit
+
+
+# --- rotation from harmonic phase, on a session with several orders ----------
+
+def _harmonic_image(theta0_deg, centre=CENTRE, sigma=6.0):
+    """A spot whose azimuthal pattern carries orders 2, 3 and 4, not only 4."""
+    yy, xx = np.mgrid[0:SHAPE[0], 0:SHAPE[1]]
+    radius = np.hypot(xx - centre[0], yy - centre[1])
+    theta = np.arctan2(yy - centre[1], xx - centre[0])
+    theta0 = np.deg2rad(theta0_deg)
+    core = 700.0 * np.exp(-radius ** 2 / (2 * sigma ** 2))
+    pattern = (1.0 + 0.16 * np.cos(2.0 * (theta - theta0))
+               + 0.11 * np.cos(3.0 * (theta - theta0))
+               + 0.09 * np.cos(4.0 * (theta - theta0)))
+    return BLACK + core * pattern
+
+
+def _harmonic_session(tmp_path, thetas, rolls, band=550):
+    session = tmp_path / "session"
+    session.mkdir()
+    rows = []
+    for state, roll in zip(ab.STATES, rolls):
+        rows.append({"kind": "state", "state": state,
+                     "settled": {"roll_deg": roll}, "angle": {"delta_roll_deg": 0.0}})
+        label = f"{state}_{band}nm"
+        capture = session / "captures" / label / "batch_000" / "decoded"
+        capture.mkdir(parents=True)
+        image = _harmonic_image(thetas[state])
+        np.save(capture / "temporal_mean_dn.npy", image)
+        (session / f"{label}.json").write_text(json.dumps({
+            "stage": "b2_bracket", "label": label, "band_nm": band,
+            "peak_xy": [int(np.argmax(image) % SHAPE[1]),
+                        int(np.argmax(image) // SHAPE[1])],
+            "reference_batches": [0],
+            "run_ids": [f"run_{state}"],
+            "analysis": {"ceiling": {"black_dn": BLACK, "ceiling_dn": 1023}},
+        }))
+        rows.append({"kind": "bracket", "state": state, "band_nm": band,
+                     "label": label})
+    (session / "brackets.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n")
+    return session
+
+
+def test_the_phase_analysis_calls_a_mount_fixed_pattern_mount_fixed(tmp_path):
+    # The pattern's azimuth follows the roll, so the shift that maps one state
+    # onto the other is -delta_roll and the slope is -1 - the same convention
+    # analyse_b2 uses.
+    thetas = {"P1": 0.0, "P2": 18.0, "P3": 1.0}
+    session = _harmonic_session(tmp_path, thetas, [0.0, 18.0, 1.0])
+    assert ap.main(["--session", str(session)]) == 0
+    result = json.loads((session / "harmonic_rotation.json").read_text(encoding="utf-8"))
+    assert abs(result["by_band"]["550"]["slope"] + 1.0) < 0.10
+    assert result["by_band"]["550"]["class"] == "mount_consistent"
+    assert abs(result["null_shift_deg"]) < 2.0
+    assert result["null_ok"] is True
+
+
+def test_the_phase_analysis_calls_a_display_fixed_pattern_display_fixed(tmp_path):
+    # Same mount motion, pattern stays put: every shift is ~0.
+    thetas = {"P1": 0.0, "P2": 0.0, "P3": 0.0}
+    session = _harmonic_session(tmp_path, thetas, [0.0, 18.0, 1.0])
+    assert ap.main(["--session", str(session)]) == 0
+    result = json.loads((session / "harmonic_rotation.json").read_text(encoding="utf-8"))
+    assert abs(result["by_band"]["550"]["slope"]) < 0.10
+    assert result["by_band"]["550"]["class"] == "display_consistent"

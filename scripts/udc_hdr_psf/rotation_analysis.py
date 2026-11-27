@@ -303,6 +303,79 @@ def angular_shift(modulation_a, modulation_b, azimuths_rad, valid_a=None, valid_
     }
 
 
+def harmonic_coefficients(modulation, azimuths_rad, orders=range(2, 11)):
+    """Complex amplitude of each azimuthal order, averaged over rings.
+
+    ``modulation`` is ``[ring, azimuth]``, already normalised by each ring's own
+    mean.  Rotating a pattern by ``theta0`` multiplies order ``k``'s coefficient
+    by ``exp(-i k theta0)``, which is what makes the phases usable below.
+
+    Rings are weighted by their own amplitude, so a flat ring (no pattern, only
+    noise) does not dilute the phase, and the mean is taken on the complex
+    coefficients rather than on their phases, so rings that disagree cancel
+    instead of being selected from.
+    """
+    values = np.asarray(modulation, dtype=float)
+    theta = np.asarray(azimuths_rad, dtype=float)
+    if values.ndim != 2:
+        raise ValueError("modulation must be [ring, azimuth]")
+    if values.shape[1] != len(theta):
+        raise ValueError("azimuth grid does not match the profile width")
+    rows = values[np.isfinite(values).all(axis=1)]
+    if rows.shape[0] == 0:
+        return {}
+    found = {}
+    for order in orders:
+        coeff = rows @ np.exp(-1j * int(order) * theta) / rows.shape[1]
+        weight = np.abs(coeff)
+        total = float(weight.sum())
+        if total <= 0:
+            continue
+        found[int(order)] = complex(np.sum(coeff * weight) / total)
+    return found
+
+
+def fit_shift_from_harmonics(first, second, orders=None, search_deg=90.0,
+                             step_deg=0.02):
+    """Rotation that maps ``second`` onto ``first``, from several orders at once.
+
+    A rigid rotation by ``D`` moves order ``k``'s phase by ``k D``.  Fitting one
+    ``D`` to orders 2..10 jointly is why this differs from
+    :func:`angular_shift`: a pattern with ``N`` periodic spike directions has
+    correlation peaks every ``360/N`` degrees, so a single global maximum can sit
+    on a neighbouring spike, while orders that are not multiples of ``N`` break
+    that degeneracy.  ``phase_rms_deg`` is the scatter of the orders around the
+    fitted rotation - a direct test of whether the change was a rigid rotation at
+    all, rather than an assumption that it was.
+
+    A pattern that really is a pure ``N``-fold comb stays ambiguous to
+    ``360/N``; the fit then returns one of the equivalent answers and the
+    scatter does not warn about it, because no order can tell them apart.
+    """
+    shared = sorted(set(first) & set(second))
+    if orders is not None:
+        keep = {int(order) for order in orders}
+        shared = [order for order in shared if order in keep]
+    weights = {k: abs(first[k]) * abs(second[k]) for k in shared}
+    usable = [k for k in shared if weights[k] > 0]
+    if len(usable) < 3:
+        return {"ok": False, "reason": "need at least three shared orders",
+                "shift_deg": None, "phase_rms_deg": None, "orders": shared}
+
+    grid = np.arange(-float(search_deg), float(search_deg) + 1e-9, float(step_deg))
+    cost = np.zeros_like(grid)
+    norm = 0.0
+    for k in usable:
+        base = np.angle(second[k]) - np.angle(first[k])
+        residual = np.angle(np.exp(1j * (base - np.deg2rad(k * grid))))
+        cost += weights[k] * residual ** 2
+        norm += weights[k]
+    best = int(np.argmin(cost))
+    return {"ok": True, "shift_deg": float(grid[best]),
+            "phase_rms_deg": float(np.degrees(np.sqrt(cost[best] / norm))),
+            "orders": usable}
+
+
 def fit_rotation(pairs, weights=None):
     """Fit ``angular_shift = slope * delta_roll`` across measured pairs.
 

@@ -102,3 +102,95 @@ def test_rotation_fit_separates_the_two_hypotheses():
     found = ra.fit_rotation(display)
     assert found["ok"]
     assert ra.classify_slope(found["slope"]) == "display_consistent"
+
+
+# --- rotation from harmonic phase -------------------------------------------
+
+def _mixed_profile(theta0_deg, orders=(2, 3, 4, 5, 6), amplitudes=None):
+    """A pattern with several azimuthal orders, rotated by ``theta0_deg``.
+
+    Deliberately not four-fold: the measured PSF carries spike directions in
+    more than four azimuths, so an estimator that only survives a four-fold
+    pattern is not testing the data that was taken.
+    """
+    theta0 = np.deg2rad(theta0_deg)
+    if amplitudes is None:
+        amplitudes = {order: 1.0 / order for order in orders}
+    profile = np.zeros_like(AZ)
+    for order in orders:
+        profile += amplitudes[order] * np.cos(order * (AZ - theta0))
+    return (1.0 + profile)[None, :]
+
+
+def test_harmonic_fit_recovers_a_rotation_of_a_multi_order_pattern():
+    first = ra.harmonic_coefficients(_mixed_profile(0.0), AZ)
+    second = ra.harmonic_coefficients(_mixed_profile(17.3), AZ)
+    found = ra.fit_shift_from_harmonics(first, second)
+    assert found["ok"]
+    # shift is what maps B onto A, so a pattern moved to +17.3 needs -17.3.
+    assert abs(found["shift_deg"] + 17.3) < 0.1
+    assert found["phase_rms_deg"] < 0.5
+
+
+def test_harmonic_fit_sees_a_display_fixed_pattern():
+    first = ra.harmonic_coefficients(_mixed_profile(0.0), AZ)
+    second = ra.harmonic_coefficients(_mixed_profile(0.4), AZ)
+    found = ra.fit_shift_from_harmonics(first, second)
+    assert abs(found["shift_deg"] + 0.4) < 0.1
+
+
+def test_harmonic_fit_reports_scatter_when_the_change_is_not_a_rotation():
+    first = ra.harmonic_coefficients(_mixed_profile(0.0), AZ)
+    # Every order moves by its own angle: no single rotation explains this.
+    twisted = np.zeros_like(AZ)
+    for index, order in enumerate((2, 3, 4, 5, 6)):
+        twisted += (1.0 / order) * np.cos(order * AZ - np.deg2rad(8.0 * index))
+    second = ra.harmonic_coefficients((1.0 + twisted)[None, :], AZ)
+    found = ra.fit_shift_from_harmonics(first, second)
+    assert found["ok"]
+    assert found["phase_rms_deg"] > 2.0
+
+
+def test_a_pure_eight_fold_comb_is_only_defined_modulo_45_degrees():
+    """An eight-fold pattern cannot distinguish 17 degrees from -28.
+
+    This is the aliasing the study has to live with, and the fit must be honest
+    about it: both rotations give the same cost, so the answer is one of a set.
+    """
+    def comb(theta0_deg):
+        return (1.0 + 0.4 * np.cos(8.0 * (AZ - np.deg2rad(theta0_deg))))[None, :]
+
+    first = ra.harmonic_coefficients(comb(0.0), AZ, orders=(2, 4, 6, 8, 10))
+    for moved in (17.0, -28.0):
+        second = ra.harmonic_coefficients(comb(moved), AZ, orders=(2, 4, 6, 8, 10))
+        found = ra.fit_shift_from_harmonics(first, second)
+        assert found["ok"]
+        # Equivalent answers differ by a multiple of 360/8, so compare the
+        # distance to the nearest such multiple rather than the raw value.
+        difference = ra.wrap_deg(found["shift_deg"] + moved)
+        assert abs(((difference + 22.5) % 45.0) - 22.5) < 0.1
+
+
+def test_harmonic_fit_survives_noise_that_a_single_ring_would_not():
+    rng = np.random.default_rng(20261127)
+    first_rows = np.repeat(_mixed_profile(0.0), 12, axis=0)
+    second_rows = np.repeat(_mixed_profile(18.0), 12, axis=0)
+    first = ra.harmonic_coefficients(first_rows + rng.normal(0, 0.05, first_rows.shape), AZ)
+    second = ra.harmonic_coefficients(second_rows + rng.normal(0, 0.05, second_rows.shape), AZ)
+    found = ra.fit_shift_from_harmonics(first, second)
+    assert abs(found["shift_deg"] + 18.0) < 0.5
+
+
+def test_harmonic_coefficients_put_a_single_order_where_it_belongs():
+    profile = (1.0 + 0.3 * np.cos(6.0 * AZ - 0.4))[None, :]
+    found = ra.harmonic_coefficients(profile, AZ)
+    amplitude = {k: abs(value) for k, value in found.items()}
+    assert max(amplitude, key=amplitude.get) == 6
+    assert amplitude[6] > 10 * max(amplitude[5], amplitude[7])
+
+
+def test_harmonic_fit_needs_three_orders():
+    first = {2: 1.0 + 0j}
+    second = {2: 1.0 + 0j}
+    found = ra.fit_shift_from_harmonics(first, second)
+    assert not found["ok"]
